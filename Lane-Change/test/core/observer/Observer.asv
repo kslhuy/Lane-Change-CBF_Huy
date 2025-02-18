@@ -80,9 +80,9 @@ classdef Observer < handle
                 [A , B]  = self.matrix();
                 % Calculate the consensus term
                 % Start from 2 , because the first element is the local state of the vehicle
-                for L = 2:length(self.weights)
-                    % Why x_hat_i_j(: , l-1) because L start from 2 , but we need to start from 1 for vehicle
-                    Sig = self.weights(L)*( x_hat_i_j(: , L-1) - x_hat_i_j(: , self.vehicle.vehicle_number) ) + Sig;
+                for l = 2:length(self.weights)
+                    % l-1 because start from 2 , but we need to start from 1 for vehicle
+                    Sig = self.weights(l)*( x_hat_i_j(: , l-1) - x_hat_i_j(: , l-1) ) + Sig;
                 end
                 % Only if we try to estimated j = i , so we have real local state that was estimated by Local observer .
                 % But if we try to estimate j != i , we have (fake) the local state of j , that by vehicle j send to i vehicle
@@ -131,30 +131,16 @@ classdef Observer < handle
         % This model use in obesrver , so need to be here, in the observer class
         function  [A , B] = matrix(self)
             theta = self.vehicle.state(3);
-            Ts = self.param_sys.dt;
-            v = self.vehicle.state(4);
-            % Here in continuous time
-            % A = [ 0 0 0 cos(theta);
-            %      0 0 0 sin(theta);
-            %      0 0 1 0;
-            %      0 0 0 0];
 
-            % B = [ 0 0;
-            %       0 0;
-            %       0 0;
-            %       1 0];
+            A = [ 0 0 0 cos(theta);
+                 0 0 0 sin(theta);
+                 0 0 1 0;
+                 0 0 0 0];
 
-            % Here in discrete time
-
-            A = [ 1 0 -v*sin(theta)*Ts cos(theta)*Ts;
-                  0 1 v*cos(theta)*Ts sin(theta)*Ts;
-                  0 0 1 0;
-                  0 0 0 1];
-
-            B = [0 0
-                 0 0
-                 0 Ts
-                 Ts 0];
+            B = [ 0 0;
+                  0 0;
+                  0 0;
+                  1 0];
         
 
         end
@@ -165,26 +151,18 @@ classdef Observer < handle
                 error('est_global_state_log is empty. No data to plot.');
             end
         
-            num_vehicles = size(self.est_global_state_log, 3); % Number of vehicles
-            num_states = 4; % Assuming X, Y, theta, and V as states
-        
-            state_labels = {'Position X', 'Position Y', 'Theta', 'Velocity'};
-        
-            figure("Name", "Global Position Estimates");
-            for state_idx = 1:num_states
-                subplot(4, 1, state_idx);
+            figure("Name", "Global Position Estimates Vehicle 1");
+            for v = 1:4
+                subplot(4, 1, v);
+                plot(squeeze(self.est_global_state_log(1, 1:end-1, v)), 'DisplayName', 'Positionv1');
                 hold on;
-                for v = 1:num_vehicles
-                    plot(squeeze(self.est_global_state_log(state_idx, 1:end-1, v)), 'DisplayName', ['Vehicle ', num2str(v)]);
-                end
-                title(state_labels{state_idx});
+                title(['Vehicle ', num2str(v), ' State Estimates']);
                 xlabel('Time (s)');
-                ylabel(state_labels{state_idx});
+                ylabel('State');
                 legend;
                 grid on;
             end
         end
-
 
         
     end

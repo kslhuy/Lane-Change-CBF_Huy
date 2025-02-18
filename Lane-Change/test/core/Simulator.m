@@ -21,7 +21,7 @@ classdef Simulator
 
             % Set up the figure once
             figure(1);
-            set(gcf, 'Position', [200, 100, 1000, 1000]); % Larger figure window
+            set(gcf, 'Position', [200, 100, 1000, 700]); % Larger figure window
 
             grid on;
             xlabel('X Position (m)', 'FontSize', 12);
@@ -39,7 +39,7 @@ classdef Simulator
                 num_car = size(self.other_vehicles, 1);
                 if num_car >= 1
                     for k = 1:num_car
-                        self.other_vehicles(k).update; % Update vehicle state
+                        self.other_vehicles(k).update(i); % Update vehicle state
                     end
                 end
 
@@ -84,7 +84,7 @@ classdef Simulator
                 end
 
                 % Synchronize with real-time
-                elapsed_time = toc;
+                elapsed_time = toc
                 expected_time = i * self.dt;
                 if elapsed_time < expected_time
                     % disp("pause")

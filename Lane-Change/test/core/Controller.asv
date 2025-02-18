@@ -1,4 +1,4 @@
-classdef Controller < handle
+classdef Controller
     properties
         goal;% The goal state or position for the controller
         type; % type of the controller, value 1 stands for CBF_CLF_QP controller of the ego-vehicle;
@@ -6,6 +6,7 @@ classdef Controller < handle
         param_opt; % parameters for optimization problem
         param_sys; % parameter for vehicle
         straightlane;
+        other_vehicles; % surrounding vehicle
         vehicle;
         logic_ctrl;
     end
@@ -71,63 +72,57 @@ classdef Controller < handle
             
         end
 
-        % Method to get the surrounding vehicles
+        
         function [car_fc, car_bt, car_ft] = get_surrounding_vehicles(self , x, current_lane_id, direction_flag)
             current_lane_vehicles = [];
             target_lane_vehicles = [];
-            num_veh = length(self.vehicle.other_vehicles);
-            
-            % Get the host vehicle's ID or unique identifier
-            host_vehicle_id = self.vehicle.vehicle_number; % Assuming vehicle_number is the unique identifier
+            num_veh = length(self.other_vehicles);
             
             % sort surrounding vehilces according to the lane id information
             for i = 1:num_veh
-
-                % Skip the host vehicle
-                if self.vehicle.other_vehicles(i).vehicle_number == host_vehicle_id
-                    continue;
-                end
-
-                if (self.vehicle.other_vehicles(i).lane_id == current_lane_id | self.vehicle.other_vehicles(i).lane_id == current_lane_id - direction_flag * 0.5)
+                if (self.other_vehicles(i).lane_id == current_lane_id | self.other_vehicles(i).lane_id == current_lane_id - direction_flag * 0.5)
                     % the vehicle is in the current lane
-                    if self.vehicle.other_vehicles(i).state(1) >= x
+                    if self.other_vehicles(i).state(1) >= x
                         % collect the vehicle in the current lane before the
                         % ego vehicle
-                        current_lane_vehicles = [current_lane_vehicles, self.vehicle.other_vehicles(i)];
+                        current_lane_vehicles = [current_lane_vehicles, self.other_vehicles(i)];
                     end
-                elseif self.vehicle.other_vehicles(i).lane_id == current_lane_id + direction_flag * 0.5
+                elseif self.other_vehicles(i).lane_id == current_lane_id + direction_flag * 0.5
                     % the vehicle is accross the dividing line
-                    if self.vehicle.other_vehicles(i).state(1) >= x
-                        current_lane_vehicles = [current_lane_vehicles, self.vehicle.other_vehicles(i)];
+                    if self.other_vehicles(i).state(1) >= x
+                        current_lane_vehicles = [current_lane_vehicles, self.other_vehicles(i)];
                     end
                     % Collect the vehicle in the target lane
-                    target_lane_vehicles = [target_lane_vehicles, self.vehicle.other_vehicles(i)];
+                    target_lane_vehicles = [target_lane_vehicles, self.other_vehicles(i)];
                 
                 % Check if the vehicle is in the target lane
-                elseif (self.vehicle.other_vehicles(i).lane_id == current_lane_id + direction_flag)
-                    target_lane_vehicles = [target_lane_vehicles, self.vehicle.other_vehicles(i)];
+                elseif (self.other_vehicles(i).lane_id == current_lane_id + direction_flag)
+                    target_lane_vehicles = [target_lane_vehicles, self.other_vehicles(i)];
                 % Check if the vehicle is in the target lane offset by 1.5 times the direction flag
-                elseif self.vehicle.other_vehicles(i).lane_id == current_lane_id + 1.5 * direction_flag
-                    target_lane_vehicles = [target_lane_vehicles, self.vehicle.other_vehicles(i)];
+                elseif self.other_vehicles(i).lane_id == current_lane_id + 1.5 * direction_flag
+                    target_lane_vehicles = [target_lane_vehicles, self.other_vehicles(i)];
                 end
             end
             
-            range_check = 100;
 
             car_fc = [];
-            carfc_range = x + range_check;
+            carfc_range = x + 100;
             for j = 1:length(current_lane_vehicles)
                 if current_lane_vehicles(j).state(1) <= carfc_range
                     car_fc = current_lane_vehicles(j);
                     carfc_range = current_lane_vehicles(j).state(1);
                 end
             end
+            % if (self.vehicle_number == 2)
+            %     disp("other vehicle : " + num_veh);
+            %     disp("current_lane_vehicles : " + length(target_lane_vehicles));
+            % 
+            % end
 
             car_bt = [];
-            car_bt_range = x - range_check;
+            car_bt_range = x - 100;
             car_ft = [];
-            carft_range = x + range_check;
-            
+            carft_range = x + 100;
             for i = 1:length(target_lane_vehicles)
                 if target_lane_vehicles(i).state(1) <= x && target_lane_vehicles(i).state(1) >= car_bt_range
                     car_bt = target_lane_vehicles(i);
