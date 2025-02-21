@@ -7,11 +7,13 @@ addpath ../test/core/
 addpath('Function');
 addpath('core/observer');
 addpath('core/Trust');
+addpath('core/communication');
+
 
 
 % Params = dt , simulation_time , scenario
 % "Highway" , "Urban"
-Scenarios_config = Scenarios_config( 0.01, 10,  "Highway");
+Scenarios_config = Scenarios_config( 0.01, 15,  "Highway");
 
 
 %% Graph 
@@ -65,6 +67,8 @@ direction_flag = 0; % 1 stands for changing to the left adjacent lane, 0 stands 
 param_sys = ParamVeh();
 
 
+center_communication = CenterCommunication();
+
 car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 24], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weights_Dis_1);
 
 % car2 , car3 is in the middle lane, lane middle 
@@ -80,11 +84,12 @@ car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26], initial_lane_
 
 platton_vehicles = [car1; car2; car3; car4];
 
-car1.assign_neighbor_vehicle(platton_vehicles);
-car2.assign_neighbor_vehicle(platton_vehicles);
-car3.assign_neighbor_vehicle(platton_vehicles);
-car4.assign_neighbor_vehicle(platton_vehicles);
+car1.assign_neighbor_vehicle(platton_vehicles,center_communication , graph);
+car2.assign_neighbor_vehicle(platton_vehicles,center_communication,  graph);
+car3.assign_neighbor_vehicle(platton_vehicles,center_communication, graph );
+car4.assign_neighbor_vehicle(platton_vehicles,center_communication, graph);
 % car5.assign_neighbor_vehicle(platton_vehicles);
+
 
 
 
@@ -105,6 +110,12 @@ plot_movement_log(platton_vehicles, Scenarios_config, num_vehicles);
 %%
 car2.observer.plot_global_state_log()
 
+car1.plot_trust_log()
+car2.plot_trust_log()
+car3.plot_trust_log()
+car4.plot_trust_log()
+
+
 %% Function for plot
 
 function [] = plot_movement_log(vehicles, scenarios_config, num_vehicles)
@@ -113,8 +124,32 @@ function [] = plot_movement_log(vehicles, scenarios_config, num_vehicles)
     % Define vehicle labels for the legend
     vehicle_labels = arrayfun(@(i) sprintf('Vehicle %d', i), 1:num_vehicles, 'UniformOutput', false);
     
+    % Plot position X history
+    subplot(6, 1, 1)
+    hold on
+    for i = 1:num_vehicles
+        plot(0:scenarios_config.dt :scenarios_config.simulation_time, vehicles(i).state_log(1, :))
+    end
+    title('Position X history')
+    ylabel('m')
+    xlabel('s')
+    legend(vehicle_labels)
+    hold off
+
+    % Plot position Y history
+    subplot(6, 1, 2)
+    hold on
+    for i = 1:num_vehicles
+        plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(2, :))
+    end
+    title('Position Y history')
+    ylabel('m')
+    xlabel('s')
+    legend(vehicle_labels)
+    hold off
+
     % Plot velocity history
-    subplot(5, 1, 1)
+    subplot(6, 1, 3)
     hold on
     for i = 1:num_vehicles
         plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(4, :))
@@ -130,21 +165,9 @@ function [] = plot_movement_log(vehicles, scenarios_config, num_vehicles)
     legend(vehicle_labels)
     hold off
 
-    % Plot steering history
-    subplot(5, 1, 2)
-    hold on
-    for i = 1:num_vehicles
-        plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).input_log(2, :))
-    end
-    title('Steering history')
-    ylabel('rad')
-    xlabel('s')
-    ylim([-0.05, 0.05])
-    legend(vehicle_labels)
-    hold off
 
     % Plot yaw history
-    subplot(5, 1, 3)
+    subplot(6, 1, 4)
     hold on
     for i = 1:num_vehicles
         plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(3, :))
@@ -156,27 +179,31 @@ function [] = plot_movement_log(vehicles, scenarios_config, num_vehicles)
     legend(vehicle_labels)
     hold off
 
-    % Plot position X history
-    subplot(5, 1, 4)
+
+
+    % Plot steering history
+    subplot(6, 1, 5)
     hold on
     for i = 1:num_vehicles
-        plot(0:scenarios_config.dt :scenarios_config.simulation_time, vehicles(i).state_log(1, :))
+        plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).input_log(1, :))
     end
-    title('Position X history')
-    ylabel('m')
+    title('Control acc history')
+    ylabel('m/s^2')
     xlabel('s')
+    ylim([-2, 2])
     legend(vehicle_labels)
     hold off
 
-    % Plot position Y history
-    subplot(5, 1, 5)
+    % Plot steering history
+    subplot(6, 1, 6)
     hold on
     for i = 1:num_vehicles
-        plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(2, :))
+        plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).input_log(2, :))
     end
-    title('Position Y history')
-    ylabel('m')
+    title('Steering history')
+    ylabel('rad')
     xlabel('s')
+    ylim([-0.05, 0.05])
     legend(vehicle_labels)
     hold off
 end

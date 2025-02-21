@@ -47,13 +47,16 @@ classdef Observer < handle
             for j = 1:num_vehicles
                 
                 %% Get local of j vehicle
-                x_bar_j = self.vehicle.other_vehicles(j).observer.est_local_state_current;
+                x_bar_j = self.vehicle.center_communication.get_local_state(j);
                 
                 % ------- To get global state of other vehicles 
                 % Go through all the other vehicles , start from the second vehicle
                 for k = 1:num_vehicles
                     % Vào thằng thứ "k" , lấy cái thứ "j" của nó
-                    x_hat_i_j_full = self.vehicle.other_vehicles(k).observer.est_global_state_current;
+                    %% old code 100
+                    % x_hat_i_j_full = self.vehicle.other_vehicles(k).observer.est_global_state_current;
+                    %% new code 100
+                    x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k);
                     x_hat_i_j(:,k) =  x_hat_i_j_full(:,j);
                 end
                 % ------- To get global state of other vehicles 
@@ -69,61 +72,47 @@ classdef Observer < handle
                 % disp(size(x_hat_i_j));
                 % disp(size(u_j));
                 % disp(size(self.weights));
-                disp("x_hat_i_j :");
-                disp(x_hat_i_j);
-
-                disp("x_bar_j : ");   
-                disp(x_bar_j);
+                % disp("x_hat_i_j :");
+                % disp(x_hat_i_j);
+                % 
+                % disp("x_bar_j : ");   
+                % disp(x_bar_j);
                 
-                % output = distributed_Observer_each(j , x_bar_j  , x_hat_i_j , u_j , self.weights  );
-                Sig = zeros(4,1); % Initialize consensus term
-                [A , B]  = self.matrix();
-                % Calculate the consensus term
-                % Start from 2 , because the first element is the local state of the vehicle
-                for L = 2:length(self.weights)
-                    % Why x_hat_i_j(: , l-1) because L start from 2 , but we need to start from 1 for vehicle
-                    Sig = self.weights(L)*( x_hat_i_j(: , L-1) - x_hat_i_j(: , self.vehicle.vehicle_number) ) + Sig;
-                end
-                % Only if we try to estimated j = i , so we have real local state that was estimated by Local observer .
-                % But if we try to estimate j != i , we have (fake) the local state of j , that by vehicle j send to i vehicle
-
-                % Estimate the j vehicle , in i vehicle
-                % So the observer is implement in i vehicle
-                w_i0 = self.weights(j); % Weight of the local state
-
-                %% Original paper (TRUE WORK)
-                output = A*( x_hat_i_j(: , j) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , j)) ) + B*u_j ;
+                output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j );
                 Big_X_hat_1_tempo(:,j) = output; % Append the result
             end
             self.est_global_state_current = Big_X_hat_1_tempo;
             self.est_global_state_log(:, instant_index, :) = Big_X_hat_1_tempo;
         end
         
-        function ouput = distributed_Observer_each( j , x_bar_j , x_hat_i_j, u_j , W )
+        function output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j  )
             
-            disp("x_hat_i_j " + x_hat_i_j);
 
-            disp("x_bar_j : " + x_bar_j); 
+            % output = distributed_Observer_each(j , x_bar_j  , x_hat_i_j , u_j , self.weights  );
             Sig = zeros(4,1); % Initialize consensus term
             [A , B]  = self.matrix();
             % Calculate the consensus term
             % Start from 2 , because the first element is the local state of the vehicle
-            for l = 2:length(W)
-                % l-1 because start from 2 , but we need to start from 1 for vehicle
-                Sig = W(l)*( x_hat_i_j(: , l-1) - x_hat_i_j(: , l-1) ) + Sig;
+            for L = 2:length(self.weights)
+                % Why x_hat_i_j(: , l-1) because L start from 2 , but we need to start from 1 for vehicle
+                Sig = self.weights(L)*( x_hat_i_j(: , L-1) - x_hat_i_j(: , self.vehicle.vehicle_number) ) + Sig;
             end
             % Only if we try to estimated j = i , so we have real local state that was estimated by Local observer .
             % But if we try to estimate j != i , we have (fake) the local state of j , that by vehicle j send to i vehicle
-            
+
             % Estimate the j vehicle , in i vehicle
             % So the observer is implement in i vehicle
-            w_i0 = W(j); % Weight of the local state
-            
+            w_i0 = self.weights(j); % Weight of the local state
+
             %% Original paper (TRUE WORK)
-            ouput = A*( x_hat_i_j(: , j) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , j)) ) + B*u_j ;
+            output = A*( x_hat_i_j(: , j) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , j)) ) + B*u_j ;
+
             
         end
         
+
+
+
         function Local_observer(self , state)
             self.est_local_state_current = state;
         end

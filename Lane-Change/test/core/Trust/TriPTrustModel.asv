@@ -193,7 +193,7 @@ classdef TriPTrustModel < handle
             % Measurement part host (radar, lidar  )
             host_velocity = host_vehicle.observer.est_local_state_current(4);
             host_acceleration = host_vehicle.input(1); 
-            % if (host_id - neighbors_ids) < 0  =>  host is Front , else = Behind
+            % if (host_id - neighbors_ids) > 0  = host is Front , else = Behind
 
             host_distance_measurement = (host_id - target_id)*(target_vehicle.observer.est_local_state_current(1) - host_vehicle.observer.est_local_state_current(1)) - half_lenght_vehicle;
         
