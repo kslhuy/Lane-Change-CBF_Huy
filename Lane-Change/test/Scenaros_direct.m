@@ -42,6 +42,10 @@ weights_Dis_2 = weights{2,1}(2+1,:);
 weights_Dis_3 = weights{3,1}(3+1,:); 
 weights_Dis_4 = weights{4,1}(4+1,:); 
 
+
+Weight_Trust_module = Weight_Trust_module(graph, 0.5, 1);
+
+
 %% define driving lanes
 if Scenarios_config.where == "Highway"
     lane_width = 3.6;% Highway lane width in meters
@@ -66,18 +70,30 @@ direction_flag = 0; % 1 stands for changing to the left adjacent lane, 0 stands 
 
 param_sys = ParamVeh();
 
+%% Set Attack senario
+attack_module = Attack_module();
+% Define a time-based attack scenario
+% Attack with 'bias' type between 5 and 10 seconds with intensity 0.5
+scenario_Attack_params = struct('start_time', 5, ...      % Start at 5 seconds
+                         'end_time', 10, ...       % End at 10 seconds
+                         'attack_type', 'bias', ... % Bias attack
+                         'fault_intensity', 0.5);   % Add 0.5 to data
+attack_module.setScenario('time_based', scenario_Attack_params);
 
-center_communication = CenterCommunication();
+%% END Attack senario
 
-car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 24], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weights_Dis_1);
+center_communication = CenterCommunication(attack_module);
+
+
+car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 24], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
 % car2 , car3 is in the middle lane, lane middle 
-car2 = Vehicle(2, "IDM", param_sys, [60; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weights_Dis_2);
+car2 = Vehicle(2, "IDM", param_sys, [60; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
-car3 = Vehicle(3, "IDM", param_sys, [40; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weights_Dis_3);
+car3 = Vehicle(3, "IDM", param_sys, [40; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
 % car4 is in the lane highest
-car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weights_Dis_4);
+car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
 % car5 = Vehicle(5, "IDM", param_sys, [0; 0.5 * lane_width; 0; 26], controller_car5, 1,  lanes, 0, 0, Scenarios_config);
 

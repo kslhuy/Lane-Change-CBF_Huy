@@ -24,7 +24,7 @@ classdef Vehicle < handle
         other_log;
         observer;
         other_vehicles;
-        weight;
+        weight_module;
         num_vehicles;
         trip_models;
         center_communication; % Add a reference to the CenterCommunication object
@@ -33,7 +33,7 @@ classdef Vehicle < handle
         
     end
     methods
-        function self = Vehicle(vehicle_number , typeController, veh_param, state_initial, initial_lane_id, lanes, direction_flag, acc_flag, scenarios_config,weight)
+        function self = Vehicle(vehicle_number , typeController, veh_param, state_initial, initial_lane_id, lanes, direction_flag, acc_flag, scenarios_config,weight_module)
             
             self.scenarios_config = scenarios_config;
             self.dt = scenarios_config.dt;
@@ -63,7 +63,7 @@ classdef Vehicle < handle
             % the first element of states' history
             self.input_log = self.input;
             
-            self.weight = weight;
+            self.weight_module = weight_module;
             
             
             
@@ -75,109 +75,26 @@ classdef Vehicle < handle
         
         function update(self,instant_index)
             
-            %% Using graph here , look for vehicle that can sense by the ego sensor vehicle
             %% Identify vehicles directly measurable by the ego vehicle's sensor
             connected_vehicles = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
+            %% Calculate trust and opinion scores directly in self.trust_log
+            calculateTrustAndOpinion(self, instant_index, connected_vehicles);
+
+            %% Wiegth trust update
+            % self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :));
+            weights = self.weight_module.calculate_weights_Defaut(self.vehicle_number); % Matrix ('nb_vehicles + 1' x 'nb_vehicles + 1' )
+            weights_Dis = weights(self.vehicle_number + 1,:); % array (1 x 'nb_vehicles + 1' ) 
+            %% Update normal car dynamics , like controller and observer
+            normal_car_update(self,instant_index , weights_Dis);
             
-            received_trusts = []; % Store received trust scores of all direct vehicles
-            received_vehicles = []; % Store vehicle indices providing trust scores
-            
-            %% Step 1 , calculate trust for the direct vehicles
-            for vehicle_direct = connected_vehicles
-                if abs(vehicle_direct - self.vehicle_number) == 1
-                    %% Is the direct vehicle
-                    [self.trust_log(1 , instant_index , vehicle_direct) ,trust_sample, ~ , ~, ~] = self.trip_models{vehicle_direct}.calculateTrust(self, self.other_vehicles(vehicle_direct) , self.other_vehicles(1) ,self.dt ,self.dt);
-                end
-                
-                %% Store received trust values for opinion calculation
-                trust_score = self.center_communication.get_trust_score(vehicle_direct);
-                if ~isempty(trust_score)
-                    % Store all received trust scores 
-                    received_trusts = [received_trusts; trust_score];
-                    received_vehicles = [received_vehicles; vehicle_direct];
-                end
-            end
-
-            %% TODO : We can do better , just loop through the direct vehicle
-            %% Step 2 , calculate Opinion for the non-direct vehicles
-            % Compute opinion-based trust update
-            if ~isempty(received_trusts)
-                % Go through all vehicles in the platoon
-                for vehicle_id = 1:self.num_vehicles
-                    if vehicle_id == self.vehicle_number
-                        self.trust_log(1, instant_index, vehicle_id) = 1; % Set trust score to 1 for ego vehicle
-                        continue;
-                    end
-
-                    %% ------------------- NOT WORKING -------------------
-
-                    % Exemple : Host Vehicle is 3 , if vehicle_id = 1 , 
-                    % if host vehicle dont have the trust score of vehicle 1 (that mean =0)
-                    % then we need to update the trust score of vehicle 1 by the opinion score
-                    if self.trust_log(1, instant_index, vehicle_id) == 0
-                        if self.vehicle_number == 1
-                            % disp("here")
-                        end
-                         
-                        % In index vehicle_id , check if all received trust scores for that vehicle_id are zero
-                        
-                        % Exemple : Host Vehicle is 3 , if vehicle_id = 1 , see all received trust score from direct vehicle like 2
-                        % Go in to trust score of vehicle 2 , look vehicle 2 have trust score of vehicle 1 or not
-                        % if have , then we need take that , to calculate the opinion score
-                        received_trusts_vehicle = received_trusts(:,:,vehicle_id) ; % Get trust scores for vehicle_id
-                        
-                        non_zero_trusts = received_trusts_vehicle(received_trusts_vehicle ~= 0); % Filter out zeros
-                        non_zero_and_one_trusts = non_zero_trusts(non_zero_trusts ~= 1); % Filter out zeros
-                        
-                        new_received_vehicles = received_vehicles(received_trusts_vehicle ~= 0); % Filter out zeros
-                        new_received_vehicles = new_received_vehicles(non_zero_trusts ~= 1); % Filter out ones
-
-                        if ~isempty(non_zero_and_one_trusts)
-                            % Exemple : Sicne we collected all the non (0 et 1) trust score of vehicle_id (ex : 1) from direct vehicle (ex : 2)
-                            
-                            % Design 1 : opinion-based trust aggregation
-                            
-                            opinion_weights = 1 ./ (1 + abs(new_received_vehicles - vehicle_id)); % Weight by distance in platoon
-                            normalized_weights = opinion_weights / sum(opinion_weights); % Normalize weights
-                            opinion_score = sum(normalized_weights .* non_zero_and_one_trusts, 1); % Weighted sum of trust scores
-                            % self.trust_log(1, instant_index, self.vehicle_number) = opinion_score; % Store computed opinion score
-                            
-                            
-                            % Design 2 : Compute the product of non-zero trust scores
-                            %% Product score ---- Not working
-                            % opinion_score = prod(non_zero_trusts,1); % Compute product along columns (dimension 1)
-                        else
-                            % If all trust scores are zero, set opinion score to zero
-                            opinion_score = 0;
-                        end
-
-                        % Add the opinion score to the trust score for vehicles with zero trust
-                        self.trust_log(1, instant_index, vehicle_id) =  opinion_score;
-                    end
-
-                    %% ------------------- END NOT WORKING -------------------
-
-                    %% ------------------- In Process -------------------
-
-
-                    
-                end
-                
-                
-
-            end
-            
-            
-            normal_car_update(self,instant_index );
-            
-            %% send to center communication
+            %% Send to center communication
             self.center_communication.update_local_state(self.vehicle_number, self.observer.est_local_state_current);
             self.center_communication.update_global_state(self.vehicle_number, self.observer.est_global_state_current);
             self.center_communication.update_trust(self.vehicle_number, self.trust_log(1, instant_index, :));
             
         end
         
-        function normal_car_update(self,instant_index)
+        function normal_car_update(self,instant_index , weights)
             
             if self.typeController ~= "None"
                 % disp('Controller is not empty');
@@ -185,7 +102,7 @@ classdef Vehicle < handle
                 
                 %% Observer
                 self.observer.Local_observer(self.state);
-                self.observer.Distributed_Observer(instant_index);
+                self.observer.Distributed_Observer(instant_index , weights);
                 %% Controller
                 [~, u, e] = self.controller.get_optimal_input(self.state, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
                 
@@ -199,7 +116,7 @@ classdef Vehicle < handle
             else
                 %% Observer
                 self.observer.Local_observer(self.state);
-                self.observer.Distributed_Observer(instant_index);
+                self.observer.Distributed_Observer(instant_index, weights);
                 % disp('Controller is empty');
                 self.get_lane_id(self.state);
                 speed = self.state(4);
@@ -207,13 +124,8 @@ classdef Vehicle < handle
                 
                 self.state(4) = self.state(4) + acceleration * self.dt; % new speed
                 % speed limit according to different scenarios
-                % if self.scenarios_config.where == "Highway"
-                ulim = 33.33;
-                llim = 23;
-                % elseif self.scenarios_config.where == "Urban"
-                %     ulim = 16.67;
-                %     llim = 12;
-                % end
+                [ulim, llim] = self.scenarios_config.getLimitSpeed(); 
+
                 if self.state(4) >= ulim
                     self.state(4) = ulim;
                 elseif self.state(4) <= llim
@@ -351,6 +263,66 @@ classdef Vehicle < handle
             v = state(4);
         end
         
+
+
+    
+        function calculateTrustAndOpinion(self, instant_index, connected_vehicles)
+        
+            %% Step 1: Calculate trust for direct vehicles
+            received_trusts = []; % Store received trust scores of all direct vehicles
+            received_vehicles = []; % Store vehicle indices providing trust scores
+        
+            for vehicle_direct = connected_vehicles
+                if abs(vehicle_direct - self.vehicle_number) == 1
+                    %% Calculate trust for direct vehicle
+                    [self.trust_log(1, instant_index, vehicle_direct), ~, ~, ~, ~] = ...
+                        self.trip_models{vehicle_direct}.calculateTrust(...
+                        self, self.other_vehicles(vehicle_direct), self.other_vehicles(1), self.dt, self.dt);
+                end
+        
+                %% Store received trust values for opinion calculation
+                trust_score = self.center_communication.get_trust_score(vehicle_direct);
+                if ~isempty(trust_score)
+                    received_trusts = [received_trusts; trust_score];
+                    received_vehicles = [received_vehicles; vehicle_direct];
+                end
+            end
+        
+            %% Step 2: Calculate opinion-based trust for non-direct vehicles
+            if ~isempty(received_trusts)
+                for vehicle_id = 1:self.num_vehicles
+                    if vehicle_id == self.vehicle_number
+                        self.trust_log(1, instant_index, vehicle_id) = 1; % Ego vehicle trust is 1
+                        continue;
+                    end
+        
+                    %% If trust score is zero, compute opinion-based trust
+                    if self.trust_log(1, instant_index, vehicle_id) == 0
+                        received_trusts_vehicle = received_trusts(:,:,vehicle_id); % Trust scores for vehicle_id
+                        non_zero_trusts = received_trusts_vehicle(received_trusts_vehicle ~= 0); % Filter zeros
+                        non_zero_and_one_trusts = non_zero_trusts(non_zero_trusts ~= 1); % Filter ones
+        
+                        new_received_vehicles = received_vehicles(received_trusts_vehicle ~= 0); % Filter zeros
+                        new_received_vehicles = new_received_vehicles(non_zero_trusts ~= 1); % Filter ones
+        
+                        if ~isempty(non_zero_and_one_trusts)
+                            %% Opinion-based trust aggregation (Design 1)
+                            opinion_weights = 1 ./ (1 + abs(new_received_vehicles - vehicle_id)); % Weight by distance
+                            normalized_weights = opinion_weights / sum(opinion_weights); % Normalize weights
+                            opinion_score = sum(normalized_weights .* non_zero_and_one_trusts, 1); % Weighted sum
+                        else
+                            opinion_score = 0; % Default to zero if no valid trust scores
+                        end
+        
+                        self.trust_log(1, instant_index, vehicle_id) = opinion_score;
+                    end
+                end
+            end
+        end
+
+
+        %% ----- Very important function ----- 
+        %% Assign the other vehicles to the ego vehicle , and many other things 
         function assign_neighbor_vehicle(self, other_vehicles, center_communication, graph)
             self.graph = graph;
             disp('Assigning other vehicles');
@@ -368,7 +340,7 @@ classdef Vehicle < handle
             end
             %--------
             %% Create an observer for the vehicle
-            self.observer = Observer(self, self.param ,inital_global_state, inital_local_state, self.weight);
+            self.observer = Observer(self, self.param ,inital_global_state, inital_local_state);
             
             %% Create controller
             
@@ -394,6 +366,7 @@ classdef Vehicle < handle
         end
         
         
+        %% Function for plot 
         function plot_ground_truth_vs_estimated(self, est_global_log)
             figure;
             subplot(3,1,1);
@@ -492,7 +465,6 @@ classdef Vehicle < handle
             axis equal;
         end
         
-        %% Fucntion Send the state of the vehicle to the CenterCommunication object
         
         
         

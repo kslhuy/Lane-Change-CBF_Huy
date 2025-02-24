@@ -10,5 +10,17 @@ classdef Scenarios_config
             self.simulation_time = simulation_time;
             self.where = scenario_where;
         end
+
+        function [ulim,llim] = getLimitSpeed(self)
+
+            if self.where == "Highway"
+                ulim = 33.33;
+                llim = 23;
+            elseif self.where == "Urban"
+                ulim = 16.67;
+                llim = 12;
+            end
+        end
+
     end
 end

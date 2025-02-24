@@ -9,12 +9,14 @@ classdef CenterCommunication < handle
 
         trust_score_storage; % A container to store the local state of all vehicles
 
+        attack_module; % A container to store the local state of all vehicles
+
 
 
     end
     
     methods
-        function self = CenterCommunication()
+        function self = CenterCommunication(attack_module)
             self.vehicles = [];
             self.state_logs = containers.Map('KeyType', 'int32', 'ValueType', 'any');
             self.input_logs = containers.Map('KeyType', 'int32', 'ValueType', 'any');
@@ -22,6 +24,8 @@ classdef CenterCommunication < handle
             self.global_state_storage = containers.Map('KeyType', 'int32', 'ValueType', 'any');
             self.local_state_storage = containers.Map('KeyType', 'int32', 'ValueType', 'any');
             self.trust_score_storage = containers.Map('KeyType', 'int32', 'ValueType', 'any');
+
+            self.attack_module = attack_module;
         end
         
         function register_vehicle(self, vehicle)
@@ -67,7 +71,7 @@ classdef CenterCommunication < handle
         end
 
         %% GETTER
-        
+        %% TODO : can implement attack module here to simulate the attack
         function state = get_state(self, vehicle_number)
             % Get the state of a specific vehicle
             state = self.state_logs(vehicle_number);
@@ -80,7 +84,13 @@ classdef CenterCommunication < handle
 
         function local_state = get_local_state(self, vehicle_number)
             % Get the local state of a specific vehicle
+
+            %% TODO : Need add attack here
+            % local_state = self.attack_module.SetLocalAttack(self.local_state_storage(vehicle_number),0,  'faulty' , 0.1,'velocity');
+            
             local_state = self.local_state_storage(vehicle_number);
+
+
         end
 
         function input = get_input(self, vehicle_number)
