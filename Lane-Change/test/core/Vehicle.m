@@ -66,16 +66,11 @@ classdef Vehicle < handle
             self.weight_module = weight_module;
             
             
-            
-            
-            
-            
-            
         end
         
         function update(self,instant_index)
             
-            %% Identify vehicles directly measurable by the ego vehicle's sensor
+            %% Identify vehicles is connected with the ego vehicle's
             connected_vehicles = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
             %% Calculate trust and opinion scores directly in self.trust_log
             calculateTrustAndOpinion(self, instant_index, connected_vehicles);
@@ -134,7 +129,7 @@ classdef Vehicle < handle
                 dx = speed * self.dt + 0.5 * acceleration * self.dt^2; %dx=v*dt+0.5*a*dt^2
                 self.state = [self.state(1) + dx; self.state(2); self.state(3); self.state(4)]; % new state of normal cars
                 %  no need update input , beacuse the input is constant
-                % self.input = [0;0]; % update the input
+                self.input = [0;0]; % update the input
                 
                 e = 0;
             end
@@ -266,18 +261,26 @@ classdef Vehicle < handle
 
 
     
-        function calculateTrustAndOpinion(self, instant_index, connected_vehicles)
+        function calculateTrustAndOpinion(self, instant_index, connected_vehicles_num)
         
             %% Step 1: Calculate trust for direct vehicles
             received_trusts = []; % Store received trust scores of all direct vehicles
             received_vehicles = []; % Store vehicle indices providing trust scores
-        
-            for vehicle_direct = connected_vehicles
+
+            for vehicle_direct = connected_vehicles_num
+                %% Identify vehicles directly measurable by the ego vehicle's sensor        
                 if abs(vehicle_direct - self.vehicle_number) == 1
+
+                    %% Get all the vehicles that are connected to the ego vehicle
+                    connected_vehicles = [];
+                    for v = connected_vehicles_num
+                        connected_vehicles = [connected_vehicles; self.other_vehicles(v)];
+                    end 
+
                     %% Calculate trust for direct vehicle
-                    [self.trust_log(1, instant_index, vehicle_direct), ~, ~, ~, ~] = ...
+                    [self.trust_log(1, instant_index, vehicle_direct), ~,~, ~, ~, ~] = ...
                         self.trip_models{vehicle_direct}.calculateTrust(...
-                        self, self.other_vehicles(vehicle_direct), self.other_vehicles(1), self.dt, self.dt);
+                        self, self.other_vehicles(vehicle_direct), self.other_vehicles(1),connected_vehicles, self.dt, self.dt);
                 end
         
                 %% Store received trust values for opinion calculation
@@ -323,7 +326,7 @@ classdef Vehicle < handle
 
         %% ----- Very important function ----- 
         %% Assign the other vehicles to the ego vehicle , and many other things 
-        function assign_neighbor_vehicle(self, other_vehicles, center_communication, graph)
+        function assign_neighbor_vehicle(self, other_vehicles, controller_goal , center_communication, graph)
             self.graph = graph;
             disp('Assigning other vehicles');
             self.other_vehicles = other_vehicles;
@@ -348,7 +351,7 @@ classdef Vehicle < handle
                 self.controller = [];
             else
                 param_opt = ParamOptEgo(self.dt);
-                self.controller = Controller(self,[], "IDM", param_opt, self.param, self.lanes); % Create a controller for the vehicle
+                self.controller = Controller(self,controller_goal , self.typeController, param_opt, self.param, self.lanes); % Create a controller for the vehicle
             end
             
             
@@ -367,23 +370,23 @@ classdef Vehicle < handle
         
         
         %% Function for plot 
-        function plot_ground_truth_vs_estimated(self, est_global_log)
+        function plot_ground_truth_vs_estimated(self)
             figure;
             subplot(3,1,1);
             plot( self.state_log(1,:), 'b', 'LineWidth', 1.5); hold on;
-            plot( self.observer.est_global_log(1,:), 'r--', 'LineWidth', 1.5);
+            plot( self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
             legend('Ground Truth X', 'Estimated X');
             title('X Position Comparison');
             
             subplot(3,1,2);
             plot( self.state_log(2,:), 'b', 'LineWidth', 1.5); hold on;
-            plot( est_global_log(2,:), 'r--', 'LineWidth', 1.5);
+            plot( self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
             legend('Ground Truth Y', 'Estimated Y');
             title('Y Position Comparison');
             
             subplot(3,1,3);
             plot( self.state_log(4,:), 'b', 'LineWidth', 1.5); hold on;
-            plot( est_global_log(4,:), 'r--', 'LineWidth', 1.5);
+            plot( self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
             legend('Ground Truth Speed', 'Estimated Speed');
             title('Speed Comparison');
             xlabel('Time (s)');

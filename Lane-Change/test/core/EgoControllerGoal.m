@@ -20,12 +20,8 @@ classdef EgoControllerGoal
             self.lim_slip_rate = lim_slip_rate;
             self.safety_factor = safety_factor;
             self.scenario = scenario;
-            % Set the speed limit based on the scenario
-            if self.scenario == 1
-                self.lim_speed = 33.33; % equal to 120 km/h
-            elseif self.scenario == 2
-                self.lim_speed = 16.67; % equal to 60 km/h
-            end
+            [self.lim_speed,~] = scenario.getLimitSpeed();
+
         end
     end
 end

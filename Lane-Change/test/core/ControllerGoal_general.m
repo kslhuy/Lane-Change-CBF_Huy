@@ -11,7 +11,7 @@ classdef ControllerGoal_general
         scenario; % Driving scenario (1 for highway, 2 for urban road)
     end
     methods
-        function self = EgoControllerGoal(initial_lane_id, direction_flag, desired_speed, lanes, lim_slip_angle, lim_acc, lim_slip_rate, safety_factor, scenario)
+        function self = ControllerGoal_general(initial_lane_id, direction_flag, desired_speed, lanes, lim_slip_angle, lim_acc, lim_slip_rate, safety_factor, scenario)
             % Calculate the target lateral position based on initial lane ID, direction of lane change, and lane width
             self.target_y = ((initial_lane_id + direction_flag) - 1) * lanes.lane_width + 0.5 * lanes.lane_width;
             self.target_speed = desired_speed;
@@ -20,12 +20,8 @@ classdef ControllerGoal_general
             self.lim_slip_rate = lim_slip_rate;
             self.safety_factor = safety_factor;
             self.scenario = scenario;
-            % Set the speed limit based on the scenario
-            if self.scenario == 1
-                self.lim_speed = 33.33; % equal to 120 km/h
-            elseif self.scenario == 2
-                self.lim_speed = 16.67; % equal to 60 km/h
-            end
+            [self.lim_speed,~] = scenario.getLimitSpeed();
+
         end
     end
 end

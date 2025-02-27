@@ -10,9 +10,9 @@ classdef Scenarios_config
             self.simulation_time = simulation_time;
             self.where = scenario_where;
         end
-
+        
         function [ulim,llim] = getLimitSpeed(self)
-
+            
             if self.where == "Highway"
                 ulim = 33.33;
                 llim = 23;
@@ -21,6 +21,15 @@ classdef Scenarios_config
                 llim = 12;
             end
         end
-
+        
+        function lane_width = getLaneWidth(self)
+            if self.where == "Highway"
+                lane_width = 3.6;% Highway lane width in meters
+            elseif self.where == "Urban"
+                lane_width = 3;
+            end
+        end
+        
+        
     end
 end

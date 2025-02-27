@@ -1,5 +1,6 @@
 classdef CLF_QP % an qp for surrounding vehicle that is changing the lane
     properties
+        controller;
         param_opt;
         param_sys;
         goal;
@@ -8,11 +9,13 @@ classdef CLF_QP % an qp for surrounding vehicle that is changing the lane
 
     end
     methods
-        function self = CLF_QP(cbf_param, veh_param, controller_goal, straightlane, other_vehicles)
-            self.param_opt = cbf_param;
-            self.param_sys = veh_param;
-            self.goal = controller_goal;
-            self.straightlane = straightlane;
+        function self = CLF_QP(controller)
+ 
+            self.controller = controller;
+            self.param_opt = controller.param_opt;
+            self.param_sys = controller.param_sys;
+            self.goal = controller.goal;
+            self.straightlane = controller.straightlane;
         end
         % GET_OPTIMAL_INPUT Computes the optimal control input for lane change
         %
@@ -58,7 +61,7 @@ classdef CLF_QP % an qp for surrounding vehicle that is changing the lane
                 0, v * cos(beta) / l_r; ...
                 1, 0];
             % if lane ID matches target lane
-            if lane_id == initial_lane_id + direction_flag;
+            if lane_id == initial_lane_id + direction_flag
                 Q = diag([10^-15, 10^-1, 10^(10), 0.5]);
             else
                 Q = diag([10^-15, 0.4, 10^(3), 1]);

@@ -41,9 +41,10 @@ classdef IDM_control % Extended Look-Ahead Controller for Lane-Changing Vehicles
             [car_fc, ~, ~] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag);
             
             if isempty(car_fc)
-                s = 100; % Assume large gap if no car ahead
+                disp('No car ahead'  );
+                disp(self.vehicle_number); 
+                s = 200; % Assume large gap if no car ahead
                 delta_v = 0;
-                % disp('No car ahead');
             else
                 s = car_fc.state(1) - x;
                 delta_v = v - car_fc.state(4);

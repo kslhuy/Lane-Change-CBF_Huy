@@ -14,15 +14,17 @@ classdef Controller < handle
             self.vehicle = vehicle;
             self.goal = controller_goal;% Set the goal state
             self.type = controller_type;
-            self.param_opt = method_param; % Set the optimization parameters
             self.param_sys = veh_param; % Set the vehicle system parameters
             self.straightlane = straightlane; % Set the straight lane information
 
             if self.type == "CBF_CLF_QP"
+                self.param_opt = ParamOptEgo(self.vehicle.dt); % Set the optimization parameters
+
                 % Use CBF_CLF_QP controller for the ego-vehicle
                 self.logic_ctrl = CLF_CBF_QP(self);
             
             elseif self.type == "CLF_QP"
+                self.param_opt = ParamOptSurroundingVeh(self.vehicle.dt); % Set the optimization parameters
                 % Use CLF_QP controller for the surrounding vehicle
                 self.logic_ctrl = CLF_QP(self);
             
@@ -31,11 +33,14 @@ classdef Controller < handle
                 self.logic_ctrl = CACC(self);
             
             elseif self.type == "IDM"
+                self.param_opt = ParamOptEgo(self.vehicle.dt); % Set the optimization parameters
                 % Use IDM controller for the surrounding vehicle
                 self.logic_ctrl = IDM_control(self);
             
             elseif self.type == "CIDM"
-                % Use IDM controller for the surrounding vehicle
+                self.param_opt = ParamOptEgo(self.vehicle.dt); % Set the optimization parameters
+
+                % Use CIDM controller for the surrounding vehicle
                 self.logic_ctrl = CIDM_control(self);
               
             elseif self.type == "MPC"
@@ -43,7 +48,7 @@ classdef Controller < handle
                 self.logic_ctrl = MPC(self);
             
             elseif self.type == "look_ahead"
-                % Use MPC controller for the surrounding vehicle
+                self.param_opt = ParamOptEgo(self.vehicle.dt); % Set the optimization parameters
                 self.logic_ctrl = look_ahead_Control(self);
             
             else
@@ -114,7 +119,7 @@ classdef Controller < handle
             
             range_check = 100;
 
-            car_fc = [];
+            car_fc = []; % car_fc is the closest leading vehicle in the current lane (vehicle fc)
             carfc_range = x + range_check;
             for j = 1:length(current_lane_vehicles)
                 if current_lane_vehicles(j).state(1) <= carfc_range
@@ -123,9 +128,9 @@ classdef Controller < handle
                 end
             end
 
-            car_bt = [];
+            car_bt = [];% car_bt is the closeset vehicle in the target lane that is behind ego vehicle (vehicle bt)
             car_bt_range = x - range_check;
-            car_ft = [];
+            car_ft = [];% car_ft is the closet leading vehicle in the target lane (vehicle ft)
             carft_range = x + range_check;
             
             for i = 1:length(target_lane_vehicles)

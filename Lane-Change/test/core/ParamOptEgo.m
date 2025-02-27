@@ -26,12 +26,12 @@ classdef ParamOptEgo
 
 
         %% IDM parameters
-        alpha = 1; % Maximum acceleration
-        beta = 2;   % Comfortable deceleration
-        v0 = 120;       % Desired velocity in free flow
+        alpha = 2; % Maximum acceleration
+        beta = 3;   % Comfortable deceleration
+        v0 = 33;       % Desired velocity in free flow
         delta = 4; % Acceleration exponent
-        T = 1;         % Safe time headway
-        s0 = 4;       % Minimum gap distance
+        T = 0.4;         % Safe time headway
+        s0 = 8;       % Minimum gap distance
 
     end
     methods
