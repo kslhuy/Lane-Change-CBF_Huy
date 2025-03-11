@@ -5,142 +5,131 @@ classdef Attack_module < handle
         network_jitter;      % Maximum network jitter in seconds
         packet_loss_rate;    % Probability of packet loss (0 to 1)
         scenario;            % Struct with attack scenario details
+        dt;                  % Time step for simulation
     end
     
     methods
         % Constructor with default values
-        function self = Attack_module()
+        function self = Attack_module(dt)
             % Initialize default values for network jitter and packet loss rate
             self.network_jitter = 0.05;    % 50ms jitter
             self.packet_loss_rate = 0.1;   % 10% packet loss rate
-            self.scenario = struct('type', 'none'); % Default: no scenario
+            self.dt = dt;
+            self.scenario = struct('type', {},'target_vehicle_id',{} , 'start_time', {}, 'end_time', {}, ...
+                'attack_type', {}, 'fault_intensity', {},'data_type',{} ,'attack_row',{}); % Empty array
         end
-
+        
         function setScenario(self, scenario_type, scenario_params)
-            % SETSCENARIO Configures the attack scenario.
-            %
-            % Inputs:
-            %   scenario_type   - Type of scenario ('time_based' or 'none').
-            %   scenario_params - Struct with scenario details (for 'time_based': 
-            %                     start_time, end_time, attack_type, fault_intensity).
-            
+            % SETSCENARIO Appends a new attack scenario.
             switch scenario_type
                 case 'time_based'
-                    % Validate required fields
-                    required_fields = {'start_time', 'end_time', 'attack_type', 'fault_intensity'};
+                    required_fields = {'target_vehicle_id' ,'start_time', 'end_time', 'attack_type', 'fault_intensity','data_type' , 'attack_row'};
                     for i = 1:length(required_fields)
                         if ~isfield(scenario_params, required_fields{i})
                             error('Missing required field: %s', required_fields{i});
                         end
                     end
-                    self.scenario = struct('type', 'time_based', ...
-                                          'start_time', scenario_params.start_time, ...
-                                          'end_time', scenario_params.end_time, ...
-                                          'attack_type', scenario_params.attack_type, ...
-                                          'fault_intensity', scenario_params.fault_intensity);
+                    % Append new scenario to the array
+                    new_scenario = struct('type', 'time_based', ...
+                        'target_vehicle_id', scenario_params.target_vehicle_id, ...
+                        'start_time', scenario_params.start_time, ...
+                        'end_time', scenario_params.end_time, ...
+                        'attack_type', scenario_params.attack_type, ...
+                        'fault_intensity', scenario_params.fault_intensity,...
+                        'data_type',scenario_params.data_type,...
+                        'attack_row',scenario_params.attack_row);
+                    self.scenario(end+1) = new_scenario;
                 case 'none'
-                    self.scenario = struct('type', 'none');
+                    % Clear all scenarios
+                    self.scenario = struct('type', {}, 'start_time', {}, 'end_time', {}, ...
+                        'attack_type', {}, 'fault_intensity', {} , 'target',{}, 'attack_row',{}); % Empty array
                 otherwise
                     error('Unknown scenario type. Use "time_based" or "none".');
             end
         end
+        
+        % Simulate cyber-attack on global data (similar changes apply)
+        function [x_hat_i_j , original_data] = SetGlobalAttack(self, vehicle_id, x_hat_i_j, instant_idx)
 
-        % Simulate cyber-attack on global data for a specific vehicle
-        function x_hat_i_j = SetGlobalAttack(self, j, x_hat_i_j, attacker_id, attack_type, fault_intensity, attacked_data)
-            % SETGLOBALATTACK Simulates a cyber-attack on global vehicle communication data.
-            %
-            % Inputs:
-            %   j               - Index of the vehicle being attacked.
-            %   x_hat_i_j       - Global data matrix (e.g., 6x1 vector: [position; acceleration]).
-            %   attacker_id     - ID of the vehicle simulating the attack.
-            %   attack_type     - Type of attack ('faulty', 'bias', 'scaling', 'dos').
-            %   fault_intensity - Intensity of the attack (scalar or vector).
-            %   attacked_data   - Data to attack ('position', 'acceleration', 'all').
-            %
-            % Output:
-            %   x_hat_i_j       - Modified global data matrix including the simulated attack.
-
-            % Apply attack only if the vehicle is the attacker
-            if j == attacker_id
-                % Determine rows to attack based on attacked_data
-                attack_rows = self.GetAttackRows_global(attacked_data, size(x_hat_i_j, 1));
-                
-                % Apply the specified attack type
-                switch attack_type
-                    case 'faulty'
-                        % Add Gaussian noise to selected rows
-                        x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + randn(size(attack_rows)) * fault_intensity;
-                    case 'bias'
-                        % Add a constant offset to selected rows
-                        x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + fault_intensity;
-                    case 'scaling'
-                        % Scale the selected rows by a factor
-                        x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) * (1 + fault_intensity);
-                    case 'dos'
-                        % Simulate packet loss with probability packet_loss_rate
-                        if rand < self.packet_loss_rate
-                            x_hat_i_j(attack_rows) = NaN;
-                        end
-                    otherwise
-                        error('Unknown attack type. Choose "faulty", "bias", "scaling", or "dos".');
+            timestamp = instant_idx * self.dt; %convert to seconds
+            original_data = x_hat_i_j; % Preserve original for layering attacks
+            if isempty(self.scenario) 
+                % disp('No attacks to apply');
+                return;
+            end
+            
+            for i = 1:length(self.scenario)
+                if (strcmp(self.scenario(i).type, 'time_based') && ...
+                        (strcmp(self.scenario(i).data_type, 'global') || strcmp(self.scenario(i).data_type, 'both')) && ...
+                        ismember(vehicle_id ,self.scenario(i).target_vehicle_id) && ...
+                        timestamp >= self.scenario(i).start_time && ...
+                        timestamp <= self.scenario(i).end_time)
+                    
+                    attack_type = self.scenario(i).attack_type;
+                    fault_intensity = self.scenario(i).fault_intensity;
+                    
+                    attack_rows = self.GetAttackRows_global(self.setScenario(i).attack_row, size(x_hat_i_j, 1));
+                    switch attack_type
+                        case 'faulty'
+                            x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + randn(size(attack_rows)) * fault_intensity;
+                        case 'bias'
+                            x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + fault_intensity;
+                        case 'scaling'
+                            x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) * (1 + fault_intensity);
+                        case 'dos'
+                            if rand < self.packet_loss_rate
+                                x_hat_i_j(attack_rows) = NaN;
+                            end
+                        otherwise
+                            warning('Unknown attack type in scenario %d: %s', i, attack_type);
+                    end
                 end
             end
         end
-
+        
         % Simulate cyber-attack on local aggregated data
-        function x_bar_j = SetLocalAttack(self, x_bar_j, timestamp, attack_type, fault_intensity, attacked_data)
-            % SETLOCALATTACK Simulates a cyber-attack on local aggregated data.
-            %
-            % Inputs:
-            %   x_bar_j         - Local aggregated data (e.g., 6x1 vector).
-            %   timestamp       - Timestamp when the data was generated (unused here but included for flexibility).
-            %   attack_type     - Type of attack ('faulty', 'bias', 'scaling', 'delay', 'dos').
-            %   fault_intensity - Intensity of the attack (scalar or vector).
-            %   attacked_data   - Data to attack ('position', 'velocity', 'all').
-            %
-            % Output:
-            %   x_bar_j         - Modified local data including the simulated attack.
+        function [x_bar_j,original_data] = SetLocalAttack(self,vehicle_id, x_bar_j, instant_idx)
 
-            % Persistent buffer for delayed data
-            persistent delayed_data;
-            if isempty(delayed_data)
-                delayed_data = [];
+            
+            timestamp = instant_idx * self.dt; %convert to seconds
+            original_data = x_bar_j; % Preserve original for layering attacks
+            % SETLOCALATTACK Simulates attacks based on all active scenarios.
+            if isempty(self.scenario)
+                % disp('No attacks to apply');
+                return; % No attacks to apply
             end
 
-            % Determine rows to attack based on attacked_data
-            attack_rows = self.GetAttackRows_global(attacked_data, size(x_bar_j, 1));
-            
-            % Apply the specified attack type
-            switch attack_type
-                case 'faulty'
-                    % Add Gaussian noise to selected rows
-                    x_bar_j(attack_rows) = x_bar_j(attack_rows) + randn(size(attack_rows)) * fault_intensity;
-                case 'bias'
-                    % Add a constant offset to selected rows
-                    x_bar_j(attack_rows) = x_bar_j(attack_rows) + fault_intensity;
-                case 'scaling'
-                    % Scale the selected rows by a factor
-                    x_bar_j(attack_rows) = x_bar_j(attack_rows) * (1 + fault_intensity);
-                case 'delay'
-                    % Simulate delayed data arrival
-                    delay_time = 2; % Delay in seconds
-                    current_time = toc; % Current time in seconds since program start
-                    delayed_data = [delayed_data; current_time + delay_time, x_bar_j(:)'];
-                    ready_idx = delayed_data(:,1) <= current_time;
-                    if any(ready_idx)
-                        x_bar_j = delayed_data(ready_idx, 2:end)';
-                        delayed_data(ready_idx,:) = [];
-                    else
-                        x_bar_j = NaN(size(x_bar_j)); % No data ready yet
+
+            for i = 1:length(self.scenario)
+                if strcmp(self.scenario(i).type, 'time_based') && ...
+                        (strcmp(self.scenario(i).data_type, 'local') || strcmp(self.scenario(i).data_type, 'both')) && ...
+                        ismember(vehicle_id , self.scenario(i).target_vehicle_id) && ...
+                        timestamp >= self.scenario(i).start_time && ...
+                        timestamp <= self.scenario(i).end_time
+                    attack_type = self.scenario(i).attack_type;
+                    fault_intensity = self.scenario(i).fault_intensity;
+                    
+                    attack_rows = self.GetAttackRows_global(self.scenario(i).attack_row, size(x_bar_j, 1));
+                    
+                    switch attack_type
+                        case 'faulty'
+                            x_bar_j(attack_rows) = x_bar_j(attack_rows) + randn(size(attack_rows)) * fault_intensity;
+                        case 'bias'
+                            x_bar_j(attack_rows) = x_bar_j(attack_rows) + fault_intensity;
+                        case 'scaling'
+                            x_bar_j(attack_rows) = x_bar_j(attack_rows) * (1 + fault_intensity);
+                        case 'dos'
+                            if rand < self.packet_loss_rate
+                                x_bar_j(attack_rows) = NaN;
+                            end
+                            % Add 'delay' logic here if needed, adjusting for timestamp
+                        otherwise
+                            warning('Unknown attack type in scenario %d: %s', i, attack_type);
                     end
-                case 'dos'
-                    % Always deny service
-                    x_bar_j = NaN(size(x_bar_j));
-                otherwise
-                    error('Unknown attack type. Choose "faulty", "bias", "scaling", "delay", or "dos".');
+                end
             end
         end
-
+        
         % Helper function to get rows to attack
         function attack_rows = GetAttackRows_global(self, attacked_data, num_rows)
             % GETATTACKROWS_GLOBAL Determines the rows to attack based on the attacked data type.
@@ -151,16 +140,20 @@ classdef Attack_module < handle
             %
             % Output:
             %   attack_rows   - Rows to attack in the data matrix.
-
+            
             % Define rows based on data type (assumes 6x1 vector: 1-3 position, 4-6 acceleration)
-            if strcmp(attacked_data, 'position')
-                attack_rows = 1:2; % Position rows
+            if strcmp(attacked_data, 'X')
+                attack_rows = 1; % Position rows
+            elseif strcmp(attacked_data, 'Y')
+                attack_rows = 2;
+            elseif strcmp(attacked_data, 'heading')
+                attack_rows = 3;
             elseif strcmp(attacked_data, 'velocity')
                 attack_rows = 4; % Velocity rows
             else
                 attack_rows = 1:num_rows; % All rows
             end
-
+            
             % Ensure attack_rows do not exceed num_rows
             attack_rows = attack_rows(attack_rows <= num_rows);
         end

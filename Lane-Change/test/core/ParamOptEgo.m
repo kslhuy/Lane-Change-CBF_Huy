@@ -21,8 +21,8 @@ classdef ParamOptEgo
         F = [0; 0; 0; 0; 0];
         %% Look ahead parameters
 
-        hi = 0.4;
-        ri = 8;
+        hi = 0.4; %Time-gap
+        ri = 8; 
 
 
         %% IDM parameters
@@ -33,10 +33,24 @@ classdef ParamOptEgo
         T = 0.4;         % Safe time headway
         s0 = 8;       % Minimum gap distance
 
+        %% CACC
+
+        % Control GAin
+        k_s = 1;
+        k_v = 3;
+        k_a = 0.1;
+        K;
+
+
+        % low pass filter
+        tau_filter = 0.02;
+        
     end
     methods
         function self = ParamOptEgo(dt)
             self.dt = dt;
+            self.K = [self.k_s , self.k_v ];
+
         end
     end
 end

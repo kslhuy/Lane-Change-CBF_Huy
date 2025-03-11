@@ -23,5 +23,15 @@ classdef ControllerGoal_general
             [self.lim_speed,~] = scenario.getLimitSpeed();
 
         end
+
+        
+        function self = updateGoal(self, new_target_y, new_target_speed)
+            if t == 50  % Change the goal at time step 50
+                 self.target_y = new_target_y;
+                self.target_speed = new_target_speed;
+            end
+            
+        end
+
     end
 end

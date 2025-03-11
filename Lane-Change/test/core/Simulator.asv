@@ -92,7 +92,6 @@ classdef Simulator
                         % disp("pause")
                         pause(expected_time - elapsed_time - self.dt);
                     end
-        
                 end
             end
             % Log the state and input history of the ego vehicle
@@ -108,7 +107,7 @@ classdef Simulator
         %% Function for plot
 
         function [] = plot_movement_log(self,vehicles, scenarios_config, num_vehicles)
-            figure;
+            figure(2);
 
             % Define vehicle labels for the legend
             vehicle_labels = arrayfun(@(i) sprintf('Vehicle %d', i), 1:num_vehicles, 'UniformOutput', false);
@@ -194,16 +193,12 @@ classdef Simulator
             xlabel('s')
             ylim([-0.08, 0.08])
             % legend(vehicle_labels)
-
-            title('Real State');
-
             hold off
         end
 
         %% Function for plotting relative position and speed history
         function [] = plot_relative_movement_log(self, vehicles, scenarios_config, num_vehicles)
-            figure;
-            title('Real relative State');
+            figure(2);
 
             % Define vehicle labels for legend
             vehicle_labels = arrayfun(@(i) sprintf('Vehicle %d - Vehicle %d', i-1 ,i ), 2:num_vehicles, 'UniformOutput', false);

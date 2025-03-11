@@ -69,13 +69,17 @@ direction_flag = 0; % 1 stands for changing to the left adjacent lane, 0 stands 
 param_sys = ParamVeh();
 
 %% Set Attack senario
-attack_module = Attack_module();
+attack_module = Attack_module(Scenarios_config.dt);
 % Define a time-based attack scenario
 % Attack with 'bias' type between 5 and 10 seconds with intensity 0.5
-scenario_Attack_params = struct('start_time', 5, ...      % Start at 5 seconds
+scenario_Attack_params = struct('target_vehicle_id',2, ...
+                        'start_time', 5, ...      % Start at 5 seconds
                          'end_time', 10, ...       % End at 10 seconds
                          'attack_type', 'bias', ... % Bias attack
-                         'fault_intensity', 0.5);   % Add 0.5 to data
+                         'fault_intensity', 0.5, ... % Add 0.5 to data
+                         'data_type', 'local', ...     % Local attack
+                         'attack_row' , 'velocity');   % 'velocity' , 'X' , 'Y' , 'all' data
+
 attack_module.setScenario('time_based', scenario_Attack_params);
 
 %% END Attack senario

@@ -28,57 +28,29 @@ classdef Weight_Trust_module < handle
 
 
         % Compute trusted neighbors
-        function neighbors = get_trusted_neighbors(self ,car_idx ,trust_scores)
+        function trusted_neighbors_set = get_trusted_neighbors(self ,car_idx ,trust_scores)
             % Compute trusted neighbors for each vehicle based on current trust scores
             %
             % Returns:
             %   trusted_neighbors_set - Cell array where trusted_neighbors_set{i} contains indices
             %                       (1 to n) of trusted neighbors of vehicle i
 
-            trust_scores_matrix = [];
-            for i = 1:self.num_vehicles
-                trust_scores_matrix = [trust_scores_matrix ,trust_scores(i) ];
-            end
+            trusted_neighbors_set = cell(self.num_vehicles, 1);
+            trust_scores_matrix = reshape(cell2mat(trust_scores), [], 1);
+
             neighbors = find(self.graph(car_idx, :)); % Initially set as direct neighbors
-               
-           
-            % Remove neighbors whose trust score is below the threshold
-            low_trust_mask = trust_scores_matrix(neighbors) <= self.trust_threshold;
-            neighbors(low_trust_mask) = []; % Remove untrusted neighbors
-    
+                
+                % Remove neighbors whose trust score is below the threshold
+                low_trust_mask = trust_i(neighbors) <= self.trust_threshold;
+                neighbors(low_trust_mask) = []; % Remove untrusted neighbors
+        
+                trusted_neighbors_set{i} = neighbors;
         end
 
 
-
-        % Compute weight matrix based on trusted neighbors
-        function weights_Dis = calculate_weights_Trust(self,vehicle_index , trust_scores)
-            % Using weight matrix priotizing local estimation
-
-            virtual_graph = self.generate_virtual_graph(self.graph, vehicle_index);
-            trusted_neighbors_set = self.get_trusted_neighbors(vehicle_index,trust_scores);
-            num_nodes = size(virtual_graph, 1);
-            weights_Dis = zeros(1, num_nodes);
-
-
-            N_i_t = trusted_neighbors_set; % Trusted neighbors (indices 1 to n)
-            n_w_i = max(self.kappa, length(N_i_t) + 1 + 1); % +1 for self
-            weight = 1 / n_w_i;
-
-            % Set self-weight: W(i+1, i+1)
-            weights_Dis(1, vehicle_index+1) = weight;
-
-            % Set weights for trusted neighbors: W(1, l+1)
-            for l = N_i_t
-                weights_Dis(1, l+1) = weight;
-            end
-
-            % Set weight to virtual node: W(vehicle_index+1, 1)
-            weights_Dis(1, 1) = 1 - (length(N_i_t)+1) * weight;
-
-        end
 
         % % Compute weight matrix based on trusted neighbors
-        % function W = calculate_weights_Trust(self,vehicle_index , trust_scores)
+        % function W_small = calculate_weights_Trust(self,vehicle_index , trust_scores)
         %     % Compute weight matrix W based on trusted neighbors for a virtual graph
         %     %
         %     % Parameters:
@@ -86,32 +58,65 @@ classdef Weight_Trust_module < handle
         %     %
         %     % Returns:
         %     %   W            - Weight matrix (n+1 x n+1)
-
+        % 
         %     virtual_graph = self.generate_virtual_graph(self.graph, vehicle_index);
-        %     trusted_neighbors_set = self.get_trusted_neighbors( vehicle_index , trust_scores);
+        %     trusted_neighbors_set = self.get_trusted_neighbors(trust_scores);
         %     num_nodes = size(virtual_graph, 1);
-        %     W = zeros(num_nodes, num_nodes);
-
-        %     for i = 1:self.num_vehicles
-        %         N_i_t = trusted_neighbors_set{i}; % Trusted neighbors (indices 1 to n)
-        %         n_w_i = max(self.kappa, length(N_i_t) + 1); % +1 for self
-        %         weight = 1 / n_w_i;
-
-        %         % Set self-weight: W(i+1, i+1)
-        %         W(i+1, i+1) = weight;
-
-        %         % Set weights for trusted neighbors: W(i+1, l+1)
-        %         for l = N_i_t
-        %             W(i+1, l+1) = weight;
-        %         end
-
-        %         % Set weight to virtual node: W(i+1, 1)
-        %         W(i+1, 1) = 1 - length(N_i_t) * weight;
+        %     W_small = zeros(num_nodes, 1);
+        % 
+        % 
+        %     N_i_t = trusted_neighbors_set{i}; % Trusted neighbors (indices 1 to n)
+        %     n_w_i = max(self.kappa, length(N_i_t) + 1); % +1 for self
+        %     weight = 1 / n_w_i;
+        % 
+        %     % Set self-weight: W(i+1, i+1)
+        %     W(i+1, i+1) = weight;
+        % 
+        %     % Set weights for trusted neighbors: W(i+1, l+1)
+        %     for l = N_i_t
+        %         W(i+1, l+1) = weight;
         %     end
+        % 
+        %     % Set weight to virtual node: W(i+1, 1)
+        %     W(i+1, 1) = 1 - length(N_i_t) * weight;
+        % 
         % end
 
+        % Compute weight matrix based on trusted neighbors
+        function W = calculate_weights_Trust(self,vehicle_index , trust_scores)
+            % Compute weight matrix W based on trusted neighbors for a virtual graph
+            %
+            % Parameters:
+            %   virtual_graph - Adjacency matrix of the virtual graph (n+1 x n+1)
+            %
+            % Returns:
+            %   W            - Weight matrix (n+1 x n+1)
 
-        function weights_Dis = calculate_weights_Defaut(self ,  vehicle_index )
+            virtual_graph = self.generate_virtual_graph(self.graph, vehicle_index);
+            trusted_neighbors_set = self.get_trusted_neighbors(trust_scores);
+            num_nodes = size(virtual_graph, 1);
+            W = zeros(num_nodes, num_nodes);
+
+            for i = 1:self.num_vehicles
+                N_i_t = trusted_neighbors_set{i}; % Trusted neighbors (indices 1 to n)
+                n_w_i = max(self.kappa, length(N_i_t) + 1); % +1 for self
+                weight = 1 / n_w_i;
+
+                % Set self-weight: W(i+1, i+1)
+                W(i+1, i+1) = weight;
+
+                % Set weights for trusted neighbors: W(i+1, l+1)
+                for l = N_i_t
+                    W(i+1, l+1) = weight;
+                end
+
+                % Set weight to virtual node: W(i+1, 1)
+                W(i+1, 1) = 1 - length(N_i_t) * weight;
+            end
+        end
+
+
+        function W = calculate_weights_Defaut(self ,  vehicle_index )
             % Function to calculate consensus weights for a given virtual graph
             %
             % Parameters:
@@ -143,9 +148,6 @@ classdef Weight_Trust_module < handle
                     end
                 end
             end
-
-            weights_Dis = W(vehicle_index + 1,:); % array (1 x 'nb_vehicles + 1' )
-
         end
 
         function Vj = generate_virtual_graph(self,graph, vehicle_index)

@@ -13,7 +13,11 @@ classdef Vehicle < handle
         state_log; % history of states
         input; % current input of the vehicle
         input_log; % history of inputs (speed and slip angle for the ego vehicle and lane change vehicle; speed and acceleartion for normal vehicles)
-        controller; % controller used for lane changing
+        input_1_log;
+        input_2_log;
+        controller;
+        controller2;
+
         dt; % time gap for simulation
         total_time_step; % total time steps for simulation
         lanes;
@@ -30,84 +34,159 @@ classdef Vehicle < handle
         center_communication; % Add a reference to the CenterCommunication object
         graph;
         trust_log;
-        
+        state5;
+
     end
     methods
         function self = Vehicle(vehicle_number , typeController, veh_param, state_initial, initial_lane_id, lanes, direction_flag, acc_flag, scenarios_config,weight_module)
-            
+
             self.scenarios_config = scenarios_config;
             self.dt = scenarios_config.dt;
             self.total_time_step = scenarios_config.simulation_time/self.dt;
-            
+
             self.vehicle_number = vehicle_number ;
-            
+
             self.state = state_initial;
-            
+            self.state5 = [state_initial ; 0];
+
             self.param = veh_param;
-            
+
             % at first time step, the current input is same as initial input
             self.state_log = state_initial;
-            
+
             % the first element of inputs' history
             self.initial_lane_id = initial_lane_id;
             self.lane_id = initial_lane_id;
             self.lanes = lanes;
             self.direction_flag = direction_flag;
             self.acc_flag = acc_flag;
-            
+
             self.other_log = [initial_lane_id; 1];
-            
+
             self.typeController = typeController;
             % at first time step, the current state of the vehicle is same to initial state
             self.input = [0;0]; % at first time step, the current input is same as initial input
             % the first element of states' history
             self.input_log = self.input;
-            
+
             self.weight_module = weight_module;
-            
-            
+
+
         end
-        
+
+
+        %% ----- Very important function -----
+        %% Assign the other vehicles to the ego vehicle , and many other things
+        function assign_neighbor_vehicle(self, other_vehicles, controller_goal ,typeController_2, center_communication, graph)
+            self.graph = graph;
+            disp('Assigning other vehicles');
+            self.other_vehicles = other_vehicles;
+
+            state_initial = self.state;
+            % local state of the ego vehicle
+            inital_local_state = state_initial;
+
+
+            %-------- To get global state
+            inital_global_state = state_initial;
+            for i = 1:length(other_vehicles) - 1
+                inital_global_state = [inital_global_state , state_initial];
+            end
+            %--------
+            %% Create an observer for the vehicle
+            self.observer = Observer(self, self.param ,inital_global_state, inital_local_state);
+
+            %% Create controller
+
+            connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
+
+            if self.typeController == "None"
+                self.controller = [];
+            else
+                param_opt = ParamOptEgo(self.dt);
+                self.controller = Controller(self,controller_goal , self.typeController, param_opt, self.param, self.lanes,connected_vehicles_idx); % Create a controller for the vehicle
+            end
+
+
+            if typeController_2 == "None"
+                self.controller2 = [];
+            else
+                param_opt = ParamOptEgo(self.dt);
+                self.controller2 = Controller(self,controller_goal , typeController_2, param_opt, self.param, self.lanes,connected_vehicles_idx); % Create a controller for the vehicle
+            end
+
+            self.num_vehicles = length(self.other_vehicles);
+            %% Create trust models for the vehicle
+            self.trip_models = arrayfun(@(x) TriPTrustModel(), 1:self.num_vehicles, 'UniformOutput', false);
+            self.trust_log = zeros(1, self.total_time_step, self.num_vehicles);
+            self.trust_log(1, 1, :) = 1; % Inital trust is 1 for all vehicle
+
+
+
+            %% Update inital value for center_communcation
+            self.center_communication = center_communication; % Initialize the CenterCommunication reference
+            self.center_communication.register_vehicle(self); % Register the vehicle with the central communication hub
+
+        end
+
         function update(self,instant_index)
-            
+
             %% Identify vehicles is connected with the ego vehicle's
-            connected_vehicles = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
+            connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
             %% Calculate trust and opinion scores directly in self.trust_log
-            calculateTrustAndOpinion(self, instant_index, connected_vehicles);
+            % calculateTrustAndOpinion(self, instant_index, connected_vehicles_idx);
+
+            calculateTrustAndOpinion2(self, instant_index, connected_vehicles_idx);
 
             %% Wiegth trust update
-            % self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :));
-            weights = self.weight_module.calculate_weights_Defaut(self.vehicle_number); % Matrix ('nb_vehicles + 1' x 'nb_vehicles + 1' )
-            weights_Dis = weights(self.vehicle_number + 1,:); % array (1 x 'nb_vehicles + 1' ) 
+            weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :));
+
+            % weights_Dis_defaut = self.weight_module.calculate_weights_Defaut(self.vehicle_number); % Matrix ('nb_vehicles + 1' x 'nb_vehicles + 1' )
+
+
             %% Update normal car dynamics , like controller and observer
             normal_car_update(self,instant_index , weights_Dis);
-            
+
             %% Send to center communication
-            self.center_communication.update_local_state(self.vehicle_number, self.observer.est_local_state_current);
-            self.center_communication.update_global_state(self.vehicle_number, self.observer.est_global_state_current);
+            self.center_communication.update_local_state(self.vehicle_number, self.observer.est_local_state_current , instant_index);
+            self.center_communication.update_global_state(self.vehicle_number, self.observer.est_global_state_current , instant_index);
             self.center_communication.update_trust(self.vehicle_number, self.trust_log(1, instant_index, :));
-            
+            self.center_communication.update_input(self.vehicle_number, self.input);
+
+
         end
-        
+
         function normal_car_update(self,instant_index , weights)
-            
+
             if self.typeController ~= "None"
                 % disp('Controller is not empty');
                 self.get_lane_id(self.state);
-                
+
                 %% Observer
                 self.observer.Local_observer(self.state);
                 self.observer.Distributed_Observer(instant_index , weights);
                 %% Controller
-                [~, u, e] = self.controller.get_optimal_input(self.state, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
-                
-                
-                %% Update new state
+                [~, u_1, e_1] = self.controller.get_optimal_input(self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
+                [~, u_2, e_2] = self.controller2.get_optimal_input(self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
+
+                % [~, u, e] = self.controller.get_optimal_input(self.state, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
+
+                % gamma = min(self.trust_log(1, instant_index, :));
+                gamma = mean(self.trust_log(1, instant_index, :));
                 % calculate the optimal input of the vehicle
-                dx = self.Bicycle(self.state(1:3), [self.state(4) + self.dt * u(1); u(2)]); % calculate dX through nonlinear model
-                self.state = self.state + self.dt .* [dx; u(1)]; % update the state of the vehicle
-                self.input = u; % update the input
-                
+                U_target = (1 - gamma)*u_1 + gamma*u_2;
+
+                %using low pass filter to smooth the input
+                tau_filter = 0.02;
+                U_final = self.input + tau_filter*(U_target - self.input) ; % self.input is last input  
+
+                %% Update new state
+                self.Bicycle(self.state(1:3), U_final); % calculate dX through nonlinear model
+                % self.Bicycle_delay_a(self.state, U_final);
+                % self.Bicycle_acc_update(self.state, u_1);
+
+
+
             else
                 %% Observer
                 self.observer.Local_observer(self.state);
@@ -116,10 +195,10 @@ classdef Vehicle < handle
                 self.get_lane_id(self.state);
                 speed = self.state(4);
                 acceleration = self.input(1);
-                
+
                 self.state(4) = self.state(4) + acceleration * self.dt; % new speed
                 % speed limit according to different scenarios
-                [ulim, llim] = self.scenarios_config.getLimitSpeed(); 
+                [ulim, llim] = self.scenarios_config.getLimitSpeed();
 
                 if self.state(4) >= ulim
                     self.state(4) = ulim;
@@ -130,17 +209,23 @@ classdef Vehicle < handle
                 self.state = [self.state(1) + dx; self.state(2); self.state(3); self.state(4)]; % new state of normal cars
                 %  no need update input , beacuse the input is constant
                 self.input = [0;0]; % update the input
-                
-                e = 0;
+
+                u_1 = 0;
+                u_2 = 0;
+                e_1 = 0;
+                e_2 = 0;
             end
             %% Save the state and input
             self.state_log = [self.state_log, self.state]; % update the state history
-            self.input_log = [self.input_log, self.input]; % update the input history
-            self.other_log = [self.other_log(1, :), self.lane_id; self.other_log(2, :), e];
-            
-            
+            self.input_log = [self.input_log, self.input]; % update the input final history
+            self.input_1_log = [self.input_1_log, u_1]; % update the input 1 history
+            self.input_2_log = [self.input_2_log, u_2]; % update the input 2 history
+
+            self.other_log = [self.other_log(1, :), self.lane_id; self.other_log(2, :), e_1];
+
+
         end
-        
+
         function ego_vehicle_update(self)
             self.get_lane_id(self.state);
             [self.acc_flag, u, e] = self.controller.get_optimal_input(self.state, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag, self.acc_flag);
@@ -153,11 +238,11 @@ classdef Vehicle < handle
             self.input_log = [self.input_log, self.input]; % update the input history
             self.other_log = [self.other_log(1, :), self.lane_id; self.other_log(2, :), e];
         end
-        
+
         function lane_change_car_update(self)
             self.get_lane_id(self.state);
             [n, u, e] = self.controller.get_optimal_input(self.state, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag , 0);
-            
+
             % calculate the optimal input of the vehicle
             dx = self.Bicycle(self.state(1:3), [self.state(4) + self.dt * u(1); u(2)]); % calculate dX through nonlinear model
             self.state = self.state + self.dt .* [dx; u(1)]; % update the state of the vehicle
@@ -166,123 +251,154 @@ classdef Vehicle < handle
             self.input_log = [self.input_log, self.input]; % update the input history
             self.other_log = [self.other_log(1, :), self.lane_id; self.other_log(2, :), e];
         end
-        
-        function dX = Bicycle(self, state, input)
-            
+
+        function Bicycle(self, state, input)
+
             l_f = self.param.l_f;
             l_r = self.param.l_r;
             l = l_f + l_r;
             [x, y, phi] = self.unpack_state(state);
-            [v, beta] = self.unpack_input(input); % input is V beacause its aldready convert in calling fucntion
+            [a, beta] = self.unpack_input(input); % input is V beacause its aldready convert in calling fucntion
+            v = self.state(4) + self.dt * a;
             delta_f = atan(l*tan(beta)/l_r); % calculate front steering angle from slip angle
             xdot = v * cos(phi+beta); % velocity in x direction
             ydot = v * sin(phi+beta); % velocity in y direction
             phidot = v * sin(beta) / l_r; % yaw rate
             dX = [xdot; ydot; phidot];
+
+            self.state = self.state + self.dt .* [dX; input(1)]; % update the state of the vehicle
+            self.input = input; % update the input
         end
-        
-        function Bicycle_second_v_update(self, state)
+
+        function  Bicycle_delay_a(self, state, input)
+
+            l_f = self.param.l_f;
+            l_r = self.param.l_r;
+            l = l_f + l_r;
+            [x, y, phi , v] = self.unpack_state_v2(state);
+            [a, beta] = self.unpack_input(input); % input is V beacause its aldready convert in calling fucntion
+            v_dot =  a - (1/self.param.tau)*v;
+
+            delta_f = atan(l*tan(beta)/l_r); % calculate front steering angle from slip angle
+            xdot = v * cos(phi+beta); % velocity in x direction
+            ydot = v * sin(phi+beta); % velocity in y direction
+            phidot = v * sin(beta) / l_r; % yaw rate
+            dX = [xdot; ydot; phidot ; v_dot];
+
+            self.input = input; % update the input
+            self.state = self.state + self.dt .* dX;
+        end
+
+        function Bicycle_acc_update(self, state , input)
             % Unpack parameters
             l_f = self.param.l_f;
             l_r = self.param.l_r;
             l = l_f + l_r;
-            
-            % Unpack state
-            [x, y, phi, v] = self.unpack_state(state);
-            a = state(5); % Acceleration
-            
-            % Unpack inputs
-            [non, input, e] = self.controller.get_optimal_input(self.state, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag);
-            
+
+            % Unpack state (5 states: x, y, phi, v, a)
+            % if length(state) == 4 % If only 4 states are provided, assume a = 0 initially
+            %     [x, y, phi, v] = self.unpack_state_v2(state);
+            %     a = 0;
+            %     state = [state; 0]; % Extend state to 5 elements
+            % else % Already 5 states
+            %     [x, y, phi, v] = self.unpack_state_v2(state(1:4));
+            %     a = state(5); % Acceleration
+            % end
+            [x, y, phi, v] = self.unpack_state_v2(state(1:4));
+
+
+
             u_a = input(1); % input Jerk (rate of change acceleration)
             beta = input(2); % Slip angle
-            
+
             % Calculate front steering angle
             delta_f = atan(l * tan(beta) / l_r);
-            
+
             % Extended model dynamics
             xdot = v * cos(phi + beta); % Velocity in x direction
             ydot = v * sin(phi + beta); % Velocity in y direction
             phidot = v * sin(beta) / l_r; % Yaw rate
-            vdot = a; % Acceleration
-            adot = 1/self.param.tau * u_a - 1/self.param.tau*a; % Jerk
+            vdot = self.state5(5); % Acceleration
+            adot = (1/self.param.tau) * u_a - (1/self.param.tau)*self.state5(5); % Jerk
             % Return state derivative
             dX = [xdot; ydot; phidot; vdot; adot];
-            
-            self.state = self.state + self.dt .* dX; % update the state of the vehicle
-            
-            self.input = u; % update the input
-            self.state_log = [self.state_log, self.state]; % update the state history
-            self.input_log = [self.input_log, self.input]; % update the input history
-            self.other_log = [self.other_log(1, :), self.lane_id; self.other_log(2, :), e];
+
+            self.state5 = self.state5 + self.dt .* dX;
+            self.state = self.state5(1:4); % update the state of the vehicle
+
+            self.input = input; % update the input
+            % self.state_log = [self.state_log, self.state]; % update the state history
+            % self.input_log = [self.input_log, self.input]; % update the input history
+            % self.other_log = [self.other_log(1, :), self.lane_id; self.other_log(2, :), e];
         end
-        
+
         function [] = get_lane_id(self, state)
             if state(2) <= self.lanes.lane_width - 0.5 * self.param.width
                 self.lane_id = 1;
             else if state(2) <= self.lanes.lane_width + 0.5 * self.param.width
                     self.lane_id = 1.5;
-                else if state(2) <= 2 * self.lanes.lane_width - 0.5 * self.param.width
-                        self.lane_id = 2;
-                    else if state(2) <= 2 * self.lanes.lane_width + 0.5 * self.param.width
-                            self.lane_id = 2.5;
-                        else if state(2) <= 3 * self.lanes.lane_width - 0.5 * self.param.width
-                                self.lane_id = 3;
-                            else if state(2) <= 3 * self.lanes.lane_width + 0.5 * self.param.width
-                                    self.lane_id = 3.5;
-                                else if state(2) <= 4 * self.lanes.lane_width - 0.5 * self.param.width
-                                        self.lane_id = 4;
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
+            else if state(2) <= 2 * self.lanes.lane_width - 0.5 * self.param.width
+                    self.lane_id = 2;
+            else if state(2) <= 2 * self.lanes.lane_width + 0.5 * self.param.width
+                    self.lane_id = 2.5;
+            else if state(2) <= 3 * self.lanes.lane_width - 0.5 * self.param.width
+                    self.lane_id = 3;
+            else if state(2) <= 3 * self.lanes.lane_width + 0.5 * self.param.width
+                    self.lane_id = 3.5;
+            else if state(2) <= 4 * self.lanes.lane_width - 0.5 * self.param.width
+                    self.lane_id = 4;
+            end
+            end
+            end
+            end
+            end
+            end
             end
         end
-        
+
         function [speed, beta] = unpack_input(self, input)
             speed = input(1);
             beta = input(2);
         end
+
         function [x, y, phi] = unpack_state(self, state)
             x = state(1);
             y = state(2);
             phi = state(3);
         end
-        
+
         function [x, y, phi,v] = unpack_state_v2(self, state)
             x = state(1);
             y = state(2);
             phi = state(3);
             v = state(4);
         end
-        
 
 
-    
+
+
         function calculateTrustAndOpinion(self, instant_index, connected_vehicles_num)
-        
+
             %% Step 1: Calculate trust for direct vehicles
             received_trusts = []; % Store received trust scores of all direct vehicles
             received_vehicles = []; % Store vehicle indices providing trust scores
 
             for vehicle_direct = connected_vehicles_num
-                %% Identify vehicles directly measurable by the ego vehicle's sensor        
+                %% Identify vehicles directly measurable by the ego vehicle's sensor
                 if abs(vehicle_direct - self.vehicle_number) == 1
 
                     %% Get all the vehicles that are connected to the ego vehicle
                     connected_vehicles = [];
                     for v = connected_vehicles_num
                         connected_vehicles = [connected_vehicles; self.other_vehicles(v)];
-                    end 
+                    end
 
                     %% Calculate trust for direct vehicle
                     [self.trust_log(1, instant_index, vehicle_direct), ~,~, ~, ~, ~] = ...
                         self.trip_models{vehicle_direct}.calculateTrust(...
                         self, self.other_vehicles(vehicle_direct), self.other_vehicles(1),connected_vehicles, self.dt, self.dt);
                 end
-        
+
                 %% Store received trust values for opinion calculation
                 trust_score = self.center_communication.get_trust_score(vehicle_direct);
                 if ~isempty(trust_score)
@@ -290,7 +406,7 @@ classdef Vehicle < handle
                     received_vehicles = [received_vehicles; vehicle_direct];
                 end
             end
-        
+
             %% Step 2: Calculate opinion-based trust for non-direct vehicles
             if ~isempty(received_trusts)
                 for vehicle_id = 1:self.num_vehicles
@@ -298,16 +414,16 @@ classdef Vehicle < handle
                         self.trust_log(1, instant_index, vehicle_id) = 1; % Ego vehicle trust is 1
                         continue;
                     end
-        
+
                     %% If trust score is zero, compute opinion-based trust
                     if self.trust_log(1, instant_index, vehicle_id) == 0
-                        received_trusts_vehicle = received_trusts(:,:,vehicle_id); % Trust scores for vehicle_id
+                        received_trusts_vehicle = received_trusts(:,vehicle_id); % Trust scores for vehicle_id
                         non_zero_trusts = received_trusts_vehicle(received_trusts_vehicle ~= 0); % Filter zeros
                         non_zero_and_one_trusts = non_zero_trusts(non_zero_trusts ~= 1); % Filter ones
-        
+
                         new_received_vehicles = received_vehicles(received_trusts_vehicle ~= 0); % Filter zeros
                         new_received_vehicles = new_received_vehicles(non_zero_trusts ~= 1); % Filter ones
-        
+
                         if ~isempty(non_zero_and_one_trusts)
                             %% Opinion-based trust aggregation (Design 1)
                             opinion_weights = 1 ./ (1 + abs(new_received_vehicles - vehicle_id)); % Weight by distance
@@ -316,7 +432,7 @@ classdef Vehicle < handle
                         else
                             opinion_score = 0; % Default to zero if no valid trust scores
                         end
-        
+
                         self.trust_log(1, instant_index, vehicle_id) = opinion_score;
                     end
                 end
@@ -324,66 +440,104 @@ classdef Vehicle < handle
         end
 
 
-        %% ----- Very important function ----- 
-        %% Assign the other vehicles to the ego vehicle , and many other things 
-        function assign_neighbor_vehicle(self, other_vehicles, controller_goal , center_communication, graph)
-            self.graph = graph;
-            disp('Assigning other vehicles');
-            self.other_vehicles = other_vehicles;
-            
-            state_initial = self.state;
-            % local state of the ego vehicle
-            inital_local_state = state_initial;
-            
-            
-            %-------- To get global state
-            inital_global_state = state_initial;
-            for i = 1:length(other_vehicles) - 1
-                inital_global_state = [inital_global_state , state_initial];
+        function calculateTrustAndOpinion2(self, instant_index, connected_vehicles_num)
+
+            %% Step 1: Calculate trust for direct vehicles
+            received_trusts = []; % Store received trust scores of all connected vehicles
+            received_vehicles = []; % Store vehicle indices providing trust scores
+            ego_trust_in_connected = []; % Store ego vehicle's trust in connected vehicles
+
+            for vehicle_direct = connected_vehicles_num
+                %% Identify vehicles directly measurable by the ego vehicle's sensor
+                if abs(vehicle_direct - self.vehicle_number) == 1
+                    %% Get all the vehicles that are connected to the ego vehicle
+                    connected_vehicles = [];
+                    for v = connected_vehicles_num
+                        connected_vehicles = [connected_vehicles; self.other_vehicles(v)];
+                    end
+
+                    %% Calculate trust for direct vehicle
+                    [self.trust_log(1, instant_index, vehicle_direct), ~, ~, ~, ~, ~] = ...
+                        self.trip_models{vehicle_direct}.calculateTrust(...
+                        self, self.other_vehicles(vehicle_direct), self.other_vehicles(1), connected_vehicles, self.dt, self.dt);
+                end
+
+                %% Store received trust values and ego's trust for opinion calculation
+                trust_score = self.center_communication.get_trust_score(vehicle_direct);
+                if ~isempty(trust_score)
+                    received_trusts = [received_trusts; trust_score];
+                    received_vehicles = [received_vehicles; vehicle_direct];
+                    %% Store ego's trust in this connected vehicle (only for direct neighbors)
+                    if abs(vehicle_direct - self.vehicle_number) == 1
+                        ego_trust_in_connected = [ego_trust_in_connected; self.trust_log(1, instant_index, vehicle_direct)];
+                    else
+                        %% For non-direct vehicles, append a placeholder (e.g., 0) since trust isn't directly available
+                        ego_trust_in_connected = [ego_trust_in_connected; 0];
+                    end
+                end
             end
-            %--------
-            %% Create an observer for the vehicle
-            self.observer = Observer(self, self.param ,inital_global_state, inital_local_state);
-            
-            %% Create controller
-            
-            if self.typeController == "None"
-                self.controller = [];
-            else
-                param_opt = ParamOptEgo(self.dt);
-                self.controller = Controller(self,controller_goal , self.typeController, param_opt, self.param, self.lanes); % Create a controller for the vehicle
+
+            %% Step 2: Calculate opinion-based trust for non-direct vehicles
+            if ~isempty(received_trusts)
+                for vehicle_id = 1:self.num_vehicles
+                    if vehicle_id == self.vehicle_number
+                        self.trust_log(1, instant_index, vehicle_id) = 1; % Ego vehicle trust is 1
+                        continue;
+                    end
+
+                    %% If trust score is zero or not calculated, compute opinion-based trust
+                    if self.trust_log(1, instant_index, vehicle_id) == 0 || isnan(self.trust_log(1, instant_index, vehicle_id))
+                        received_trusts_vehicle = received_trusts(:, vehicle_id); % Trust scores for vehicle_id
+                        valid_indices = received_trusts_vehicle ~= 0 & received_trusts_vehicle ~= 1;
+                        non_zero_and_one_trusts = received_trusts_vehicle(valid_indices);
+                        new_received_vehicles = received_vehicles(valid_indices);
+                        weights = ego_trust_in_connected(valid_indices);
+
+                        if ~isempty(non_zero_and_one_trusts)
+                            %% Use trust-based weights instead of distance-based
+                            if sum(weights) > 0
+                                normalized_weights = weights / sum(weights); % Normalize trust-based weights
+                                opinion_score = sum(normalized_weights .* non_zero_and_one_trusts); % Weighted sum
+                            else
+                                opinion_score = 0; % Default to zero if no valid weights
+                            end
+                        else
+                            opinion_score = 0; % Default to zero if no valid trust scores
+                        end
+
+                        self.trust_log(1, instant_index, vehicle_id) = opinion_score;
+                    end
+                end
             end
-            
-            
-            
-            self.num_vehicles = length(self.other_vehicles);
-            %% Create trust models for the vehicle
-            self.trip_models = arrayfun(@(x) TriPTrustModel(), 1:self.num_vehicles, 'UniformOutput', false);
-            self.trust_log = zeros(1, self.total_time_step, self.num_vehicles);
-            
-            
-            %% Update inital value for center_communcation
-            self.center_communication = center_communication; % Initialize the CenterCommunication reference
-            self.center_communication.register_vehicle(self); % Register the vehicle with the central communication hub
-            
         end
-        
-        
-        %% Function for plot 
+
+
+
+
+        %% Function for plot
         function plot_ground_truth_vs_estimated(self)
             figure;
             subplot(3,1,1);
-            plot( self.state_log(1,:), 'b', 'LineWidth', 1.5); hold on;
-            plot( self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
-            legend('Ground Truth X', 'Estimated X');
+            % plot( self.state_log(1,:), 'b', 'LineWidth', 1.5); hold on;
+            % plot( self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
+            % legend('Ground Truth X', 'Estimated X');
+            
+            plot( self.observer.est_global_state_log(1, 1:end, self.vehicle_number) - self.state_log(1,1:end-1), 'b', 'LineWidth', 1.5);
+
+            legend('error X');
+            
             title('X Position Comparison');
-            
+
             subplot(3,1,2);
-            plot( self.state_log(2,:), 'b', 'LineWidth', 1.5); hold on;
-            plot( self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
-            legend('Ground Truth Y', 'Estimated Y');
+            % plot( self.state_log(2,:), 'b', 'LineWidth', 1.5); hold on;
+            % plot( self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
+            % legend('Ground Truth Y', 'Estimated Y');
+
+
+            plot( self.observer.est_global_state_log(2, 1:end, self.vehicle_number)-self.state_log(2,1:end-1), 'b', 'LineWidth', 1.5);
+            legend('error Y');
             title('Y Position Comparison');
-            
+
             subplot(3,1,3);
             plot( self.state_log(4,:), 'b', 'LineWidth', 1.5); hold on;
             plot( self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
@@ -391,40 +545,76 @@ classdef Vehicle < handle
             title('Speed Comparison');
             xlabel('Time (s)');
         end
-        
+
+        %% Function for plotting relative position
+        function plot_relative_position(self)
+            figure;
+
+            % Compute relative positions
+            rel_x = self.state_log(1,:) - self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number - 1);
+            rel_y = self.state_log(2,:) - self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number - 1);
+            rel_speed = self.state_log(4,:) - self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number - 1);
+
+            rel_x_est = self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number - 1);
+            rel_y_est = self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number - 1);
+            rel_speed_est = self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number - 1);
+
+            % Plot relative X position
+            subplot(3,1,1);
+            plot(rel_x, 'b', 'LineWidth', 1.5); hold on;
+            plot(rel_x_est, 'r--', 'LineWidth', 1.5);
+            legend('Relative X (Ground Truth)', 'Relative X (Estimated)');
+            title('Relative X Position Comparison');
+
+            % Plot relative Y position
+            subplot(3,1,2);
+            plot(rel_y, 'b', 'LineWidth', 1.5); hold on;
+            plot(rel_y_est, 'r--', 'LineWidth', 1.5);
+            legend('Relative Y (Ground Truth)', 'Relative Y (Estimated)');
+            title('Relative Y Position Comparison');
+
+            % Plot relative speed
+            subplot(3,1,3);
+            plot(rel_speed, 'b', 'LineWidth', 1.5); hold on;
+            plot(rel_speed_est, 'r--', 'LineWidth', 1.5);
+            legend('Relative Speed (Ground Truth)', 'Relative Speed (Estimated)');
+            title('Relative Speed Comparison');
+            xlabel('Time (s)');
+        end
+
         function plot_trust_log(self)
             % PLOT_TRUST_LOG Plots the trust values over time for each vehicle.
             %
             % Inputs:
             %   trust_log: 3D array of trust values (1 x time_steps x num_vehicles)
             %   num_vehicles: Number of vehicles (integer)
-            
+
             % Get the number of time steps
             time_steps = size(self.trust_log, 2);
-            
+
             % Create a time vector for the x-axis
             time_vector = 1:time_steps;
-            
+
             % Create a new figure
             figure;
             hold on;
-            
+
             % Plot the trust values for each vehicle
             for vehicle_idx = 1:self.num_vehicles
                 plot(time_vector, squeeze(self.trust_log(1, :, vehicle_idx)), 'DisplayName', ['Vehicle ' num2str(vehicle_idx)]);
             end
-            
+
             % Add labels and legend
             xlabel('Time Step');
             ylabel(['Trust Value of' num2str(self.vehicle_number)]);
             title(['Trust Values Over Time of' num2str(self.vehicle_number)]);
             legend show;
             grid on;
-            
+
             hold off;
         end
-        
-        
+
+
         function h =  plot_vehicle(self)
             L = self.param.l_fc + self.param.l_rc;
             H = self.param.width;
@@ -436,13 +626,13 @@ classdef Vehicle < handle
             % Define the corners of the vehicle in its local frame
             X = ([-L / 2, L / 2, L / 2, -L / 2]);
             Y = ([-H / 2, -H / 2, H / 2, H / 2]);
-            
+
             % Rotate the corners to the global frame
             for i = 1:4
                 T(:, i) = R * [X(i); Y(i)];
             end
             % Calculate the coordinates of the vehicle's corners in the global frame
-            
+
             x_lower_left = center1 + T(1, 1);
             x_lower_right = center1 + T(1, 2);
             x_upper_right = center1 + T(1, 3);
@@ -451,11 +641,11 @@ classdef Vehicle < handle
             y_lower_right = center2 + T(2, 2);
             y_upper_right = center2 + T(2, 3);
             y_upper_left = center2 + T(2, 4);
-            
+
             % Combine the coordinates into arrays for plotting
             x_coor = [x_lower_left, x_lower_right, x_upper_right, x_upper_left];
             y_coor = [y_lower_left, y_lower_right, y_upper_right, y_upper_left];
-            
+
             if (self.vehicle_number == 1)
                 % color = [0, 1, 0]; % green
                 color = [1, 0, 0]; % red
@@ -463,13 +653,13 @@ classdef Vehicle < handle
                 color = [0, 0, 1]; % blue
                 % color = [1, 0, 1]; % magenta
             end
-            
+
             h = patch('Vertices', [x_coor; y_coor]', 'Faces', [1, 2, 3, 4], 'Edgecolor', color, 'Facecolor', color, 'Linewidth', 1.5);
-            axis equal;
+            % axis equal;
         end
-        
-        
-        
-        
+
+
+
+
     end
 end

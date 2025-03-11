@@ -57,9 +57,12 @@ classdef Observer < handle
                 % ------- To get global state of other vehicles 
                 
                 % Hiện tại đang tính thằng j , so vào thằng j lấy control input của nó
-                %TODO : Since vehicle 1 dont have connection with vehicle 4 , so we need to remove the last control input
+                % TODO : Since vehicle 1 dont have connection with vehicle 4 , so we need to remove the last control input
                 % Need to calculate the control input for each vehicle locally by the estimated state of other vehicle
-                u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
+                
+                % u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
+                u_j = self.vehicle.input; % Control input of the current vehicle
+
 
                 
                 output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j, weights );
