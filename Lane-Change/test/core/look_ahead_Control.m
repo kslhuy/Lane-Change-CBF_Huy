@@ -16,7 +16,7 @@ classdef look_ahead_Control % Extended Look-Ahead Controller for Lane-Changing V
             self.straightlane = controller.straightlane;
         end
         
-        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, acc_flag)
+        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, type_state,acc_flag)
             acc_flag = 0;
 
             l_r = self.param_sys.l_r;
@@ -49,9 +49,16 @@ classdef look_ahead_Control % Extended Look-Ahead Controller for Lane-Changing V
                 e = 0;
                 return;
             end
-            
-            % Unpack lead vehicle state
-            [x_lead, y_lead, theta_lead, v_lead] = self.unpack_state(car_fc.state);
+            if (type_state == "true")
+                % Unpack lead vehicle state
+                [x_lead, y_lead, theta_lead, v_lead] = self.unpack_state(car_fc.state);
+            else %estimated
+                est_car_fc = self.controller.vehicle.observer.est_global_state_current(:,car_fc.vehicle_number) ;
+                [x_lead, y_lead, theta_lead, v_lead] = self.unpack_state(est_car_fc);
+            end
+
+
+
             
             % Compute extended look-ahead point
             kappa_lead = self.compute_curvature(v_lead, theta_lead);

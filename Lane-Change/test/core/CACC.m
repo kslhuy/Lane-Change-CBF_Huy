@@ -15,7 +15,7 @@ classdef CACC
             self.goal = controller.goal;
             self.straightlane = controller.straightlane;
         end
-        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, acc_flag)
+        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, type_state,acc_flag)
             acc_flag = 0;
             % Extract vehicle parameters
             alpha = self.param_opt.alpha; % Maximum acceleration
@@ -49,9 +49,14 @@ classdef CACC
 
                 for j = 1:num_vehicles
                     car_j = surrounding_vehicles(j);
-                    x_j = car_j.state(1);
-                    v_j = car_j.state(4);
-
+                    if (type_state == "true")
+                        x_j = car_j.state(1);
+                        v_j = car_j.state(4);
+                    else %estimated                        
+                        x_j = self.controller.vehicle.observer.est_global_state_current(1,car_j.vehicle_number);
+                        v_j = self.controller.vehicle.observer.est_global_state_current(4,car_j.vehicle_number); 
+                    end
+                    
                     spacing_error = x_j - x - ((ego_id - car_j.vehicle_number) * s0 + h * v);
                     velocity_error = v_j - v;
 

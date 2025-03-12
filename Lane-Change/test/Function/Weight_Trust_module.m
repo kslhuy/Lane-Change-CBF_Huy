@@ -40,19 +40,24 @@ classdef Weight_Trust_module < handle
                 trust_scores_matrix = [trust_scores_matrix ,trust_scores(i) ];
             end
             neighbors = find(self.graph(car_idx, :)); % Initially set as direct neighbors
-               
-           
+
+
             % Remove neighbors whose trust score is below the threshold
             low_trust_mask = trust_scores_matrix(neighbors) <= self.trust_threshold;
             neighbors(low_trust_mask) = []; % Remove untrusted neighbors
-    
+
         end
 
 
 
         % Compute weight matrix based on trusted neighbors
-        function weights_Dis = calculate_weights_Trust(self,vehicle_index , trust_scores)
-            % Using weight matrix priotizing local estimation
+        function weights_Dis = calculate_weights_Trust(self,vehicle_index , trust_scores,type)
+
+            % Check if the 'type' argument is provided
+            if nargin < 4
+                type = "local"; % Default value
+            end
+
 
             virtual_graph = self.generate_virtual_graph(self.graph, vehicle_index);
             trusted_neighbors_set = self.get_trusted_neighbors(vehicle_index,trust_scores);
@@ -72,10 +77,22 @@ classdef Weight_Trust_module < handle
                 weights_Dis(1, l+1) = weight;
             end
 
-            % Set weight to virtual node: W(vehicle_index+1, 1)
-            weights_Dis(1, 1) = 1 - (length(N_i_t)+1) * weight;
+            % Set weight to virtual node: W(1, 1)                
+            if(type == "local")
+                %% Using weight matrix priotizing local estimation
+                weights_Dis(1, 1) = 1 - (length(N_i_t)+1) * weight;
+
+            else
+                %% Using weight matrix distributed equally
+
+                weights_Dis(1, 1) = weight;
+            end
 
         end
+
+
+
+
 
         % % Compute weight matrix based on trusted neighbors
         % function W = calculate_weights_Trust(self,vehicle_index , trust_scores)
@@ -115,26 +132,26 @@ classdef Weight_Trust_module < handle
             % Function to calculate consensus weights for a given virtual graph
             %
             % Parameters:
-            %   Vj - Adjacency matrix representing the virtual graph. It is a square 
-            %        matrix where Vj(i, j) = 1 if there is an edge between node i and 
+            %   Vj - Adjacency matrix representing the virtual graph. It is a square
+            %        matrix where Vj(i, j) = 1 if there is an edge between node i and
             %        node j, and 0 otherwise.
             %
             % Returns:
-            %   W - Weight matrix where W(i, j) represents the weight assigned to the 
-            %       edge between node i and node j. The weights are calculated based 
+            %   W - Weight matrix where W(i, j) represents the weight assigned to the
+            %       edge between node i and node j. The weights are calculated based
             %       on the degree of each node.
             %
-            % The function initializes a weight matrix W with zeros. For each node i 
-            % (starting from the second node), it calculates the degree d_i of the node. 
-            % Then, for each node l, if there is an edge between node i and node l or 
+            % The function initializes a weight matrix W with zeros. For each node i
+            % (starting from the second node), it calculates the degree d_i of the node.
+            % Then, for each node l, if there is an edge between node i and node l or
             % if i equals l (self-loop), it assigns a weight of 1 / (d_i + 1) to W(i, l).
-        
+
             % https://discord.com/channels/1123389035713400902/1326223031667789885/1328426310963564564
-        
+
             Vj = self.generate_virtual_graph(self.graph, vehicle_index);
             num_nodes = size(Vj, 1);
             W = zeros(num_nodes); % Initialize weights matrix
-        
+
             for i = 2:num_nodes % Include node 0 (index 1 in MATLAB)
                 d_i = sum(Vj(i, :)); % Degree of node i
                 for l = 1:num_nodes % Include all nodes in the virtual graph
@@ -149,24 +166,24 @@ classdef Weight_Trust_module < handle
         end
 
         function Vj = generate_virtual_graph(self,graph, vehicle_index)
-    
+
             %{
             % This function generates a virtual graph by adding an extra node (node 0)
             % and connecting it to the specified vehicle and its neighbors.
             % The input 'graph' is the adjacency matrix of the original graph.
             % The input 'vehicle_index' is the index of the vehicle to which node 0 will be connected.
             %}
-        
+
             % Function to generate virtual graph for a given vehicle
             Vj = zeros(self.num_vehicles + 1); % Initialize virtual graph with an extra node
-        
+
             % Copy the adjacency matrix to the virtual graph
             Vj(2:end, 2:end) = graph;
-        
+
             % Set the bidirectional edge between node 0 and the specified vehicle
             Vj(1, vehicle_index + 1) = 1;
             Vj(vehicle_index + 1, 1) = 1;
-        
+
             % Set the edges between node 0 and node j’s neighbors
             neighbors = find(graph(vehicle_index, :));
             for neighbor = neighbors

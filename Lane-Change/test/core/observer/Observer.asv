@@ -9,12 +9,11 @@ classdef Observer < handle
 
         est_global_state_log;
         est_local_state_log;
-        weights;
         vehicle;
         
     end
     methods
-        function self = Observer( vehicle , veh_param, inital_global_state, inital_local_state, weights)
+        function self = Observer( vehicle , veh_param, inital_global_state, inital_local_state)
             self.vehicle = vehicle;
             self.param_sys = veh_param; % Set the vehicle system parameters
 
@@ -32,11 +31,10 @@ classdef Observer < handle
             self.est_local_state_log = inital_local_state;
 
 
-            self.weights = weights; % Set the weights for the global observer
         end
         
         
-        function  Distributed_Observer(self,instant_index)
+        function  Distributed_Observer(self,instant_index , weights)
 
             % Get the number of other vehicles
             num_vehicles = length(self.vehicle.other_vehicles);
@@ -47,83 +45,61 @@ classdef Observer < handle
             for j = 1:num_vehicles
                 
                 %% Get local of j vehicle
-                x_bar_j = self.vehicle.other_vehicles(j).observer.est_local_state_current;
+                x_bar_j = self.vehicle.center_communication.get_local_state(j);
                 
                 % ------- To get global state of other vehicles 
                 % Go through all the other vehicles , start from the second vehicle
                 for k = 1:num_vehicles
-                    % Vào thằng thứ "k" , lấy cái thứ "j" của nó
-                    x_hat_i_j_full = self.vehicle.other_vehicles(k).observer.est_global_state_current;
+                    % Go in car number "k" , Get car "j" in global estimat of "k" 
+                    x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k);
                     x_hat_i_j(:,k) =  x_hat_i_j_full(:,j);
                 end
                 % ------- To get global state of other vehicles 
                 
-
                 % Hiện tại đang tính thằng j , so vào thằng j lấy control input của nó
-                %TODO : Since vehicle 1 dont have connection with vehicle 4 , so we need to remove the last control input
+                % TODO : Since vehicle 1 dont have connection with vehicle 4 , so we need to remove the last control input
                 % Need to calculate the control input for each vehicle locally by the estimated state of other vehicle
-                u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
-
-                % disp(size(j));
-                % disp(size(x_bar_j));
-                % disp(size(x_hat_i_j));
-                % disp(size(u_j));
-                % disp(size(self.weights));
-                disp("x_hat_i_j :");
-                disp(x_hat_i_j);
-
-                disp("x_bar_j : ");   
-                disp(x_bar_j);
                 
-                % output = distributed_Observer_each(j , x_bar_j  , x_hat_i_j , u_j , self.weights  );
-                Sig = zeros(4,1); % Initialize consensus term
-                [A , B]  = self.matrix();
-                % Calculate the consensus term
-                % Start from 2 , because the first element is the local state of the vehicle
-                for l = 2:length(self.weights)
-                    % l-1 because start from 2 , but we need to start from 1 for vehicle
-                    Sig = self.weights(l)*( x_hat_i_j(: , l-1) - x_hat_i_j(: , l-1) ) + Sig;
-                end
-                % Only if we try to estimated j = i , so we have real local state that was estimated by Local observer .
-                % But if we try to estimate j != i , we have (fake) the local state of j , that by vehicle j send to i vehicle
+                % u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
+                u_j = self.vehicle.input; % Control input of the current vehicle
 
-                % Estimate the j vehicle , in i vehicle
-                % So the observer is implement in i vehicle
-                w_i0 = self.weights(j); % Weight of the local state
 
-                %% Original paper (TRUE WORK)
-                output = A*( x_hat_i_j(: , j) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , j)) ) + B*u_j ;
+                
+                output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j, weights );
                 Big_X_hat_1_tempo(:,j) = output; % Append the result
             end
             self.est_global_state_current = Big_X_hat_1_tempo;
             self.est_global_state_log(:, instant_index, :) = Big_X_hat_1_tempo;
         end
         
-        function ouput = distributed_Observer_each( j , x_bar_j , x_hat_i_j, u_j , W )
+        function output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j ,weights )
             
-            disp("x_hat_i_j " + x_hat_i_j);
 
-            disp("x_bar_j : " + x_bar_j); 
             Sig = zeros(4,1); % Initialize consensus term
             [A , B]  = self.matrix();
             % Calculate the consensus term
             % Start from 2 , because the first element is the local state of the vehicle
-            for l = 2:length(W)
-                % l-1 because start from 2 , but we need to start from 1 for vehicle
-                Sig = W(l)*( x_hat_i_j(: , l-1) - x_hat_i_j(: , l-1) ) + Sig;
+            for L = 2:length(weights)
+                % Why x_hat_i_j(: , l-1) because L start from 2 , but we need to start from 1 for vehicle
+                Sig = weights(L)*( x_hat_i_j(: , L-1) - x_hat_i_j(: , self.vehicle.vehicle_number) ) + Sig;
             end
+            %% Some situation
             % Only if we try to estimated j = i , so we have real local state that was estimated by Local observer .
             % But if we try to estimate j != i , we have (fake) the local state of j , that by vehicle j send to i vehicle
-            
+
             % Estimate the j vehicle , in i vehicle
             % So the observer is implement in i vehicle
-            w_i0 = W(j); % Weight of the local state
-            
+            w_i0 = weights(j); % Weight of the local state
+
             %% Original paper (TRUE WORK)
-            ouput = A*( x_hat_i_j(: , j) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , j)) ) + B*u_j ;
+            output = A*( x_hat_i_j(: , j) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , j)) ) + B*u_j ;
+
             
         end
         
+
+
+
         function Local_observer(self , state)
             self.est_local_state_current = state;
         end
@@ -131,16 +107,30 @@ classdef Observer < handle
         % This model use in obesrver , so need to be here, in the observer class
         function  [A , B] = matrix(self)
             theta = self.vehicle.state(3);
+            Ts = self.param_sys.dt;
+            v = self.vehicle.state(4);
+            % Here in continuous time
+            % A = [ 0 0 0 cos(theta);
+            %      0 0 0 sin(theta);
+            %      0 0 1 0;
+            %      0 0 0 0];
 
-            A = [ 0 0 0 cos(theta);
-                 0 0 0 sin(theta);
-                 0 0 1 0;
-                 0 0 0 0];
+            % B = [ 0 0;
+            %       0 0;
+            %       0 0;
+            %       1 0];
 
-            B = [ 0 0;
-                  0 0;
-                  0 0;
-                  1 0];
+            % Here in discrete time
+
+            A = [ 1 0 -v*sin(theta)*Ts cos(theta)*Ts;
+                  0 1 v*cos(theta)*Ts sin(theta)*Ts;
+                  0 0 1 0;
+                  0 0 0 1];
+
+            B = [0 0
+                 0 0
+                 0 Ts
+                 Ts 0];
         
 
         end
@@ -151,18 +141,28 @@ classdef Observer < handle
                 error('est_global_state_log is empty. No data to plot.');
             end
         
-            figure("Name", "Global Position Estimates Vehicle 1");
-            for v = 1:4
-                subplot(4, 1, v);
-                plot(squeeze(self.est_global_state_log(1, 1:end-1, v)), 'DisplayName', 'Positionv1');
+            num_vehicles = size(self.est_global_state_log, 3); % Number of vehicles
+            num_states = 4; % Assuming X, Y, theta, and V as states
+        
+            state_labels = {'Position X', 'Position Y', 'Theta', 'Velocity'};
+        
+            figure("Name", "Global Position Estimates " );
+            % title(['Global Position Estimates ' num2str(self.vehicle.vehicle_number)]);
+
+            for state_idx = 1:num_states
+                subplot(4, 1, state_idx);
                 hold on;
-                title(['Vehicle ', num2str(v), ' State Estimates']);
+                for v = 1:num_vehicles
+                    plot(squeeze(self.est_global_state_log(state_idx, 1:end-1, v)), 'DisplayName', ['Vehicle ', num2str(v)]);
+                end
+                title(state_labels{state_idx});
                 xlabel('Time (s)');
-                ylabel('State');
+                ylabel(state_labels{state_idx});
                 legend;
                 grid on;
             end
         end
+
 
         
     end

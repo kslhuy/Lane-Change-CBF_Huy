@@ -73,7 +73,14 @@ classdef Simulator
     
     
                         % Set the x and y axis limits
-                        xlim([0, 500]); % Set x-axis limits
+                        % xlim([0, 500]); % Set x-axis limits
+                        % % Adjust xlim dynamically to follow the ego vehicle
+
+
+                        offset_x = self.other_vehicles(1).state(1); % Assuming state(1) is the X position
+                        xlim([offset_x  - 200, offset_x + 100]); % Keep the ego vehicle in the center
+                
+
                         ylim([-30, 30]); % Adjusted for better visibility
     
                         grid on;
@@ -117,7 +124,7 @@ classdef Simulator
             subplot(6, 1, 1)
             hold on
             for i = 1:num_vehicles
-                plot(0:scenarios_config.dt :scenarios_config.simulation_time, vehicles(i).state_log(1, :))
+                plot(0:scenarios_config.dt :scenarios_config.simulation_time, vehicles(i).state_log(1, :),"LineWidth",1)
             end
             title('Position X history')
             ylabel('m')
@@ -129,7 +136,7 @@ classdef Simulator
             subplot(6, 1, 2)
             hold on
             for i = 1:num_vehicles
-                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(2, :))
+                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(2, :),"LineWidth",1)
             end
             title('Position Y history')
             ylabel('m')
@@ -141,7 +148,7 @@ classdef Simulator
             subplot(6, 1, 3)
             hold on
             for i = 1:num_vehicles
-                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(4, :))
+                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(4, :),"LineWidth",1)
             end
             title('Velocity history')
             ylabel('m/s')
@@ -159,7 +166,7 @@ classdef Simulator
             subplot(6, 1, 4)
             hold on
             for i = 1:num_vehicles
-                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(3, :))
+                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(3, :),"LineWidth",1)
             end
             title('Yaw history')
             ylabel('rad')
@@ -174,7 +181,7 @@ classdef Simulator
             subplot(6, 1, 5)
             hold on
             for i = 1:num_vehicles
-                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).input_log(1, :))
+                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).input_log(1, :),"LineWidth",1)
             end
             title('Control acc history')
             ylabel('m/s^2')
@@ -187,7 +194,7 @@ classdef Simulator
             subplot(6, 1, 6)
             hold on
             for i = 1:num_vehicles
-                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).input_log(2, :))
+                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).input_log(2, :),"LineWidth",1)
             end
             title('Steering history')
             ylabel('rad')
@@ -195,7 +202,6 @@ classdef Simulator
             ylim([-0.08, 0.08])
             % legend(vehicle_labels)
 
-            title('Real State');
 
             hold off
         end
@@ -213,7 +219,7 @@ classdef Simulator
             hold on
             for i = 2:num_vehicles
                 rel_x = vehicles(i-1).state_log(1, :) - vehicles(i).state_log(1, :) ;
-                plot(0:scenarios_config.dt:scenarios_config.simulation_time, rel_x)
+                plot(0:scenarios_config.dt:scenarios_config.simulation_time, rel_x,"LineWidth",1)
             end
             title('Relative Position X history')
             ylabel('m')
@@ -225,7 +231,7 @@ classdef Simulator
             hold on
             for i = 2:num_vehicles
                 rel_y = vehicles(i).state_log(2, :) - vehicles(i-1).state_log(2, :);
-                plot(0:scenarios_config.dt:scenarios_config.simulation_time, rel_y)
+                plot(0:scenarios_config.dt:scenarios_config.simulation_time, rel_y,"LineWidth",1)
             end
             title('Relative Position Y history')
             ylabel('m')
@@ -237,7 +243,7 @@ classdef Simulator
             hold on
             for i = 2:num_vehicles
                 rel_speed = vehicles(i).state_log(4, :) - vehicles(i-1).state_log(4, :);
-                plot(0:scenarios_config.dt:scenarios_config.simulation_time, rel_speed)
+                plot(0:scenarios_config.dt:scenarios_config.simulation_time, rel_speed,"LineWidth",1)
             end
             title('Relative Speed history')
             ylabel('m/s')

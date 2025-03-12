@@ -27,7 +27,7 @@ classdef CIDM_control % Extended Look-Ahead Controller for Lane-Changing Vehicle
                 };
         end
 
-        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, acc_flag)
+        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, type_state,acc_flag)
             acc_flag = 0;
 
             % Extract vehicle parameters
@@ -65,8 +65,14 @@ classdef CIDM_control % Extended Look-Ahead Controller for Lane-Changing Vehicle
 
 
             for j = num_vehicles:-1:1
-                s_j = car_fss(j).state(1) - x;
-                delta_v = v - car_fss(j).state(4);
+                if (type_state == "true")
+                    s_j = car_fss(j).state(1) - x;
+                    delta_v = v - car_fss(j).state(4);
+                else %estimated
+                    s_j = self.controller.vehicle.observer.est_global_state_current(1,car_fss(j).vehicle_number) - x;
+                    delta_v = v - self.controller.vehicle.observer.est_global_state_current(4,car_fss(j).vehicle_number);
+                end
+                
                 % w_nj = exp(-abs(s_j) / 50); % Exponential weight decay with distance
                 if (j>1)
                     w_nj = weights(j-1);

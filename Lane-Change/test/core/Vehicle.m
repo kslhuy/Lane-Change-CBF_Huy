@@ -131,17 +131,21 @@ classdef Vehicle < handle
 
         function update(self,instant_index)
 
+            if instant_index*self.dt > 11
+
+                disp('stop');
+            end
             %% Identify vehicles is connected with the ego vehicle's
             connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
             %% Calculate trust and opinion scores directly in self.trust_log
             % calculateTrustAndOpinion(self, instant_index, connected_vehicles_idx);
 
-            calculateTrustAndOpinion2(self, instant_index, connected_vehicles_idx);
+            calculateTrustAndOpinion2(self, instant_index, connected_vehicles_idx );
 
             %% Wiegth trust update
-            weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :));
+            weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :) , "equal");
 
-            % weights_Dis_defaut = self.weight_module.calculate_weights_Defaut(self.vehicle_number); % Matrix ('nb_vehicles + 1' x 'nb_vehicles + 1' )
+            weights_Dis_defaut = self.weight_module.calculate_weights_Defaut(self.vehicle_number); % Matrix ('nb_vehicles + 1' x 'nb_vehicles + 1' )
 
 
             %% Update normal car dynamics , like controller and observer
@@ -166,8 +170,8 @@ classdef Vehicle < handle
                 self.observer.Local_observer(self.state);
                 self.observer.Distributed_Observer(instant_index , weights);
                 %% Controller
-                [~, u_1, e_1] = self.controller.get_optimal_input(self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
-                [~, u_2, e_2] = self.controller2.get_optimal_input(self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
+                [~, u_1, e_1] = self.controller.get_optimal_input(self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"est", 0);
+                [~, u_2, e_2] = self.controller2.get_optimal_input(self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"est", 0);
 
                 % [~, u, e] = self.controller.get_optimal_input(self.state, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
 
@@ -546,41 +550,41 @@ classdef Vehicle < handle
             xlabel('Time (s)');
         end
 
-        %% Function for plotting relative position
-        function plot_relative_position(self)
-            figure;
-
-            % Compute relative positions
-            rel_x = self.state_log(1,:) - self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number - 1);
-            rel_y = self.state_log(2,:) - self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number - 1);
-            rel_speed = self.state_log(4,:) - self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number - 1);
-
-            rel_x_est = self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number - 1);
-            rel_y_est = self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number - 1);
-            rel_speed_est = self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number - 1);
-
-            % Plot relative X position
-            subplot(3,1,1);
-            plot(rel_x, 'b', 'LineWidth', 1.5); hold on;
-            plot(rel_x_est, 'r--', 'LineWidth', 1.5);
-            legend('Relative X (Ground Truth)', 'Relative X (Estimated)');
-            title('Relative X Position Comparison');
-
-            % Plot relative Y position
-            subplot(3,1,2);
-            plot(rel_y, 'b', 'LineWidth', 1.5); hold on;
-            plot(rel_y_est, 'r--', 'LineWidth', 1.5);
-            legend('Relative Y (Ground Truth)', 'Relative Y (Estimated)');
-            title('Relative Y Position Comparison');
-
-            % Plot relative speed
-            subplot(3,1,3);
-            plot(rel_speed, 'b', 'LineWidth', 1.5); hold on;
-            plot(rel_speed_est, 'r--', 'LineWidth', 1.5);
-            legend('Relative Speed (Ground Truth)', 'Relative Speed (Estimated)');
-            title('Relative Speed Comparison');
-            xlabel('Time (s)');
-        end
+        % %% Function for plotting relative position
+        % function plot_relative_position(self)
+        %     figure;
+        % 
+        %     % Compute relative positions
+        %     rel_x = self.state_log(1,:) - self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number - 1);
+        %     rel_y = self.state_log(2,:) - self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number - 1);
+        %     rel_speed = self.state_log(4,:) - self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number - 1);
+        % 
+        %     rel_x_est = self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number - 1);
+        %     rel_y_est = self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number - 1);
+        %     rel_speed_est = self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number - 1);
+        % 
+        %     % Plot relative X position
+        %     subplot(3,1,1);
+        %     plot(rel_x, 'b', 'LineWidth', 1.5); hold on;
+        %     plot(rel_x_est, 'r--', 'LineWidth', 1.5);
+        %     legend('Relative X (Ground Truth)', 'Relative X (Estimated)');
+        %     title('Relative X Position Comparison');
+        % 
+        %     % Plot relative Y position
+        %     subplot(3,1,2);
+        %     plot(rel_y, 'b', 'LineWidth', 1.5); hold on;
+        %     plot(rel_y_est, 'r--', 'LineWidth', 1.5);
+        %     legend('Relative Y (Ground Truth)', 'Relative Y (Estimated)');
+        %     title('Relative Y Position Comparison');
+        % 
+        %     % Plot relative speed
+        %     subplot(3,1,3);
+        %     plot(rel_speed, 'b', 'LineWidth', 1.5); hold on;
+        %     plot(rel_speed_est, 'r--', 'LineWidth', 1.5);
+        %     legend('Relative Speed (Ground Truth)', 'Relative Speed (Estimated)');
+        %     title('Relative Speed Comparison');
+        %     xlabel('Time (s)');
+        % end
 
         function plot_trust_log(self)
             % PLOT_TRUST_LOG Plots the trust values over time for each vehicle.
@@ -601,7 +605,7 @@ classdef Vehicle < handle
 
             % Plot the trust values for each vehicle
             for vehicle_idx = 1:self.num_vehicles
-                plot(time_vector, squeeze(self.trust_log(1, :, vehicle_idx)), 'DisplayName', ['Vehicle ' num2str(vehicle_idx)]);
+                plot(time_vector, squeeze(self.trust_log(1, :, vehicle_idx)), 'DisplayName', ['Vehicle ' num2str(vehicle_idx)] , 'LineWidth',1);
             end
 
             % Add labels and legend

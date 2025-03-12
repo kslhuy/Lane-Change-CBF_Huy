@@ -20,7 +20,7 @@ classdef IDM_control % Extended Look-Ahead Controller for Lane-Changing Vehicles
 
     
         
-        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, acc_flag)
+        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, type_state,acc_flag)
             acc_flag = 0;
 
             % Extract vehicle parameters
@@ -47,11 +47,14 @@ classdef IDM_control % Extended Look-Ahead Controller for Lane-Changing Vehicles
                 s = 200; % Assume large gap if no car ahead
                 delta_v = 0;
             else
-                % est_car_fc = self.controller.vehicle.observer.est_global_state_current(:,car_font.vehicle_number) ;
-                % s = est_car_fc(1) - x;
-                % delta_v = v - est_car_fc(4);
-                s = car_font.state(1) - x;
-                delta_v = v - car_font.state(4);
+                if (type_state == "true")
+                    s = car_font.state(1) - x;
+                    delta_v = v - car_font.state(4);
+                else %estimated
+                    est_car_fc = self.controller.vehicle.observer.est_global_state_current(:,car_font.vehicle_number) ;
+                    s = est_car_fc(1) - x;
+                    delta_v = v - est_car_fc(4);
+                end
             end
             
             % Compute desired minimum gap s*(v, Δv)

@@ -35,7 +35,6 @@ classdef Observer < handle
         
         
         function  Distributed_Observer(self,instant_index , weights)
-
             % Get the number of other vehicles
             num_vehicles = length(self.vehicle.other_vehicles);
 
@@ -43,14 +42,17 @@ classdef Observer < handle
             x_hat_i_j = zeros(4, num_vehicles); % Initialize the variable to store the global state of other vehicles
 
             for j = 1:num_vehicles
-                
+                if(self.vehicle.trust_log(1, instant_index, j) < 0.5)
+                    weights(j) = 0;
+                end
+
                 %% Get local of j vehicle
                 x_bar_j = self.vehicle.center_communication.get_local_state(j);
                 
                 % ------- To get global state of other vehicles 
                 % Go through all the other vehicles , start from the second vehicle
                 for k = 1:num_vehicles
-                    % Vào thằng thứ "k" , lấy cái thứ "j" của nó
+                    % Go in car number "k" , Get car "j" in global estimat of "k" 
                     x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k);
                     x_hat_i_j(:,k) =  x_hat_i_j_full(:,j);
                 end
@@ -146,7 +148,9 @@ classdef Observer < handle
         
             state_labels = {'Position X', 'Position Y', 'Theta', 'Velocity'};
         
-            figure("Name", "Global Position Estimates");
+            figure("Name", "Global Position Estimates " );
+            % title(['Global Position Estimates ' num2str(self.vehicle.vehicle_number)]);
+
             for state_idx = 1:num_states
                 subplot(4, 1, state_idx);
                 hold on;

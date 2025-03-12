@@ -66,7 +66,7 @@ classdef Controller < handle
         end
 
         % Method to get the optimal input for the controller based on the current state and other parameters
-        function [acc_flag, optimal_input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, initial_lane_id, direction_flag, acc_flag)
+        function [acc_flag, optimal_input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, initial_lane_id, direction_flag,type_state, acc_flag)
             if isempty(self.logic_ctrl)
                 % Use default controller
                 acc_flag = 0;
@@ -75,7 +75,7 @@ classdef Controller < handle
                 return;
             end
 
-            [acc_flag, optimal_input, e] = self.logic_ctrl.get_optimal_input(state, last_input, lane_id, input_log, initial_lane_id, direction_flag, acc_flag);
+            [acc_flag, optimal_input, e] = self.logic_ctrl.get_optimal_input(state, last_input, lane_id, input_log, initial_lane_id, direction_flag,type_state, acc_flag);
 
         end
 

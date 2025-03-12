@@ -380,7 +380,7 @@ classdef TriPTrustModel < handle
                 x_l_pred = target_global_estimate([1,4], pred_id); % In L car , get the estimate of the predceding of host vehicle (i + 1 is pred)
 
                 % Compute expected relative state from global estimate
-                rel_state_est = x_l_pred - x_l_i - [half_lenght_vehicle;0];
+                rel_state_est = abs(x_l_pred - x_l_i - [half_lenght_vehicle;0]);
 
                 % Compute consistency error e_i,l^(j)(k)
                 e = rel_state_est - y_i_pred;
@@ -401,7 +401,7 @@ classdef TriPTrustModel < handle
                 x_l_successor = target_global_estimate([1,4], successor_id); % In L car , get the estimate of the successor of host vehicle (i - 1 is succ)
 
                 % Compute expected relative state from global estimate
-                rel_state_est = x_l_i - x_l_successor - [half_lenght_vehicle;0];
+                rel_state_est = abs(x_l_i - x_l_successor - [half_lenght_vehicle;0]);
 
                 % Compute consistency error e_i,l^(j)(k)
                 e = (rel_state_est - y_i_successor);
@@ -432,7 +432,7 @@ classdef TriPTrustModel < handle
         
             xlabel('Time Step');
             ylabel('Value');
-            title([num2str(nb_host_car) '-> Trust and Score Logs Over Time for car '  num2str(nb_target_car)]);
+            title([num2str(nb_host_car) '-> Trust and Score Logs Over Time for car '  num2str(nb_target_car)],"LineWidth",1);
             legend show;
             grid on;
             

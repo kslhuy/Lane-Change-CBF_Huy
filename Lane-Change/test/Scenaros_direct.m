@@ -22,27 +22,27 @@ graph = [0 1 1 0;  % Adjacency matrix
          0 1 1 0];
 
 
-%% Not use this part
-% Generate virtual graphs for each vehicle
-num_vehicles = size(graph, 1);
-virtual_graphs = cell(num_vehicles, 1);
-weights = cell(num_vehicles, 1);
+% %% Not use this part
+% % Generate virtual graphs for each vehicle
+% num_vehicles = size(graph, 1);
+% virtual_graphs = cell(num_vehicles, 1);
+% weights = cell(num_vehicles, 1);
 
-for j = 1:num_vehicles
-    virtual_graphs{j} = generate_virtual_graph(graph, j);
-    % fprintf('Virtual graph matrix for vehicle %d:\n', j);
-    % disp(virtual_graphs{j});
+% for j = 1:num_vehicles
+%     virtual_graphs{j} = generate_virtual_graph(graph, j);
+%     % fprintf('Virtual graph matrix for vehicle %d:\n', j);
+%     % disp(virtual_graphs{j});
 
-    weights{j} = calculate_weights_Defaut(virtual_graphs{j});
-    % fprintf('Consensus weights matrix for vehicle %d:\n', j);
-    % disp(weights{j});
-end
+%     weights{j} = calculate_weights_Defaut(virtual_graphs{j});
+%     % fprintf('Consensus weights matrix for vehicle %d:\n', j);
+%     % disp(weights{j});
+% end
 
-weights_Dis_1 = weights{1,1}(1+1,:); 
-weights_Dis_2 = weights{2,1}(2+1,:); 
-weights_Dis_3 = weights{3,1}(3+1,:); 
-weights_Dis_4 = weights{4,1}(4+1,:); 
-%--------- Not use this part
+% weights_Dis_1 = weights{1,1}(1+1,:); 
+% weights_Dis_2 = weights{2,1}(2+1,:); 
+% weights_Dis_3 = weights{3,1}(3+1,:); 
+% weights_Dis_4 = weights{4,1}(4+1,:); 
+% %--------- Not use this part
 
 Weight_Trust_module = Weight_Trust_module(graph, 0.5, 1);
 
@@ -73,8 +73,9 @@ attack_module = Attack_module(Scenarios_config.dt);
 % Attack with 'bias' type between 5 and 10 seconds with intensity 0.5
 t_star = 10;
 t_end = 18;
-target_vehicle_id = 2;
-attack_module = Atk_Scenarios(attack_module , "Bogus" , 3 ,t_star,t_end,target_vehicle_id );
+target_vehicle_id = 1;
+case_nb_attack = 3;
+attack_module = Atk_Scenarios(attack_module , "Bogus" ,case_nb_attack , t_star, t_end, target_vehicle_id );
 % scenario_Attack_params = struct('target_vehicle_id',2, ...
 %                         'start_time', 5, ...      % Start at 5 seconds
 %                          'end_time', 10, ...       % End at 10 seconds
@@ -122,7 +123,7 @@ car4.assign_neighbor_vehicle(platton_vehicles, [],"CACC", center_communication, 
 
 
 %% define a simulator and start simulation
-IsShowAnimation = true;
+IsShowAnimation = false;
 simulator0 = Simulator(straightLanes, [] , platton_vehicles, Scenarios_config.dt , IsShowAnimation );
 [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time);
 %% Plot the movement of the vehicles
@@ -131,20 +132,27 @@ simulator0.plot_movement_log(platton_vehicles, Scenarios_config, num_vehicles);
 simulator0.plot_relative_movement_log(platton_vehicles, Scenarios_config, num_vehicles);
 
 %% Plot the global state log
+car1.observer.plot_global_state_log()
+
 car2.observer.plot_global_state_log()
+car3.observer.plot_global_state_log()
+car4.observer.plot_global_state_log()
+
 
 %% Compare the ground truth and estimated states
 car1.plot_ground_truth_vs_estimated()
 
 car2.plot_ground_truth_vs_estimated()
+car3.plot_ground_truth_vs_estimated()
+car4.plot_ground_truth_vs_estimated()
 
 
 %% Plot the trust log
 
 car1.plot_trust_log()
-% car2.plot_trust_log()
+car2.plot_trust_log()
 car3.plot_trust_log()
-% car4.plot_trust_log()
+car4.plot_trust_log()
 
 
 %% Plot the trust log for each trip model
