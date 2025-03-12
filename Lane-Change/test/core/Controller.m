@@ -66,7 +66,7 @@ classdef Controller < handle
         end
 
         % Method to get the optimal input for the controller based on the current state and other parameters
-        function [acc_flag, optimal_input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, initial_lane_id, direction_flag,type_state, acc_flag)
+        function [acc_flag, optimal_input, e] = get_optimal_input(self, host_car_id, state, last_input, lane_id, input_log, initial_lane_id, direction_flag,type_state, acc_flag)
             if isempty(self.logic_ctrl)
                 % Use default controller
                 acc_flag = 0;
@@ -75,15 +75,15 @@ classdef Controller < handle
                 return;
             end
 
-            [acc_flag, optimal_input, e] = self.logic_ctrl.get_optimal_input(state, last_input, lane_id, input_log, initial_lane_id, direction_flag,type_state, acc_flag);
+            [acc_flag, optimal_input, e] = self.logic_ctrl.get_optimal_input( host_car_id ,state, last_input, lane_id, input_log, initial_lane_id, direction_flag,type_state, acc_flag);
 
         end
 
         % Method to get the surrounding vehicles
-        function [ car_fc,car_fss, car_bt, car_ft] = get_surrounding_vehicles(self , x, current_lane_id, direction_flag)
+        function [ car_fc,car_fss, car_bt, car_ft] = get_surrounding_vehicles(self , x, current_lane_id, direction_flag , host_vehicle_id)
 
             % Get the host vehicle's ID or unique identifier
-            host_vehicle_id = self.vehicle.vehicle_number; % Assuming vehicle_number is the unique identifier
+            % host_vehicle_id = self.vehicle.vehicle_number; % Assuming vehicle_number is the unique identifier
 
             car_fss = []; % No matter the lane , just all the vehicles in front of the ego vehicle
  

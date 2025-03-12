@@ -27,7 +27,7 @@ classdef CIDM_control % Extended Look-Ahead Controller for Lane-Changing Vehicle
                 };
         end
 
-        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, type_state,acc_flag)
+        function [acc_flag,input, e] = get_optimal_input(self,host_car_id, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, type_state,acc_flag)
             acc_flag = 0;
 
             % Extract vehicle parameters
@@ -42,7 +42,7 @@ classdef CIDM_control % Extended Look-Ahead Controller for Lane-Changing Vehicle
             [x, y, theta, v] = self.unpack_state(state);
 
             % Get surrounding vehicles
-            [~,car_fss, ~, ~] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag);
+            [~,car_fss, ~, ~] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag,host_car_id);
 
             if isempty(car_fss)
                 disp('No car ahead'  );

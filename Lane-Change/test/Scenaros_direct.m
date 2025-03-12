@@ -123,7 +123,7 @@ car4.assign_neighbor_vehicle(platton_vehicles, [],"CACC", center_communication, 
 
 
 %% define a simulator and start simulation
-IsShowAnimation = false;
+IsShowAnimation = true;
 simulator0 = Simulator(straightLanes, [] , platton_vehicles, Scenarios_config.dt , IsShowAnimation );
 [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time);
 %% Plot the movement of the vehicles

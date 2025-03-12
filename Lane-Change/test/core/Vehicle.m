@@ -131,10 +131,10 @@ classdef Vehicle < handle
 
         function update(self,instant_index)
 
-            if instant_index*self.dt > 11
-
-                disp('stop');
-            end
+            % if instant_index*self.dt > 11
+            % 
+            %     disp('stop');
+            % end
             %% Identify vehicles is connected with the ego vehicle's
             connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
             %% Calculate trust and opinion scores directly in self.trust_log
@@ -145,7 +145,8 @@ classdef Vehicle < handle
             %% Wiegth trust update
             weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :) , "equal");
 
-            weights_Dis_defaut = self.weight_module.calculate_weights_Defaut(self.vehicle_number); % Matrix ('nb_vehicles + 1' x 'nb_vehicles + 1' )
+            % weights_Dis = self.weight_module.calculate_weights_Defaut(self.vehicle_number); % Matrix ('nb_vehicles + 1' x 'nb_vehicles + 1' )
+            % weights_Dis_defaut = self.weight_module.calculate_weights_Defaut(self.vehicle_number); % Matrix ('nb_vehicles + 1' x 'nb_vehicles + 1' )
 
 
             %% Update normal car dynamics , like controller and observer
@@ -170,8 +171,8 @@ classdef Vehicle < handle
                 self.observer.Local_observer(self.state);
                 self.observer.Distributed_Observer(instant_index , weights);
                 %% Controller
-                [~, u_1, e_1] = self.controller.get_optimal_input(self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"est", 0);
-                [~, u_2, e_2] = self.controller2.get_optimal_input(self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"est", 0);
+                [~, u_1, e_1] = self.controller.get_optimal_input(self.vehicle_number, self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"est", 0);
+                [~, u_2, e_2] = self.controller2.get_optimal_input(self.vehicle_number ,self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"est", 0);
 
                 % [~, u, e] = self.controller.get_optimal_input(self.state, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
 

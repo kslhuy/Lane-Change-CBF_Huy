@@ -42,7 +42,7 @@ classdef CLF_QP % an qp for surrounding vehicle that is changing the lane
         %   to compute the optimal control input that minimizes the deviation from the
         %   target lane and speed. The constraints on the control inputs are enforced
         %   using Quadratic Programming (QP).
-        function [acc_flag, input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, initial_lane_id, direction_flag , acc_flag)
+        function [acc_flag, input, e] = get_optimal_input(self, host_car_id,state, last_input, lane_id, input_log, initial_lane_id, direction_flag , acc_flag)
             alpha = self.param_opt.alpha;
             target_y = self.goal.target_y;
             target_speed = self.goal.target_speed;

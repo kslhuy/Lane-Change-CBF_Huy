@@ -15,7 +15,7 @@ classdef CACC
             self.goal = controller.goal;
             self.straightlane = controller.straightlane;
         end
-        function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, type_state,acc_flag)
+        function [acc_flag,input, e] = get_optimal_input(self,host_car_id, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, type_state,acc_flag)
             acc_flag = 0;
             % Extract vehicle parameters
             alpha = self.param_opt.alpha; % Maximum acceleration
@@ -31,7 +31,7 @@ classdef CACC
             [x, y, theta, v] = self.unpack_state(state);
 
             % Get leading vehicles
-            [~, surrounding_vehicles, ~, ~] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag);
+            [~, surrounding_vehicles, ~, ~] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag,host_car_id);
 
             num_vehicles = length(surrounding_vehicles);
 
@@ -45,7 +45,7 @@ classdef CACC
             else
                 % Compute cooperative control input using consensus-based CACC
                 u_coop = 0;
-                ego_id = self.vehicle_number; % Ego vehicle ID
+                
 
                 for j = 1:num_vehicles
                     car_j = surrounding_vehicles(j);
@@ -57,7 +57,7 @@ classdef CACC
                         v_j = self.controller.vehicle.observer.est_global_state_current(4,car_j.vehicle_number); 
                     end
                     
-                    spacing_error = x_j - x - ((ego_id - car_j.vehicle_number) * s0 + h * v);
+                    spacing_error = x_j - x - ((host_car_id - car_j.vehicle_number) * s0 + h * v);
                     velocity_error = v_j - v;
 
                     u_coop = u_coop + K * [spacing_error ; velocity_error];

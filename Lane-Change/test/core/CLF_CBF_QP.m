@@ -17,7 +17,7 @@ classdef CLF_CBF_QP
             self.goal = controller.goal;
             self.straightlane = controller.straightlane;
         end
-        function [acc_flag, input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, current_lane_id, direction_flag, acc_flag)
+        function [acc_flag, input, e] = get_optimal_input(self, host_car_id,state, last_input, lane_id, input_log, current_lane_id, direction_flag, acc_flag)
 
             %% load parameter and control objective
             safety_factor = self.goal.safety_factor;
@@ -42,7 +42,7 @@ classdef CLF_CBF_QP
             target_y = self.goal.target_y;
 
             %% load surrounding vehicles
-            [car_fc, car_bt, car_ft] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag);
+            [car_fc, car_bt, car_ft] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag,host_car_id);
             if lane_id == current_lane_id + direction_flag
                 acc_flag = 0; % indicates if ego vehicle is accelerating
             end

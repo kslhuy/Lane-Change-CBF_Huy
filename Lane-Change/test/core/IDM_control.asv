@@ -23,9 +23,7 @@ classdef IDM_control % Extended Look-Ahead Controller for Lane-Changing Vehicles
         function [acc_flag,input, e] = get_optimal_input(self, host_vehicle_id , state, last_input, lane_id, input_log, inital_land_ID, direction_flag, type_state,acc_flag)
             % Normally host_vehicle_id = self.vehicle_number
             % But we make it like a paramter , so we can further extend ,
-            % in the case we want to estimate the controller of car j 
-            % within car i , So in car i cal this function with
-            % host_vehicle_id = j
+            % in the case we want to estimate the controller of j car
 
 
             acc_flag = 0;

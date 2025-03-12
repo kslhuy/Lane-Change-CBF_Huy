@@ -43,7 +43,10 @@ classdef Observer < handle
 
             for j = 1:num_vehicles
                 if(self.vehicle.trust_log(1, instant_index, j) < 0.5)
-                    weights(j) = 0;
+                    weights_new  = weights;
+                    weights_new(1) = 0;
+                else
+                    weights_new  = weights;
                 end
 
                 %% Get local of j vehicle
@@ -67,7 +70,7 @@ classdef Observer < handle
 
 
                 
-                output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j, weights );
+                output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j, weights_new );
                 Big_X_hat_1_tempo(:,j) = output; % Append the result
             end
             self.est_global_state_current = Big_X_hat_1_tempo;
@@ -91,7 +94,7 @@ classdef Observer < handle
 
             % Estimate the j vehicle , in i vehicle
             % So the observer is implement in i vehicle
-            w_i0 = weights(j); % Weight of the local state
+            w_i0 = weights(1); % Weight of the local state
 
             %% Original paper (TRUE WORK)
             output = A*( x_hat_i_j(: , j) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , j)) ) + B*u_j ;
