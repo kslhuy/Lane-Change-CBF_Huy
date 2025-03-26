@@ -1,4 +1,4 @@
-classdef CLF_CBF_QP
+classdef CLF_CBF_QP < handle
     properties
         param_opt; % qp relevant parameters
         param_sys; % parameters of vehicles

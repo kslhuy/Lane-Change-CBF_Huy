@@ -1,4 +1,4 @@
-classdef CIDM_control % Extended Look-Ahead Controller for Lane-Changing Vehicles
+classdef CIDM_control < handle  % Extended Look-Ahead Controller for Lane-Changing Vehicles
     properties
         param_opt;
         param_sys;

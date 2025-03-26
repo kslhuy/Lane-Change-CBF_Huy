@@ -12,9 +12,9 @@ classdef Vehicle < handle
         state; % current state of the vehicle (   X , Y , phi , velocity, acceleration        )
         state_log; % history of states
         input; % current input of the vehicle
-        input_log; % history of inputs (speed and slip angle for the ego vehicle and lane change vehicle; speed and acceleartion for normal vehicles)
-        input_1_log;
-        input_2_log;
+        input_log; % history of inputs (= to U_final)
+        % input_1_log;
+        % input_2_log;
         controller;
         controller2;
 
@@ -35,6 +35,10 @@ classdef Vehicle < handle
         graph;
         trust_log;
         state5;
+        u1_log;
+        u2_log;
+        u_target_log;
+        gamma_log;
 
     end
     methods
@@ -131,10 +135,10 @@ classdef Vehicle < handle
 
         function update(self,instant_index)
 
-            % if instant_index*self.dt > 11
-            % 
-            %     disp('stop');
-            % end
+            if instant_index*self.dt > 10
+                disp('stop');
+            end
+
             %% Identify vehicles is connected with the ego vehicle's
             connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
             %% Calculate trust and opinion scores directly in self.trust_log
@@ -151,15 +155,20 @@ classdef Vehicle < handle
 
             %% Update normal car dynamics , like controller and observer
             normal_car_update(self,instant_index , weights_Dis);
+            send_data(self,instant_index)
 
+
+        end
+
+        function send_data(self,instant_index)
             %% Send to center communication
             self.center_communication.update_local_state(self.vehicle_number, self.observer.est_local_state_current , instant_index);
             self.center_communication.update_global_state(self.vehicle_number, self.observer.est_global_state_current , instant_index);
             self.center_communication.update_trust(self.vehicle_number, self.trust_log(1, instant_index, :));
             self.center_communication.update_input(self.vehicle_number, self.input);
 
-
         end
+
 
         function normal_car_update(self,instant_index , weights)
 
@@ -171,24 +180,30 @@ classdef Vehicle < handle
                 self.observer.Local_observer(self.state);
                 self.observer.Distributed_Observer(instant_index , weights);
                 %% Controller
-                [~, u_1, e_1] = self.controller.get_optimal_input(self.vehicle_number, self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"est", 0);
+                [~, u_1, e_1] = self.controller.get_optimal_input(self.vehicle_number, self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"true", 0);
                 [~, u_2, e_2] = self.controller2.get_optimal_input(self.vehicle_number ,self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"est", 0);
 
                 % [~, u, e] = self.controller.get_optimal_input(self.state, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,0);
-
+                gamma = min(squeeze(self.trust_log(1, instant_index, :)));
                 % gamma = min(self.trust_log(1, instant_index, :));
-                gamma = mean(self.trust_log(1, instant_index, :));
-                % calculate the optimal input of the vehicle
-                U_target = (1 - gamma)*u_1 + gamma*u_2;
+                % gamma = mean(self.trust_log(1, instant_index, :));
 
+                %% calculate the optimal input of the vehicle
                 %using low pass filter to smooth the input
+                U_target = (1 - gamma)*u_1 + gamma*u_2;
                 tau_filter = 0.02;
-                U_final = self.input + tau_filter*(U_target - self.input) ; % self.input is last input  
+                U_final = self.input + tau_filter*(U_target - self.input) ; % self.input is last input
 
                 %% Update new state
                 self.Bicycle(self.state(1:3), U_final); % calculate dX through nonlinear model
                 % self.Bicycle_delay_a(self.state, U_final);
                 % self.Bicycle_acc_update(self.state, u_1);
+
+                %% Log control input
+                self.u1_log = [self.u1_log, u_1];
+                self.u2_log = [self.u2_log, u_2];
+                self.u_target_log = [self.u_target_log, U_target];
+                self.gamma_log = [self.gamma_log, gamma];
 
 
 
@@ -223,8 +238,8 @@ classdef Vehicle < handle
             %% Save the state and input
             self.state_log = [self.state_log, self.state]; % update the state history
             self.input_log = [self.input_log, self.input]; % update the input final history
-            self.input_1_log = [self.input_1_log, u_1]; % update the input 1 history
-            self.input_2_log = [self.input_2_log, u_2]; % update the input 2 history
+            % self.input_1_log = [self.input_1_log, u_1]; % update the input 1 history
+            % self.input_2_log = [self.input_2_log, u_2]; % update the input 2 history
 
             self.other_log = [self.other_log(1, :), self.lane_id; self.other_log(2, :), e_1];
 
@@ -526,12 +541,12 @@ classdef Vehicle < handle
             % plot( self.state_log(1,:), 'b', 'LineWidth', 1.5); hold on;
             % plot( self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
             % legend('Ground Truth X', 'Estimated X');
-            
+
             plot( self.observer.est_global_state_log(1, 1:end, self.vehicle_number) - self.state_log(1,1:end-1), 'b', 'LineWidth', 1.5);
 
             legend('error X');
-            
-            title('X Position Comparison');
+
+            title(['Comparison global est car' num2str(self.vehicle_number) 'state with local true ' ]);
 
             subplot(3,1,2);
             % plot( self.state_log(2,:), 'b', 'LineWidth', 1.5); hold on;
@@ -541,43 +556,118 @@ classdef Vehicle < handle
 
             plot( self.observer.est_global_state_log(2, 1:end, self.vehicle_number)-self.state_log(2,1:end-1), 'b', 'LineWidth', 1.5);
             legend('error Y');
-            title('Y Position Comparison');
+            % title('Y Position Comparison');
 
             subplot(3,1,3);
             plot( self.state_log(4,:), 'b', 'LineWidth', 1.5); hold on;
             plot( self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
             legend('Ground Truth Speed', 'Estimated Speed');
-            title('Speed Comparison');
+            % title('Speed Comparison');
+            xlabel('Time (s)');
+        end
+
+
+
+        %% Function for plot
+        function plot_ground_error_global_est(self , vehicles)
+            figure;
+            subplot(4,1,1);
+
+            nb_vehicles = length(vehicles);
+            vehicle_labels = arrayfun(@(i) sprintf('Vehicle %d', i), 1:nb_vehicles, 'UniformOutput', false);
+
+            for i = 1:nb_vehicles
+                plot( self.observer.est_global_state_log(1, 1:end, i) - vehicles(i).state_log(1, 1:end-1), 'LineWidth', 1);
+                hold on;
+            end
+
+            legend(vehicle_labels);
+
+            title(['Comparison global est state with local true platoon car ' num2str(self.vehicle_number)]);
+
+            subplot(4,1,2);
+
+            for i = 1:nb_vehicles
+                plot( self.observer.est_global_state_log(2, 1:end, i) - vehicles(i).state_log(2, 1:end-1), 'LineWidth', 1);
+                hold on;
+            end
+            % legend('error Y');
+
+            subplot(4,1,3);
+
+            for i = 1:nb_vehicles
+                plot( self.observer.est_global_state_log(3, 1:end, i) - vehicles(i).state_log(3, 1:end-1), 'LineWidth', 1);
+                hold on;
+            end
+
+            subplot(4,1,4);
+
+            for i = 1:nb_vehicles
+                plot( self.observer.est_global_state_log(4, 1:end, i) - vehicles(i).state_log(4, 1:end-1), 'LineWidth', 1);
+                hold on;
+            end
+
+            xlabel('Time (s)');
+        end
+
+        %% Function for plot
+        function plot_u1_u2_gamma(self)
+            figure;
+            subplot(5,1,1);
+
+            plot( self.u1_log(1,:), 'r', 'LineWidth', 1.5);
+
+            legend('U1');
+
+            title(["car " num2str(self.vehicle_number)]);
+
+            subplot(5,1,2);
+
+            plot( self.u2_log(1,:), 'b', 'LineWidth', 1.5);
+            legend('U2');
+
+            subplot(5,1,3);
+
+            plot( self.u_target_log(1,:), 'b', 'LineWidth', 1.5);
+            legend('U target');
+            subplot(5,1,4);
+
+            plot( self.input_log(1,1:end-1), 'LineWidth', 1.5);
+            legend('U final');
+
+            subplot(5,1,5);
+            plot( self.gamma_log,  'LineWidth', 1.5);
+            legend('Gamma');
             xlabel('Time (s)');
         end
 
         % %% Function for plotting relative position
         % function plot_relative_position(self)
         %     figure;
-        % 
+        %
         %     % Compute relative positions
         %     rel_x = self.state_log(1,:) - self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number - 1);
         %     rel_y = self.state_log(2,:) - self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number - 1);
         %     rel_speed = self.state_log(4,:) - self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number - 1);
-        % 
+        %
         %     rel_x_est = self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number - 1);
         %     rel_y_est = self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(2, 1:end-1, self.vehicle_number - 1);
         %     rel_speed_est = self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number) - self.observer.est_global_state_log(4, 1:end-1, self.vehicle_number - 1);
-        % 
+        %
         %     % Plot relative X position
         %     subplot(3,1,1);
         %     plot(rel_x, 'b', 'LineWidth', 1.5); hold on;
         %     plot(rel_x_est, 'r--', 'LineWidth', 1.5);
         %     legend('Relative X (Ground Truth)', 'Relative X (Estimated)');
         %     title('Relative X Position Comparison');
-        % 
+        %
         %     % Plot relative Y position
         %     subplot(3,1,2);
         %     plot(rel_y, 'b', 'LineWidth', 1.5); hold on;
         %     plot(rel_y_est, 'r--', 'LineWidth', 1.5);
         %     legend('Relative Y (Ground Truth)', 'Relative Y (Estimated)');
         %     title('Relative Y Position Comparison');
-        % 
+        %
         %     % Plot relative speed
         %     subplot(3,1,3);
         %     plot(rel_speed, 'b', 'LineWidth', 1.5); hold on;

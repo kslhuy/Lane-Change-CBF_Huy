@@ -92,15 +92,24 @@ classdef CenterCommunication < handle
         %% GETTER
         %% TODO : can implement attack module here to simulate the attack
         
-        function global_state = get_global_state(self, vehicle_number)
+        function global_state = get_global_state(self, vehicle_number,host_id)
             % Get the global state of a specific vehicle
-            global_state = self.global_state_atk_storage(vehicle_number);
+            if(host_id == vehicle_number)
+                global_state = self.global_state_storage(vehicle_number);
+            else
+                global_state = self.global_state_atk_storage(vehicle_number);
+            end
         end
         
-        function local_state = get_local_state(self, vehicle_number)
+        function local_state = get_local_state(self, vehicle_number,host_id)
             % Get the local state of a specific vehicle
+            % if we are the host, we get the local state raw data
+            if(host_id == vehicle_number)
+                local_state = self.local_state_storage(vehicle_number);
+            else
+                local_state = self.local_state_atk_storage(vehicle_number);
+            end
             
-            local_state = self.local_state_atk_storage(vehicle_number);
             
         end
         

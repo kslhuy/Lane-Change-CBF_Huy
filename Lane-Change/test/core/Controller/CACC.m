@@ -1,4 +1,4 @@
-classdef CACC
+classdef CACC < handle
     properties
         param_opt;
         param_sys;

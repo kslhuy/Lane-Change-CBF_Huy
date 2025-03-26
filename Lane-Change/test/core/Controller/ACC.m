@@ -1,4 +1,4 @@
-classdef CACC
+classdef ACC < handle
     properties
         param_opt;
         param_sys;
@@ -8,7 +8,7 @@ classdef CACC
         controller;
     end
     methods
-        function self = CACC( controller)
+        function self = ACC( controller)
             self.controller = controller;
             self.param_opt = controller.param_opt;
             self.param_sys = controller.param_sys;

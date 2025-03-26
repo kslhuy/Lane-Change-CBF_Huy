@@ -31,13 +31,7 @@ classdef TriPTrustModel < handle
         a_score_log;
         beacon_score_log;
         final_score_log;
-
-        flag_glob_est_check_log ;
-        flag_taget_attk_log ;
-        
-        flag_taget_attk;
-        flag_glob_est_check;
-        
+        fla
     end
 
     methods
@@ -204,7 +198,7 @@ classdef TriPTrustModel < handle
 
 
 
-        function [final_score,trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score , flag_taget_attk ,flag_glob_est_check] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, leader_beacon_interval, time_step)
+        function [final_score,trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, leader_beacon_interval, time_step)
             % calculateTrust - Computes trust scores for a specific vehicle
             %
             % Inputs:
@@ -278,29 +272,19 @@ classdef TriPTrustModel < handle
 
             gamma_local = self.compute_local_consistency_factor(host_vehicle, target_vehicle, neighbors);
 
-            %% Flag Check
-            self.flag_taget_attk = false;
-            self.flag_glob_est_check = false;
-            if (gamma_local > 0.5 && gamma_cross < 0.5)
-                self.flag_taget_attk = true;
-            end
-            if (gamma_local < 0.5 && gamma_cross > 0.5)
-                self.flag_glob_est_check = true;
-            end
-
 
 
             % Compute extended trust sample
-            % trust_sample_ext = 0.5*trust_sample  +  0.5*(gamma_cross * gamma_local);
+            trust_sample_ext = 0.5*trust_sample  +  0.5*(gamma_cross * gamma_local);
 
-            trust_sample_ext = trust_sample * gamma_cross * gamma_local ;
+            % trust_sample_ext = trust_sample * gamma_cross ;
             % trust_sample_ext = trust_sample ;
             
-            self.update_rating_vector(trust_sample_ext);
-            final_score = self.calculate_trust_score();
+            % self.update_rating_vector(trust_sample_ext);
+            % final_score = self.calculate_trust_score();
             % 
             
-            % final_score = trust_sample_ext ; 
+            final_score = trust_sample_ext ; 
 
             % Log data for analysis
             self.trust_sample_log = [self.trust_sample_log, trust_sample];
@@ -312,8 +296,6 @@ classdef TriPTrustModel < handle
             self.beacon_score_log = [self.beacon_score_log, beacon_score];
             self.final_score_log = [self.final_score_log, final_score];
             
-            self.flag_taget_attk_log = [self.flag_taget_attk_log, self.flag_taget_attk];
-            self.flag_glob_est_check_log = [self.flag_glob_est_check_log, self.flag_glob_est_check];
         end
 
 

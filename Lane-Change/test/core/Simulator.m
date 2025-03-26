@@ -44,6 +44,10 @@ classdef Simulator
                     for k = 1:num_car
                         self.other_vehicles(k).update(i); % Update vehicle state
                     end
+                    % for k = 1:num_car
+                    %     self.other_vehicles(k).send_data(i); % Update vehicle state
+                    % end
+                    
                 end
 
                 if ~isempty(self.ego_vehicle)

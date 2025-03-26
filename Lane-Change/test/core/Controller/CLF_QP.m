@@ -1,4 +1,4 @@
-classdef CLF_QP % an qp for surrounding vehicle that is changing the lane
+classdef CLF_QP < handle % an qp for surrounding vehicle that is changing the lane
     properties
         controller;
         param_opt;

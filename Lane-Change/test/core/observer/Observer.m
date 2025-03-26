@@ -10,6 +10,7 @@ classdef Observer < handle
         est_global_state_log;
         est_local_state_log;
         vehicle;
+        controller;
         
     end
     methods
@@ -30,6 +31,10 @@ classdef Observer < handle
 
             self.est_local_state_log = inital_local_state;
 
+            % for i = 1:num_vehicles
+            %     self.controller{i} = self.vehicle.other_vehicles(i).controller;
+            % end
+
 
         end
         
@@ -41,8 +46,11 @@ classdef Observer < handle
             Big_X_hat_1_tempo = zeros(size(self.est_global_state_current)); % Initialize the variable to store the results
             x_hat_i_j = zeros(4, num_vehicles); % Initialize the variable to store the global state of other vehicles
 
+            flag_glob_est_check = false;
             for j = 1:num_vehicles
-                if(self.vehicle.trust_log(1, instant_index, j) < 0.5)
+
+            
+                if(self.vehicle.trust_log(1, instant_index, j) < 0.5 && self.vehicle.vehicle_number ~= j)
                     weights_new  = weights;
                     weights_new(1) = 0;
                 else
@@ -50,26 +58,50 @@ classdef Observer < handle
                 end
 
                 %% Get local of j vehicle
-                x_bar_j = self.vehicle.center_communication.get_local_state(j);
+                x_bar_j = self.vehicle.center_communication.get_local_state(j,self.vehicle.vehicle_number);
                 
                 % ------- To get global state of other vehicles 
                 % Go through all the other vehicles , start from the second vehicle
                 for k = 1:num_vehicles
                     % Go in car number "k" , Get car "j" in global estimat of "k" 
-                    x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k);
+                    x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k,self.vehicle.vehicle_number);
+
+                    if(self.vehicle.trip_models{k}.flag_glob_est_check)
+                        flag_glob_est_check = true;
+                    end
                     x_hat_i_j(:,k) =  x_hat_i_j_full(:,j);
                 end
-                % ------- To get global state of other vehicles 
                 
-                % Hiện tại đang tính thằng j , so vào thằng j lấy control input của nó
-                % TODO : Since vehicle 1 dont have connection with vehicle 4 , so we need to remove the last control input
-                % Need to calculate the control input for each vehicle locally by the estimated state of other vehicle
+                %% TODO : NEW HERE 
+                % if flag_glob_est_check
+                %     x_hat_i_j = self.est_global_state_current;
+                %     weights_new(2:end) = 0; 
+                % end
+
+
+                %% CONTROLLER
+                % Now đang tính thằng j , so vào thằng j lấy control input của nó
                 
                 % u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
                 u_j = self.vehicle.input; % Control input of the current vehicle
-
-
                 
+                %% calculate the control input for each vehicle locally by the estimated state of other vehicle
+                
+                
+                % if (self.vehicle.vehicle_number ~= 1)
+                %     if (j==1)
+                %         u_j = [0;0];
+                %     elseif j == self.vehicle.vehicle_number
+                %         u_j = self.vehicle.input; % Control input of the current vehicle
+                %     else
+                %         est_local_j =  self.est_global_state_current(:,j); % est_local_j in vehicle i
+                %         [~, u_j ,~] = self.vehicle.controller2.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
+                %     end
+                % else
+                %     u_j = self.vehicle.input;
+                % end
+
+
                 output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j, weights_new );
                 Big_X_hat_1_tempo(:,j) = output; % Append the result
             end

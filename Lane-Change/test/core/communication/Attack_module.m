@@ -1,13 +1,13 @@
 classdef Attack_module < handle
     % ATTACK_MODULE Class to simulate cyber-attacks on vehicle communication data.
-    
+
     properties
         network_jitter;      % Maximum network jitter in seconds
         packet_loss_rate;    % Probability of packet loss (0 to 1)
         scenario;            % Struct with attack scenario details
         dt;                  % Time step for simulation
     end
-    
+
     methods
         % Constructor with default values
         function self = Attack_module(dt)
@@ -15,15 +15,15 @@ classdef Attack_module < handle
             self.network_jitter = 0.05;    % 50ms jitter
             self.packet_loss_rate = 0.1;   % 10% packet loss rate
             self.dt = dt;
-            self.scenario = struct('type', {},'attacker_id',{} , 'start_time', {}, 'end_time', {}, ...
+            self.scenario = struct('type', {},'attacker_id',{} , 'victim_id',{} , 'start_time', {}, 'end_time', {}, ...
                 'attack_type', {}, 'fault_intensity', {},'data_type',{} ,'attack_row',{}); % Empty array
         end
-        
+
         function setScenario(self, scenario_type, scenario_params)
             % SETSCENARIO Appends a new attack scenario.
             switch scenario_type
                 case 'time_based'
-                    required_fields = {'attacker_id' ,'start_time', 'end_time', 'attack_type', 'fault_intensity','data_type' , 'attack_row'};
+                    required_fields = {'attacker_id' ,'victim_id','start_time', 'end_time', 'attack_type', 'fault_intensity','data_type' , 'attack_row'};
                     for i = 1:length(required_fields)
                         if ~isfield(scenario_params, required_fields{i})
                             error('Missing required field: %s', required_fields{i});
@@ -32,6 +32,7 @@ classdef Attack_module < handle
                     % Append new scenario to the array
                     new_scenario = struct('type', 'time_based', ...
                         'attacker_id', scenario_params.attacker_id, ...
+                        'victim_id', scenario_params.victim_id, ...
                         'start_time', scenario_params.start_time, ...
                         'end_time', scenario_params.end_time, ...
                         'attack_type', scenario_params.attack_type, ...
@@ -47,28 +48,28 @@ classdef Attack_module < handle
                     error('Unknown scenario type. Use "time_based" or "none".');
             end
         end
-        
+
         % Simulate cyber-attack on global data (similar changes apply)
         function [x_hat_i_j , original_data] = SetGlobalAttack(self, vehicle_id, x_hat_i_j, instant_idx)
 
             timestamp = instant_idx * self.dt; %convert to seconds
             original_data = x_hat_i_j; % Preserve original for layering attacks
-            if isempty(self.scenario) 
+            if isempty(self.scenario)
                 % disp('No attacks to apply');
                 return;
             end
-            
+
             for i = 1:length(self.scenario)
                 if (strcmp(self.scenario(i).type, 'time_based') && ...
                         (strcmp(self.scenario(i).data_type, 'global') || strcmp(self.scenario(i).data_type, 'both')) && ...
                         ismember(vehicle_id ,self.scenario(i).attacker_id) && ...
                         timestamp >= self.scenario(i).start_time && ...
                         timestamp <= self.scenario(i).end_time)
-                    
+
                     attack_type = self.scenario(i).attack_type;
                     fault_intensity = self.scenario(i).fault_intensity;
-                    
-                    attack_rows = self.GetAttackRows_global(self.setScenario(i).attack_row, size(x_hat_i_j, 1));
+
+                    attack_rows = self.GetAttackRows_global(self.scenario(i).attack_row, size(x_hat_i_j, 1));
                     switch attack_type
                         case 'faulty'
                             x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + randn(size(attack_rows)) * fault_intensity;
@@ -86,11 +87,11 @@ classdef Attack_module < handle
                 end
             end
         end
-        
+
         % Simulate cyber-attack on local aggregated data
         function [x_bar_j,original_data] = SetLocalAttack(self,vehicle_id, x_bar_j, instant_idx)
 
-            
+
             timestamp = instant_idx * self.dt; %convert to seconds
             original_data = x_bar_j; % Preserve original for layering attacks
             % SETLOCALATTACK Simulates attacks based on all active scenarios.
@@ -108,9 +109,9 @@ classdef Attack_module < handle
                         timestamp <= self.scenario(i).end_time
                     attack_type = self.scenario(i).attack_type;
                     fault_intensity = self.scenario(i).fault_intensity;
-                    
+
                     attack_rows = self.GetAttackRows_global(self.scenario(i).attack_row, size(x_bar_j, 1));
-                    
+
                     switch attack_type
                         case 'faulty'
                             x_bar_j(attack_rows) = x_bar_j(attack_rows) + randn(size(attack_rows)) * fault_intensity;
@@ -129,7 +130,7 @@ classdef Attack_module < handle
                 end
             end
         end
-        
+
         % Helper function to get rows to attack
         function attack_rows = GetAttackRows_global(self, attacked_data, num_rows)
             % GETATTACKROWS_GLOBAL Determines the rows to attack based on the attacked data type.
@@ -140,7 +141,7 @@ classdef Attack_module < handle
             %
             % Output:
             %   attack_rows   - Rows to attack in the data matrix.
-            
+
             % Define rows based on data type (assumes 6x1 vector: 1-3 position, 4-6 acceleration)
             if strcmp(attacked_data, 'X')
                 attack_rows = 1; % Position rows
@@ -153,9 +154,52 @@ classdef Attack_module < handle
             else
                 attack_rows = 1:num_rows; % All rows
             end
-            
+
             % Ensure attack_rows do not exceed num_rows
             attack_rows = attack_rows(attack_rows <= num_rows);
+        end
+
+        % Simulate cyber-attack on global data (similar changes apply)
+        function x_hat_i_j  = GetGlobalAttack(self, vehicle_id, x_hat_i_j_attacked,x_hat_i_j_normal, instant_idx)
+
+            timestamp = instant_idx * self.dt; %convert to seconds
+            
+            if isempty(self.scenario)
+                % disp('No attacks to apply');
+                return;
+            end
+
+            for i = 1:length(self.scenario)
+                if (ismember(vehicle_id ,self.scenario(i).victim_id))
+
+                    x_hat_i_j = x_hat_i_j_attacked;
+                else
+                    x_hat_i_j = x_hat_i_j_normal;
+                end
+            end
+        end
+
+        % Simulate cyber-attack on local aggregated data
+        function [x_bar_j,original_data] = GetLocalAttack(self,vehicle_id, x_bar_attacked, x_bar_normal, instant_idx)
+
+
+            timestamp = instant_idx * self.dt; %convert to seconds
+            original_data = x_bar_j; % Preserve original for layering attacks
+            % SETLOCALATTACK Simulates attacks based on all active scenarios.
+            if isempty(self.scenario)
+                % disp('No attacks to apply');
+                return; % No attacks to apply
+            end
+
+
+            for i = 1:length(self.scenario)
+                if (ismember(vehicle_id ,self.scenario(i).victim_id))
+                    x_bar_j = x_bar_attacked;
+                else
+                    x_bar_j = x_bar_normal;
+                end
+            end
+            
         end
     end
 end

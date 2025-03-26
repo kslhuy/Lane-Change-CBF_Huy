@@ -10,6 +10,7 @@ classdef Observer < handle
         est_global_state_log;
         est_local_state_log;
         vehicle;
+        controller;
         
     end
     methods
@@ -30,12 +31,15 @@ classdef Observer < handle
 
             self.est_local_state_log = inital_local_state;
 
+            % for i = 1:num_vehicles
+            %     self.controller{i} = self.vehicle.other_vehicles(i).controller;
+            % end
+
 
         end
         
         
         function  Distributed_Observer(self,instant_index , weights)
-
             % Get the number of other vehicles
             num_vehicles = length(self.vehicle.other_vehicles);
 
@@ -43,8 +47,15 @@ classdef Observer < handle
             x_hat_i_j = zeros(4, num_vehicles); % Initialize the variable to store the global state of other vehicles
 
             for j = 1:num_vehicles
-                
+                if(self.vehicle.trust_log(1, instant_index, j) < 0.5)
+                    weights_new  = weights;
+                    weights_new(1) = 0;
+                else
+                    weights_new  = weights;
+                end
+
                 %% Get local of j vehicle
+                if()
                 x_bar_j = self.vehicle.center_communication.get_local_state(j);
                 
                 % ------- To get global state of other vehicles 
@@ -56,16 +67,30 @@ classdef Observer < handle
                 end
                 % ------- To get global state of other vehicles 
                 
-                % Hiện tại đang tính thằng j , so vào thằng j lấy control input của nó
-                % TODO : Since vehicle 1 dont have connection with vehicle 4 , so we need to remove the last control input
-                % Need to calculate the control input for each vehicle locally by the estimated state of other vehicle
+                % Now đang tính thằng j , so vào thằng j lấy control input của nó
                 
                 % u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
-                u_j = self.vehicle.input; % Control input of the current vehicle
-
-
+                % u_j = self.vehicle.input; % Control input of the current vehicle
                 
-                output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j, weights );
+                %% TODO : Since vehicle 1 dont have connection with vehicle 4 , so we need to remove the last control input
+                %% Need to calculate the control input for each vehicle locally by the estimated state of other vehicle
+                
+                
+                if (self.vehicle.vehicle_number ~= 1)
+                    if (j==1)
+                        u_j = [0;0];
+                    elseif j == self.vehicle.vehicle_number
+                        u_j = self.vehicle.input; % Control input of the current vehicle
+                    else
+                        est_local_j =  self.est_global_state_current(:,j); % est_local_j in vehicle i
+                        [~, u_j ,~] = self.vehicle.controller2.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
+                    end
+                else
+                    u_j = self.vehicle.input;
+                end
+
+
+                output = distributed_Observer_each( self , j , x_bar_j , x_hat_i_j, u_j, weights_new );
                 Big_X_hat_1_tempo(:,j) = output; % Append the result
             end
             self.est_global_state_current = Big_X_hat_1_tempo;
@@ -89,7 +114,7 @@ classdef Observer < handle
 
             % Estimate the j vehicle , in i vehicle
             % So the observer is implement in i vehicle
-            w_i0 = weights(j); % Weight of the local state
+            w_i0 = weights(1); % Weight of the local state
 
             %% Original paper (TRUE WORK)
             output = A*( x_hat_i_j(: , j) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , j)) ) + B*u_j ;
