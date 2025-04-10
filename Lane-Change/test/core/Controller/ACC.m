@@ -15,6 +15,7 @@ classdef ACC < handle
             self.goal = controller.goal;
             self.straightlane = controller.straightlane;
         end
+        
         function [acc_flag,input, e] = get_optimal_input(self, state, last_input, lane_id, input_log, inital_land_ID, direction_flag, acc_flag)
             acc_flag = 0;
             % Extract vehicle parameters

@@ -12,8 +12,8 @@ classdef TriPTrustModel < handle
         wa = 1.0;  % Weight for acceleration
         wj = 1.0;  % Weight for jerkiness
 
-        wt = 1; % Trust decay weight
-        
+        wt = 0.5; % Trust decay weight
+
         C = 0.2;   % Regularization constant
         tacc = 1.2;% Trust-based acceleration scaling factor
         k = 5;     % Number of trust levels
@@ -26,6 +26,7 @@ classdef TriPTrustModel < handle
         trust_sample_log;
         gamma_cross_log;
         gamma_local_log;
+        gamma_expected_log;
         v_score_log;
         d_score_log;
         a_score_log;
@@ -34,10 +35,12 @@ classdef TriPTrustModel < handle
 
         flag_glob_est_check_log ;
         flag_taget_attk_log ;
+        flag_local_est_check_log ;
         
-        flag_taget_attk;
-        flag_glob_est_check;
-        
+        flag_taget_attk = false;
+        flag_glob_est_check = false;
+
+        flag_local_est_check = false;
     end
 
     methods
@@ -202,9 +205,14 @@ classdef TriPTrustModel < handle
             trust_score = sum(weights .* S_y);
         end
 
+        % function est_value = compute_kinematic_estimations(v_prev, x_prev, v_current, x_current, TIME_STEP)
+        % 
+        % 
+        % end
+        % 
 
-
-        function [final_score,trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score , flag_taget_attk ,flag_glob_est_check] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, leader_beacon_interval, time_step)
+        %%% Main %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%% 
+        function [final_score,local_trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score , flag_taget_attk ,flag_glob_est_check] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, leader_beacon_interval, time_step)
             % calculateTrust - Computes trust scores for a specific vehicle
             %
             % Inputs:
@@ -271,16 +279,20 @@ classdef TriPTrustModel < handle
             beacon_score = self.evaluate_beacon_timeout(true);
 
             % Compute trust sample for local estimation
-            trust_sample = self.calculate_trust_sample_wo_Acc(v_score, d_score, a_score, beacon_score);
+            local_trust_sample = self.calculate_trust_sample_wo_Acc(v_score, d_score, a_score, beacon_score);
 
             % Compute global estimate trust factors
             gamma_cross = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
 
             gamma_local = self.compute_local_consistency_factor(host_vehicle, target_vehicle, neighbors);
 
+            %% not use
+            gamma_expected = self.compute_cross_host_expected_2_factor(host_id,host_vehicle, target_id,target_vehicle);
+
             %% Flag Check
             self.flag_taget_attk = false;
             self.flag_glob_est_check = false;
+            self.flag_local_est_check = false;
             if (gamma_local > 0.5 && gamma_cross < 0.5)
                 self.flag_taget_attk = true;
             end
@@ -288,32 +300,41 @@ classdef TriPTrustModel < handle
                 self.flag_glob_est_check = true;
             end
 
+            if (local_trust_sample <0.5 )
+                self.flag_local_est_check = true;
+            end
+
+
 
 
             % Compute extended trust sample
             % trust_sample_ext = 0.5*trust_sample  +  0.5*(gamma_cross * gamma_local);
 
-            trust_sample_ext = trust_sample * gamma_cross * gamma_local ;
+            trust_sample_ext = local_trust_sample  * gamma_cross * gamma_local ;
             % trust_sample_ext = trust_sample ;
-            
+
             self.update_rating_vector(trust_sample_ext);
             final_score = self.calculate_trust_score();
-            % 
-            
-            % final_score = trust_sample_ext ; 
+            %
+
+            % final_score = trust_sample_ext ;
 
             % Log data for analysis
-            self.trust_sample_log = [self.trust_sample_log, trust_sample];
+            self.trust_sample_log = [self.trust_sample_log, local_trust_sample];
             self.gamma_cross_log = [self.gamma_cross_log, gamma_cross];
             self.gamma_local_log = [self.gamma_local_log, gamma_local];
+            self.gamma_expected_log = [self.gamma_expected_log, gamma_expected];
+
             self.v_score_log = [self.v_score_log, v_score];
             self.d_score_log = [self.d_score_log, d_score];
             self.a_score_log = [self.a_score_log, a_score];
             self.beacon_score_log = [self.beacon_score_log, beacon_score];
             self.final_score_log = [self.final_score_log, final_score];
-            
+
             self.flag_taget_attk_log = [self.flag_taget_attk_log, self.flag_taget_attk];
             self.flag_glob_est_check_log = [self.flag_glob_est_check_log, self.flag_glob_est_check];
+            self.flag_local_est_check_log = [self.flag_local_est_check_log, self.flag_local_est_check];
+
         end
 
 
@@ -333,7 +354,7 @@ classdef TriPTrustModel < handle
             target_global_estimate = target_vehicle.center_communication.get_global_state(target_id,host_id);
 
             % Compute covariance matrix (adaptive variance)
-            sigma2_diag_element = [3,1 ,0.01, 1];
+            sigma2_diag_element = [2,1 ,0.01, 0.5];
             sigma2_matrix = diag(sigma2_diag_element);
             % Compute total discrepancy D_i,l(k)
             D = 0;
@@ -346,6 +367,149 @@ classdef TriPTrustModel < handle
             % Compute trust factor
             gamma_cross = exp(-D);
         end
+
+        function gamma_cross_expected = compute_cross_host_expected_factor(self, host_id, host_vehicle, target_id, target_vehicle)
+            % Get target vehicle's global estimate
+            target_global_estimate = target_vehicle.center_communication.get_global_state(target_id, host_id);
+            
+            % Define variances for covariance matrix
+            var_x = 3;         % Variance for X-difference
+            var_y = 1;         % Variance for Y-difference
+            var_angle = 0.01;  % Variance for angle-difference
+            var_velocity = 1;  % Variance for velocity-difference
+            sigma2_matrix = diag([var_x, var_y, var_angle, var_velocity]);
+            
+            % Retrieve control parameters (assumed available as properties or from the vehicle)
+            s0      = 8;       % Minimum spacing (m)
+            h_base  = 0.5;   % Base time headway (s) for the first follower (vehicle 2)
+            delta_h = 0.1;  % Headway reduction per position in the platoon (s)
+            if ~isempty(host_vehicle.gamma_log)
+                gamma_control = host_vehicle.gamma_log(end);
+            else
+                gamma_control = 1;
+            end            
+            % Initialize total discrepancy
+            D = 0;
+            num_vehicles = size(target_global_estimate, 2);
+            
+            % Loop over consecutive vehicle pairs in the global estimate
+            for j = 1:num_vehicles - 1
+                % Difference between vehicle j and j+1 in the global state vector
+                state_diff = target_global_estimate(:, j) - target_global_estimate(:, j+1);
+                
+                % Compute adaptive expected spacing for the follower (vehicle n = j+1)
+                n = j + 1; % Vehicle index in platoon (leader is n=1)
+                % Adaptive headway for this vehicle
+                h_n = h_base - delta_h * (n - 2);
+                
+                % Assume state vector: [x; y; angle; velocity]
+                % Use the velocity of the follower vehicle (j+1) for the spacing calculation
+                v = target_global_estimate(4, j+1);
+                
+                % Compute expected spacing using the mixing formula:
+                % s_expected = s0 + (gamma*h_base + (1-gamma)*h_n)*v
+                s_expected = s0 + ((1 - gamma_control) * h_base + gamma_control * h_n) * v;
+                
+                % Define the expected difference vector for this gap. Only the X-component is adaptive.
+                mu_diff_gap = [s_expected; 0; 0; 0];
+                
+                % Calculate difference from expected value for this pair
+                diff_from_expected = state_diff - mu_diff_gap;
+                
+                % Accumulate the discrepancy using the Mahalanobis distance
+                D = D + diff_from_expected' * inv(sigma2_matrix) * diff_from_expected;
+            end
+            
+            % Compute the cross expected trust factor as an exponential decay with the total discrepancy
+            gamma_cross_expected = exp(-D);
+        end
+
+        function gamma_cross_expected = compute_cross_host_expected_2_factor(self, host_id, host_vehicle, target_id, target_vehicle)
+            % Get target vehicle's global estimate
+            target_global_estimate = target_vehicle.center_communication.get_global_state(target_id, host_id);
+            
+            % Define variances for covariance matrix
+            var_x = 3;         % Variance for X-difference
+            var_y = 1;         % Variance for Y-difference
+            var_angle = 0.01;  % Variance for angle-difference
+            var_velocity = 0.5;  % Variance for velocity-difference
+            sigma2_matrix = diag([var_x, var_y, var_angle, var_velocity]);
+            
+            % Retrieve control parameters (assumed available as properties or from the vehicle)
+            s0      = 8;       % Minimum spacing (m)
+            h_base  = 0.4;   % Base time headway (s) for the first follower (vehicle 2)
+            T = 0.5;
+            delta_h = 0.1;  % Headway reduction per position in the platoon (s)
+            if ~isempty(host_vehicle.gamma_log)
+                gamma_control = host_vehicle.gamma_log(end);
+            else
+                gamma_control = 1;
+            end            
+            % Initialize total discrepancy
+            D = 0;
+            num_vehicles = size(target_global_estimate, 2);
+            
+            % Loop over consecutive vehicle pairs in the global estimate
+            for j = 1:num_vehicles - 1
+                % Difference between vehicle j and j+1 in the global state vector
+                state_diff = target_global_estimate(:, j) - target_global_estimate(:, j+1);
+                
+                % Assume state vector: [x; y; angle; velocity]
+                % Use the velocity of the follower vehicle (j+1) for the spacing calculation
+                v = target_global_estimate(4, j+1);
+                
+                s_acc = s0 + T*v; % h_base = T
+                s_i = s0 + h_base*v/j;
+                % Compute expected spacing using the mixing formula:
+                % s_expected = s0 + (gamma*h_base + (1-gamma)*h_n)*v
+                s_expected =  ((1 - gamma_control) * s_acc + gamma_control * s_i) ;
+                % U_final = self.input + tau_filter*(U_target - self.input) ; % self.input is last input
+
+                % Define the expected difference vector for this gap. Only the X-component is adaptive.
+                mu_diff_gap = [s_expected; 0; 0; 0];
+                
+                % Calculate difference from expected value for this pair
+                diff_from_expected = state_diff - mu_diff_gap;
+                
+                % Accumulate the discrepancy using the Mahalanobis distance
+                D = D + diff_from_expected' * inv(sigma2_matrix) * diff_from_expected;
+            end
+            
+            % Compute the cross expected trust factor as an exponential decay with the total discrepancy
+            gamma_cross_expected = exp(-D);
+        end
+        
+        
+        % function gamma_cross_expected = compute_cross_host_expected_factor(self, host_id, host_vehicle, target_id, target_vehicle)
+        %     % Get target vehicle's global estimate
+        %     target_global_estimate = target_vehicle.center_communication.get_global_state(target_id, host_id);
+        
+        %     % Define expected differences
+        %     expected_diff_x = 20;      % Expected X-spacing (m)
+        %     expected_diff_y = 0;       % Expected Y-offset (m)
+        %     expected_diff_angle = 0;   % Expected angle difference (rad)
+        %     expected_diff_velocity = 0; % Expected velocity difference (m/s)
+        %     mu_diff = [expected_diff_x; expected_diff_y; expected_diff_angle; expected_diff_velocity];
+        
+        %     % Define variances for covariance matrix
+        %     var_x = 1;         % Variance for X-difference
+        %     var_y = 1;         % Variance for Y-difference
+        %     var_angle = 0.01;  % Variance for angle-difference
+        %     var_velocity = 1;  % Variance for velocity-difference
+        %     sigma2_matrix = diag([var_x, var_y, var_angle, var_velocity]);
+        
+        %     % Compute total discrepancy
+        %     D = 0;
+        %     num_vehicles = size(target_global_estimate, 2);
+        %     for j = 1:num_vehicles - 1
+        %         x_diff = target_global_estimate(:, j) - target_global_estimate(:, j+1);
+        %         diff_from_expected = x_diff - mu_diff;
+        %         D = D + diff_from_expected' * inv(sigma2_matrix) * diff_from_expected; % Mahalanobis distance
+        %     end
+        
+        %     % Compute trust factor
+        %     gamma_cross_expected = exp(-D);
+        % end
 
 
 
@@ -442,29 +606,31 @@ classdef TriPTrustModel < handle
 
 
         function plot_trust_log(self,nb_host_car , nb_target_car)
-            figure;
+            figure("Name", num2str(nb_host_car) +  " Trust for " + num2str(nb_target_car), "NumberTitle", "off");
+
             hold on;
-            
-            plot(self.trust_sample_log, 'DisplayName', 'Trust Sample');
-            plot(self.gamma_cross_log, 'DisplayName', 'Gamma Cross');
-            plot(self.gamma_local_log, 'DisplayName', 'Gamma Local');
-            plot(self.v_score_log, 'DisplayName', 'V Score');
-            plot(self.d_score_log, 'DisplayName', 'D Score');
-            plot(self.final_score_log, 'DisplayName', 'Final Score' , 'LineWidth', 2);
-            
+
+            plot(self.trust_sample_log, 'DisplayName', 'Trust Sample', 'LineWidth', 1);
+            plot(self.gamma_cross_log, 'DisplayName', 'Gamma Cross', 'LineWidth', 1);
+            plot(self.gamma_local_log, 'DisplayName', 'Gamma Local', 'LineWidth', 1);
+            % plot(self.gamma_expected_log, 'DisplayName', 'Gamma expect', 'LineWidth', 1);
+            plot(self.v_score_log, 'DisplayName', 'V Score', 'LineWidth', 1);
+            plot(self.d_score_log, 'DisplayName', 'D Score', 'LineWidth', 1);
+            plot(self.final_score_log, 'DisplayName', 'Final Score' , 'LineWidth', 1.5);
+
             % plot(self.a_score_log, 'DisplayName', 'A Score');
             % plot(self.beacon_score_log, 'DisplayName', 'Beacon Score');
-        
+
             xlabel('Time Step');
             ylabel('Value');
             title([num2str(nb_host_car) '-> Trust and Score Logs Over Time for car '  num2str(nb_target_car)],"LineWidth",1);
             legend show;
             grid on;
-            
+
             hold off;
         end
-        
-        
+
+
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Not Use %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

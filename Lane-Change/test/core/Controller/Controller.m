@@ -97,6 +97,7 @@ classdef Controller < handle
             % sort surrounding vehilces according to the lane id information
             for i = 1:num_veh
                 if (self.vehicle.other_vehicles(i).vehicle_number ~= host_vehicle_id && self.vehicle.other_vehicles(i).state(1) >= x)
+                % if (self.vehicle.other_vehicles(i).vehicle_number < host_vehicle_id )
                     car_fss = [car_fss, self.vehicle.other_vehicles(i)];
                 end
                 

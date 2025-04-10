@@ -128,9 +128,9 @@ classdef Vehicle < handle
 
         function update(self,instant_index)
 
-            % if (self.scenarios_config.debug_mode && instant_index >= 999)
-            %     disp('stop');
-            % end
+            if (self.scenarios_config.debug_mode && instant_index >= 999)
+                disp('stop');
+            end
 
             %% Identify vehicles is connected with the ego vehicle's
             connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
@@ -139,9 +139,8 @@ classdef Vehicle < handle
             calculateTrustAndOpinion3(self, instant_index, connected_vehicles_idx );
 
             %% Wiegth trust update
+            weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :) , "equal");
             if (instant_index*self.dt >= 3)
-                weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :) , "equal");
-            else
                 weights_Dis = self.weight_module.calculate_weights_Defaut(self.vehicle_number );
             end
             %% Update normal car dynamics , like controller and observer
@@ -542,8 +541,7 @@ classdef Vehicle < handle
 
         %% Function for plot
         function plot_ground_error_global_est(self , vehicles)
-            figure("Name", "Error global est " + num2str(self.vehicle_number), "NumberTitle", "off");
-
+            figure;
             subplot(4,1,1);
 
             nb_vehicles = length(vehicles);
@@ -585,8 +583,7 @@ classdef Vehicle < handle
 
         %% Function for plot
         function plot_u1_u2_gamma(self)
-            figure("Name", "Controller " + num2str(self.vehicle_number), "NumberTitle", "off");
-
+            figure;
             subplot(5,1,1);
 
             plot( self.u1_log(1,:), 'r', 'LineWidth', 1.5);
@@ -631,9 +628,8 @@ classdef Vehicle < handle
             time_vector = 1:time_steps;
 
             % Create a new figure
+            figure;
             hold on;
-
-            figure("Name", "Trust Value " + num2str(self.vehicle_number), "NumberTitle", "off");
 
             % Plot the trust values for each vehicle
             for vehicle_idx = 1:self.num_vehicles

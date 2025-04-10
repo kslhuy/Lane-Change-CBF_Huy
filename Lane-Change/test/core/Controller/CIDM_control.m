@@ -73,21 +73,27 @@ classdef CIDM_control < handle  % Extended Look-Ahead Controller for Lane-Changi
                     delta_v = v - self.controller.vehicle.observer.est_global_state_current(4,car_fss(j).vehicle_number);
                 end
                 
-                % w_nj = exp(-abs(s_j) / 50); % Exponential weight decay with distance
-                if (j>1)
-                    w_nj = weights(j-1);
-                else
-                    w_nj = weights(num_vehicles);
-                end
-                weighted_sum_numerator = weighted_sum_numerator + w_nj * (v* delta_v);
+                %----- w_nj = exp(-abs(s_j) / 50); % Exponential weight decay with distance
+                % if (j>1)
+                %     w_nj = weights(j-1);
+                % else
+                %     w_nj = weights(num_vehicles);
+                % end
+                
+                % weighted_sum_numerator = weighted_sum_numerator + w_nj * (v* delta_v);
+                % weighted_sum_denominator = weighted_sum_denominator + w_nj * s_j;
+                % % total_weight = 1;
+                
+                w_nj = weights(num_vehicles - j + 1); % Correct weight order
+                weighted_sum_numerator = weighted_sum_numerator + w_nj * (v * delta_v);
                 weighted_sum_denominator = weighted_sum_denominator + w_nj * s_j;
-                % total_weight = 1;
                 total_weight = total_weight + w_nj;
             end
 
             if total_weight > 0
                 s_star = s_star + (weighted_sum_numerator / total_weight)/(2 * sqrt(alpha * beta));
-                s_n = weighted_sum_denominator / total_weight;
+                % s_n = weighted_sum_denominator / total_weight;
+                s_n = weighted_sum_denominator; % Sum, not average
             else
                 s_n = s0; % Default to minimum safe gap if no vehicles
             end

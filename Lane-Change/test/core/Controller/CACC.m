@@ -41,7 +41,8 @@ classdef CACC < handle
                 disp(self.vehicle_number);
                 s = 200; % Assume large gap
                 delta_v = 0;
-                acc = alpha * (1 - (v / v0)^delta); % IDM acceleration
+                % acc = alpha * (1 - (v / v0)^delta); % IDM acceleration
+                acc = 0;
             else
                 % Compute cooperative control input using consensus-based CACC
                 u_coop = 0;
