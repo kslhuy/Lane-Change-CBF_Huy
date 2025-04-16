@@ -41,6 +41,8 @@ classdef TriPTrustModel < handle
         flag_glob_est_check = false;
 
         flag_local_est_check = false;
+        lead_state_lastest = [];
+        lead_state_lastest_timestamp = 0;
     end
 
     methods
@@ -62,6 +64,8 @@ classdef TriPTrustModel < handle
             self.a_score_log = [];
             self.beacon_score_log = [];
             self.final_score_log = [];
+
+            self.lead_state_lastest = zeros(4,1);
 
         end
 
@@ -159,8 +163,12 @@ classdef TriPTrustModel < handle
             end
         end
 
-        function trust_sample = calculate_trust_sample_wo_Acc(self, v_score, d_score, a_score, beacon_score)
-            trust_sample = beacon_score * (v_score^self.wv) * (d_score^self.wd);
+        function trust_sample = calculate_trust_sample_wo_Acc(self, v_score, d_score, a_score, beacon_score,is_nearby)
+            if (is_nearby)
+                trust_sample = beacon_score * (v_score^self.wv) * (d_score^self.wd);
+            else
+                trust_sample = beacon_score * (v_score^self.wv) ;
+            end
         end
 
         function trust_sample = calculate_trust_sample_w_Jek(self, v_score, d_score, a_score, j_score, beacon_score)
@@ -212,7 +220,7 @@ classdef TriPTrustModel < handle
         % 
 
         %%% Main %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%% 
-        function [final_score,local_trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score , flag_taget_attk ,flag_glob_est_check] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, leader_beacon_interval, time_step)
+        function [final_score,local_trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, is_nearby, instant_idx)
             % calculateTrust - Computes trust scores for a specific vehicle
             %
             % Inputs:
@@ -220,7 +228,7 @@ classdef TriPTrustModel < handle
             %   x_local          - Local state of the current vehicle (3x1 vector)
             %   neighbors_states - A matrix where each column is the state of a neighbor vehicle (3xN matrix)
             %   neighbors_ids    - IDs of the neighbor vehicles (1xN vector)
-            %   time_step        - Current simulation time step (scalar)
+            %   instant_idx        - Current simulation time step (scalar)
             %
             % Outputs:
             %   trust_scores     - Trust scores for each neighbor (1xN vector)
@@ -233,6 +241,17 @@ classdef TriPTrustModel < handle
 
             % leader_velocity = leader_vehicle.observer.est_local_state_current(4);
             leader_state = host_vehicle.center_communication.get_local_state(leader_vehicle.vehicle_number , host_id);
+            if ( isnan(leader_state))
+                % Use the lastest state of leader vehicle 
+                leader_state = self.lead_state_lastest ;
+                leader_beacon_interval = (instant_idx - self.lead_state_lastest_timestamp)*host_vehicle.dt; 
+            else
+                % save the lastest state of leader vehicle
+                self.lead_state_lastest = leader_state;
+                self.lead_state_lastest_timestamp = instant_idx;
+                leader_beacon_interval = 0;
+            end
+
             leader_input = host_vehicle.center_communication.get_input(leader_vehicle.vehicle_number);
             leader_velocity = leader_state(4) ;
             leader_acceleration = leader_input(1);
@@ -253,10 +272,16 @@ classdef TriPTrustModel < handle
             host_distance_measurement = (host_id - target_id)*(target_vehicle.state(1) - host_pos_X) - half_lenght_vehicle;
 
 
-            %% ---
 
             %% TODO : need to get real distance between host and target
+           
             target_state = host_vehicle.center_communication.get_local_state(target_id,host_id);
+            if ( isnan(target_state))
+                beacon_score = 0;
+            else
+                beacon_score = 1;
+            end
+
             target_input = host_vehicle.center_communication.get_input(target_id);
 
             target_pos_X = target_state(1);
@@ -270,24 +295,33 @@ classdef TriPTrustModel < handle
 
 
             % Trust evaluation
+            
             v_score = self.evaluate_velocity( host_id , target_id , host_velocity , target_reported_velocity, leader_velocity, leader_acceleration, leader_beacon_interval,0.1);
-            d_score = self.evaluate_distance(target_reported_distance, host_distance_measurement);
-
-            a_score = self.evaluate_acceleration(target_reported_acceleration, host_acceleration, [host_distance_measurement, self.last_d], time_step);
+            
+            d_score = 0;
+            if (is_nearby)
+                d_score = self.evaluate_distance(target_reported_distance, host_distance_measurement);
+            end
+            a_score = self.evaluate_acceleration(target_reported_acceleration, host_acceleration, [host_distance_measurement, self.last_d], host_vehicle.dt);
             self.last_d = host_distance_measurement;
 
-            beacon_score = self.evaluate_beacon_timeout(true);
 
             % Compute trust sample for local estimation
-            local_trust_sample = self.calculate_trust_sample_wo_Acc(v_score, d_score, a_score, beacon_score);
+            local_trust_sample = self.calculate_trust_sample_wo_Acc(v_score, d_score, a_score, beacon_score , is_nearby);
 
-            % Compute global estimate trust factors
-            gamma_cross = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
-
-            gamma_local = self.compute_local_consistency_factor(host_vehicle, target_vehicle, neighbors);
-
+            
+            if (isnan( target_vehicle.center_communication.get_global_state(target_id,host_id)))
+                % Drop packet , not available
+                gamma_cross = 0;
+                gamma_local = 0;
+            else
+                % Compute global estimate trust factors
+                gamma_cross = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
+                gamma_local = self.compute_local_consistency_factor(host_vehicle, target_vehicle, neighbors);
+            end
+            
             %% not use
-            gamma_expected = self.compute_cross_host_expected_2_factor(host_id,host_vehicle, target_id,target_vehicle);
+            % gamma_expected = self.compute_cross_host_expected_2_factor(host_id,host_vehicle, target_id,target_vehicle);
 
             %% Flag Check
             self.flag_taget_attk = false;
@@ -300,6 +334,7 @@ classdef TriPTrustModel < handle
                 self.flag_glob_est_check = true;
             end
 
+            %% importance 
             if (local_trust_sample <0.5 )
                 self.flag_local_est_check = true;
             end
@@ -323,7 +358,7 @@ classdef TriPTrustModel < handle
             self.trust_sample_log = [self.trust_sample_log, local_trust_sample];
             self.gamma_cross_log = [self.gamma_cross_log, gamma_cross];
             self.gamma_local_log = [self.gamma_local_log, gamma_local];
-            self.gamma_expected_log = [self.gamma_expected_log, gamma_expected];
+            % self.gamma_expected_log = [self.gamma_expected_log, gamma_expected];
 
             self.v_score_log = [self.v_score_log, v_score];
             self.d_score_log = [self.d_score_log, d_score];
@@ -336,6 +371,7 @@ classdef TriPTrustModel < handle
             self.flag_local_est_check_log = [self.flag_local_est_check_log, self.flag_local_est_check];
 
         end
+
 
 
         % Only compare with the directed neighbor (not all neighbors) , or more specific is the target vehicle
@@ -611,6 +647,7 @@ classdef TriPTrustModel < handle
             hold on;
 
             plot(self.trust_sample_log, 'DisplayName', 'Trust Sample', 'LineWidth', 1);
+            hold on;
             plot(self.gamma_cross_log, 'DisplayName', 'Gamma Cross', 'LineWidth', 1);
             plot(self.gamma_local_log, 'DisplayName', 'Gamma Local', 'LineWidth', 1);
             % plot(self.gamma_expected_log, 'DisplayName', 'Gamma expect', 'LineWidth', 1);

@@ -21,15 +21,16 @@ Road_type = "Highway"; % "Highway" , "Urban"
 is_lead_input_change = false; % if the lead input is changing (for different senarios)
 
 
-
 % Observer related
-use_predict_observer = false;
+use_predict_observer = true;
 predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other"
+Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
+set_Is_noise_mesurement = false; % if the measurement is noisy
 
 % controller related
-gamma_type = "mean"; % type gamma for switching control = " min" , " max " , " mean "
+gamma_type = "min"; % type gamma for switching control = " min" , " max " , " mean "
 controller_type = "mix"; % type of controller for the ego vehicle: "local" , "coop" , "mix" 
-data_type_for_u2 = "true"; % "est" , "true"
+data_type_for_u2 = "est"; % "est" , "true"
 
 % trust related
 opinion_type = "both"; % opinion type " distance" , " trust" , " both"
@@ -38,10 +39,10 @@ opinion_type = "both"; % opinion type " distance" , " trust" , " both"
 model_vehicle_type = "normal"; % "delay_v" , "delay_a" , "normal"
 
 %% Graph related
-graph = [0 1 1 0;  % Adjacency matrix
+graph = [0 1 1 1;  % Adjacency matrix
         1 0 1 1;
         1 1 0 1;
-        0 1 1 0];
+        1 1 1 0];
 
 trust_threshold = 0.5; % for cut the communication in the graph
 kappa = 1; % parameter in the design weigts matrix
@@ -56,14 +57,18 @@ if (debug_mode )
     % dbstop in Vehicle at 132;
     % dbstop in Observer at 126 if instant_index>=999;
     % dbstop in Observer at 80 if instant_index>=1000;
-    dbstop in Observer at 112 if instant_index>=1000;
+    dbstop in Observer at 75 if instant_index>=1000;
     % dbstop in Observer at 80 if instant_index>=1000;
 end
 
 Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type,debug_mode );
-Scenarios_config.set_LeadInput_change(is_lead_input_change);
+Scenarios_config.set_LeadInput_change(is_lead_input_change); % For different senarios
+% Observer related
+Scenarios_config.set_predict_controller_type(predict_controller_type);
 Scenarios_config.set_Use_predict_observer(use_predict_observer);
-Scenarios_config.set_predict_controller_type("predict_controller_type");
+Scenarios_config.set_Local_observer_type(Local_observer_type);
+Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
+
 
 % Define driving Senarios lanes
 % Create a straight lane with specified width and length
@@ -85,9 +90,9 @@ t_star = 10;
 t_end = 15;
 attacker_vehicle_id = 1;
 victim_id = -1;
-case_nb_attack = 4;
-data_type_attack = "local"; % "local" , "global",
-attack_type = "Bogus"; % "none" , "faulty" , "scaling" , "Collusion" ,"Bogus"
+case_nb_attack = 7;
+data_type_attack = "global"; % "local" , "global",
+attack_type = "DoS"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus"
 % scenario_Attack_params = struct('attacker_id', attacker_id, ...
 %                         'victim_id', victim_id, ...
 %                         'start_time', t_star, ...
@@ -165,6 +170,10 @@ car2.observer.plot_global_state_log()
 car3.observer.plot_global_state_log()
 car4.observer.plot_global_state_log()
 
+car1.observer.plot_error_local_estimated()
+car2.observer.plot_error_local_estimated()
+car3.observer.plot_error_local_estimated()
+car4.observer.plot_error_local_estimated()
 
 
 
@@ -200,11 +209,18 @@ car1.trip_models{2}.plot_trust_log(1 , 2)
 
 car2.trip_models{1}.plot_trust_log(2 ,1)
 car2.trip_models{3}.plot_trust_log(2,3)
+car2.trip_models{3}.plot_trust_log(2,4)
+
 
 
 car3.trip_models{2}.plot_trust_log(3,2)
 car3.trip_models{4}.plot_trust_log(3,4)
 
 car4.trip_models{3}.plot_trust_log(4,3)
+
+
+attack_module.plotAttackValues('data_plot' , 'local');
+attack_module.plotAttackValues('data_plot' , 'global');
+
 
 

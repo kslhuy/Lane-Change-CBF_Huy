@@ -12,6 +12,12 @@ classdef Observer < handle
         vehicle;
         controller;
         tolerances;
+        log_element = [];
+        Is_ok_log = [];
+        L_gain;
+        P; % error covariance
+        Q; % process noise covariance
+        R; % measurement noise covariance
     end
     methods
         function self = Observer( vehicle , veh_param, inital_global_state, inital_local_state)
@@ -29,9 +35,28 @@ classdef Observer < handle
             self.est_global_state_log = zeros(num_states, Nt, num_vehicles);
             self.est_global_state_log(:,1,:) = inital_global_state;
 
-            self.est_local_state_log = inital_local_state;
+            self.est_local_state_log = zeros(num_states, Nt);
+            self.est_local_state_log(:,1) = inital_local_state;
 
             self.tolerances = [5, 2, deg2rad(8), 2];
+
+            if (self.vehicle.scenarios_config.Local_observer_type == "kalman")
+                % Kalman Filter Parameters
+
+                self.P = eye(4);              % initial error covariance
+
+                %% Noise Covariances
+                % These are example values; adjust based on your system/sensor characteristics.
+                % Measurement noise covariance R (variances on sensor measurements)
+                self.R = diag([0.01, 0.01, 0.0003, 0.01]);  % variance for [x, y, theta, v]
+
+                % Process noise covariance Q (model uncertainties)
+                self.Q = diag([0.005, 0.005, 0.001, 0.01]);
+
+            elseif  (self.vehicle.scenarios_config.Local_observer_type == "observer")
+                % Observer Gain
+                self.L_gain = place(A', C', desired_poles)';
+            end
         end
 
 
@@ -41,7 +66,7 @@ classdef Observer < handle
 
             Big_X_hat_1_tempo = zeros(size(self.est_global_state_current)); % Initialize the variable to store the results
 
-            flag_glob_est_check = false;
+            % flag_glob_est_check = false;
 
             host_id = self.vehicle.vehicle_number; % The vehicle that is estimating the state of other vehicles
             % j is the vehicle we want to estimate
@@ -62,19 +87,26 @@ classdef Observer < handle
 
                 %% Get local of j vehicle
                 x_bar_j = self.vehicle.center_communication.get_local_state(j,host_id);
+                if ( isnan(x_bar_j))
+                    x_bar_j = zeros(size(self.est_local_state_current)); % If we don't have local state of j vehicle
+                    weights_new(1) = 0;
+                end
 
                 % ------- To get global state of other vehicles
                 % Go through all the other vehicles , start from the second vehicle
                 for k = 1:num_vehicles
                     % Go in car number "k" , Get car "j" in global estimat of "k"
                     x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k,self.vehicle.vehicle_number);
-
+                    if ( isnan(x_hat_i_j_full))
+                        x_hat_i_j_full = zeros(size(self.est_global_state_current)); % If we don't have local state of j vehicle
+                        weights_new(k+1) = 0; 
+                    end
                     x_hat_i_j(:,k) =  x_hat_i_j_full(:,j);
                 end
 
 
                 %% CONTROLLER
-                
+
                 if self.vehicle.scenarios_config.predict_controller_type == "self"
                     % If we are using local estimation, we need to use the local state of the vehicle
                     % u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
@@ -103,18 +135,21 @@ classdef Observer < handle
 
                 %% Estimate the state of vehicle j using the distributed observer
                 output = distributed_Observer_each( self , self.vehicle.vehicle_number, j , x_bar_j , x_hat_i_j, u_j, weights_new ,true , false);
-                
-                % Check if we want to use the estimated state of vehicle j or not 
+
+                % Check if we want to use the estimated state of vehicle j or not
                 if self.vehicle.scenarios_config.Use_predict_observer == false
                     Big_X_hat_1_tempo(:,j) = output; % Append the result
+                    self.Is_ok_log = [self.Is_ok_log ,true];
                 else
                     if instant_index*self.param_sys.dt > 3
-                        output_2 = distributed_Observer_each( self , self.vehicle.vehicle_number, j , x_bar_j , x_hat_i_j, u_j, weights_new , true , true);    
+                        output_2 = distributed_Observer_each( self , self.vehicle.vehicle_number, j , x_bar_j , x_hat_i_j, u_j, weights_new , true , true);
                         % Check if 2 ouput is similar , in a range
-                        is_ok = check_elementwise_similarity(self ,output, output_2, self.tolerances, j, instant_index);
+                        [is_ok , log_elem] = check_elementwise_similarity(self ,output, output_2, self.tolerances, j, instant_index);
+                        self.Is_ok_log = [self.Is_ok_log ,is_ok];
                         if is_ok
                             Big_X_hat_1_tempo(:,j) = output; % Append the result
                         else
+                            self.log_element = [self.log_element, log_elem]; % Append the first element
                             Big_X_hat_1_tempo(:,j) = output_2; % Append the result
                         end
                     else
@@ -124,7 +159,7 @@ classdef Observer < handle
                 end
             end
 
-            %% Save the global state estmate to log 
+            %% Save the global state estmate to log
             self.est_global_state_current = Big_X_hat_1_tempo;
             self.est_global_state_log(:, instant_index, :) = Big_X_hat_1_tempo;
         end
@@ -180,14 +215,27 @@ classdef Observer < handle
         end
 
 
-        function is_ok = check_elementwise_similarity(self ,output1, output2, tolerances, vehicle_id, time_idx)
+        function [is_ok , log_element] = check_elementwise_similarity(self ,output1, output2, tolerances, vehicle_id, time_idx)
             is_ok = true; % Initialize as true
+            log_element = [];
             for i = 1:length(output1)
                 diff_val = abs(output1(i) - output2(i));
                 if diff_val > tolerances(i)
-                    fprintf('Vehicle %d @ index %d | Element %d diff = %.4f exceeds tolerance %.4f\n', ...
-                        vehicle_id, time_idx, i, diff_val, tolerances(i));
+                    % fprintf('Vehicle %d @ index %d | Element %d diff = %.4f exceeds tolerance %.4f\n', ...
+                    %     vehicle_id, time_idx, i, diff_val, tolerances(i));
                     is_ok = false;
+                    log_element = [log_element, i];
+                    % if i == 1
+                    %     log_element = log_element[];
+                    %     log_element = log_element[i];
+                    % elseif i == 2
+                    %     log_element = "Y";
+                    % elseif i == 3
+                    %     log_element = "Theta";
+                    % elseif i == 4
+                    %     log_element = "V";
+                    % end
+
                 end
             end
         end
@@ -195,8 +243,49 @@ classdef Observer < handle
 
 
 
-        function Local_observer(self , state)
-            self.est_local_state_current = state;
+        function Local_observer(self , mesure_state , instant_index)
+            % self.est_local_state_current = state;
+            [A , B]  = self.matrix();
+            
+            if self.vehicle.scenarios_config.Is_noise_mesurement == true
+                % process_noise = mvnrnd(zeros(4,1), Q)';  % sample process noise
+                measurement_noise = mvnrnd(zeros(4,1), self.R)';  % sample measurement noise
+                mesure_state = mesure_state + measurement_noise; % Add noise to the measurement    
+            end
+            
+            if self.vehicle.scenarios_config.Local_observer_type == "observer"
+                self.est_local_state_current = A * self.est_local_state_current + B * self.vehicle.input + self.L_gain * (mesure_state - self.est_local_state_current);
+            elseif self.vehicle.scenarios_config.Local_observer_type == "kalman"
+                % Kalman Filter
+                self.kalman_filter(mesure_state);
+                % self.est_local_state_log(:, instant_index+1) = self.est_local_state_current;
+            else
+                self.est_local_state_current = state;
+                % self.est_local_state_log(:, instant_index+1) = self.est_local_state_current;
+            end
+            self.est_local_state_log(:, instant_index+1) = self.est_local_state_current;
+
+
+        end
+
+        function kalman_filter(self, mesure_state)
+            % Kalman Filter
+            [A , B]  = self.matrix();
+
+            % Prediction Step
+            x_pred = A * self.est_local_state_current + B * self.vehicle.input;
+            P_pred = A * self.P * A' + self.Q;
+
+            % Measurement Update Step
+            y = mesure_state; % Measurement
+            C = eye(4); % Measurement matrix (assuming we can measure all states)
+            S = C * P_pred * C' ; % Innovation covariance
+            K = P_pred * C' / S; % Kalman gain
+
+            % Update the state estimate
+            self.est_local_state_current = x_pred + K * (y - C * x_pred);
+            % Update the error covariance
+            self.P = (eye(size(K,1)) - K * C) * P_pred;
         end
 
         % This model use in obesrver , so need to be here, in the observer class
@@ -216,7 +305,6 @@ classdef Observer < handle
             %       1 0];
 
             % Here in discrete time
-
             A = [ 1 0 -v*sin(theta)*Ts cos(theta)*Ts;
                 0 1 v*cos(theta)*Ts sin(theta)*Ts;
                 0 0 1 0;
@@ -226,8 +314,6 @@ classdef Observer < handle
                 0 0
                 0 Ts
                 Ts 0];
-
-
         end
 
         function plot_global_state_log(self)
@@ -237,7 +323,8 @@ classdef Observer < handle
             end
 
             num_vehicles = size(self.est_global_state_log, 3); % Number of vehicles
-            num_states = 4; % Assuming X, Y, theta, and V as states
+            % num_states = 4; % Assuming X, Y, theta, and V as states
+            num_states = size(self.est_global_state_log, 1); % Number of states
 
             state_labels = {'Position X', 'Position Y', 'Theta', 'Velocity'};
 
@@ -251,6 +338,28 @@ classdef Observer < handle
                     plot(squeeze(self.est_global_state_log(state_idx, 1:end-1, v)), 'DisplayName', ['Vehicle ', num2str(v)]);
                 end
                 title(state_labels{state_idx});
+                % xlabel('Time (s)');
+                ylabel(state_labels{state_idx});
+                legend;
+                grid on;
+            end
+        end
+
+        function plot_error_local_estimated(self)
+
+            state_labels = {'Position X', 'Position Y', 'Theta', 'Velocity'};
+            num_states = length(self.est_local_state_current);
+            % Create a figure for the plot
+            figure("Name", "Local error " + num2str(self.vehicle.vehicle_number), "NumberTitle", "off");
+            hold on;
+
+            for state_idx = 1:num_states
+                subplot(4, 1, state_idx);
+                hold on;
+                plot(self.est_local_state_log(state_idx, 1:end-1) - self.vehicle.state_log(state_idx, 1:end-1));
+                % plot( self.vehicle.state_log(state_idx, 1:end-1));
+                % plot(self.est_local_state_log(state_idx, :) );
+            
                 % xlabel('Time (s)');
                 ylabel(state_labels{state_idx});
                 legend;

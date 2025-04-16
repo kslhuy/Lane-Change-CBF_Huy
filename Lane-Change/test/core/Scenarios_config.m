@@ -15,6 +15,8 @@ classdef Scenarios_config < handle
         debug_mode = false; % debug mode
         Use_predict_observer = false; % if use predict observer
         predict_controller_type = "self"; % "self" , "true_other" , "predict_other"
+        Local_observer_type = "mesurement"; % "mesurement" , "kalman" , "observer"
+        Is_noise_mesurement = false; % if the noise is in the mesurement
     end
     methods
         function self = Scenarios_config(dt , simulation_time , scenario_where , controller_type ,data_type_for_u2, gamma_type , opinion_type, model_vehicle_type, debug_mode )
@@ -87,5 +89,13 @@ classdef Scenarios_config < handle
         function  set_predict_controller_type(self ,predict_controller_type )
             self.predict_controller_type = predict_controller_type;
         end
+
+        function  set_Local_observer_type(self ,Local_observer_type )
+            self.Local_observer_type = Local_observer_type;
+        end
+        function set_Is_noise_mesurement(self , Is_noise_mesurement)
+            self.Is_noise_mesurement = Is_noise_mesurement;
+        end
+
     end
 end

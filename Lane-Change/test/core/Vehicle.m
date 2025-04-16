@@ -168,7 +168,7 @@ classdef Vehicle < handle
                 self.get_lane_id(self.state);
 
                 %% Observer
-                self.observer.Local_observer(self.state);
+                self.observer.Local_observer(self.state , instant_index);
                 self.observer.Distributed_Observer(instant_index , weights);
                 %% Controller
                 [~, u_1, e_1] = self.controller.get_optimal_input(self.vehicle_number, self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"true", 0);
@@ -211,7 +211,7 @@ classdef Vehicle < handle
                 %% NO Controller = vehicle 1 (lead)
 
                 %% Observer
-                self.observer.Local_observer(self.state);
+                self.observer.Local_observer(self.state,instant_index);
                 self.observer.Distributed_Observer(instant_index, weights);
                 % disp('Controller is empty');
                 self.get_lane_id(self.state);
@@ -393,32 +393,42 @@ classdef Vehicle < handle
             received_vehicles = []; % Store vehicle indices providing trust scores
             ego_trust_in_connected = []; % Store ego vehicle's trust in connected vehicles
 
-            for vehicle_direct = connected_vehicles_num
-                %% Identify vehicles directly measurable by the ego vehicle's sensor
-                if abs(vehicle_direct - self.vehicle_number) == 1
-                    %% Get all the vehicles that are connected to the ego vehicle
-                    connected_vehicles = [];
-                    for v = connected_vehicles_num
-                        connected_vehicles = [connected_vehicles; self.other_vehicles(v)];
-                    end
+            %% Get all the vehicles that are connected to the ego vehicle
+            connected_vehicles = [];
+            for v = connected_vehicles_num
+                connected_vehicles = [connected_vehicles; self.other_vehicles(v)];
+            end
 
+            for vehicle_id = connected_vehicles_num
+                %% Identify vehicles directly measurable by the ego vehicle's sensor
+                % that is cloest to the ego vehicle
+                if abs(vehicle_id - self.vehicle_number) == 1
                     %% Calculate trust for direct vehicle
-                    [self.trust_log(1, instant_index, vehicle_direct), ~, ~, ~, ~, ~] = ...
-                        self.trip_models{vehicle_direct}.calculateTrust(...
-                        self, self.other_vehicles(vehicle_direct), self.other_vehicles(1), connected_vehicles, self.dt, self.dt);
+                    [self.trust_log(1, instant_index, vehicle_id), ~, ~, ~] = ...
+                        self.trip_models{vehicle_id}.calculateTrust(...
+                        self, self.other_vehicles(vehicle_id), self.other_vehicles(1), connected_vehicles,true, instant_index);
+                else
+                    % for other connected vehicles
+                    [self.trust_log(1, instant_index, vehicle_id), ~, ~, ~] = ...
+                        self.trip_models{vehicle_id}.calculateTrust(...
+                        self, self.other_vehicles(vehicle_id), self.other_vehicles(1), connected_vehicles,false, instant_index);
+
                 end
 
                 %% Store received trust values and ego's trust for opinion calculation
-                trust_score = self.center_communication.get_trust_score(vehicle_direct);
+                trust_score = self.center_communication.get_trust_score(vehicle_id);
 
                 % TODO : Index here is not right , need to change later
-                ego_trust_in_connected = [ego_trust_in_connected; self.trust_log(1, instant_index, vehicle_direct)];
+                ego_trust_in_connected = [ego_trust_in_connected; self.trust_log(1, instant_index, vehicle_id)];
 
                 if ~isempty(trust_score)
                     received_trusts = [received_trusts; trust_score];
-                    received_vehicles = [received_vehicles; vehicle_direct];
+                    received_vehicles = [received_vehicles; vehicle_id];
                 end
             end
+
+
+
 
             %% Step 2: Calculate opinion-based trust for non-direct vehicles
 
@@ -434,14 +444,15 @@ classdef Vehicle < handle
                     if abs(vehicle_id - self.vehicle_number) ~= 1
                         if (self.scenarios_config.opinion_type == "neighbor_based")
                             opinion_neigbor = neighbor_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
-                            self.trust_log(1, instant_index, vehicle_id) = opinion_neigbor ;
+                            self.trust_log(1, instant_index, vehicle_id) = 0.6*(self.trust_log(1, instant_index, vehicle_id)) + 0.4*opinion_neigbor ;
                         elseif (self.scenarios_config.opinion_type == "distance_based")
                             opinion_distance = distance_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
-                            self.trust_log(1, instant_index, vehicle_id) = opinion_distance;
+                            self.trust_log(1, instant_index, vehicle_id) = 0.6*(self.trust_log(1, instant_index, vehicle_id)) + 0.4*opinion_distance;
                         else
                             opinion_neigbor = neighbor_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
                             opinion_distance = distance_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
-                            self.trust_log(1, instant_index, vehicle_id) = (opinion_neigbor + opinion_distance )/ 2;
+                            self.trust_log(1, instant_index, vehicle_id) = 0.5*(self.trust_log(1, instant_index, vehicle_id)) + 0.25*opinion_neigbor + 0.25*opinion_distance ;
+                            % self.trust_log(1, instant_index, vehicle_id) = (opinion_neigbor + opinion_distance )/ 2;
                         end
 
                     end
@@ -554,9 +565,19 @@ classdef Vehicle < handle
                 hold on;
             end
 
+            % % Assuming Is_ok is a logical array with the same time steps as the logs
+            % is_not_ok = ~self.observer.Is_ok_log;
+            % bad_time_steps = find(is_not_ok); % Indices where Is_ok is true
+
             legend(vehicle_labels);
 
             title(['Comparison global est state with local true platoon car ' num2str(self.vehicle_number)]);
+
+            % % Add vertical lines where Is_ok is false
+            % for t = bad_time_steps
+            %     xline(t, '--r', 'LineWidth', 1.2, 'Alpha', 0.3); % Red dashed line
+            % end
+
 
             subplot(4,1,2);
 
@@ -631,14 +652,15 @@ classdef Vehicle < handle
             time_vector = 1:time_steps;
 
             % Create a new figure
-            hold on;
 
             figure("Name", "Trust Value " + num2str(self.vehicle_number), "NumberTitle", "off");
 
             % Plot the trust values for each vehicle
             for vehicle_idx = 1:self.num_vehicles
+                hold on;
                 plot(time_vector, squeeze(self.trust_log(1, :, vehicle_idx)), 'DisplayName', ['Vehicle ' num2str(vehicle_idx)] , 'LineWidth',1);
             end
+            hold off;
 
             % Add labels and legend
             xlabel('Time Step');
@@ -647,7 +669,6 @@ classdef Vehicle < handle
             legend show;
             grid on;
 
-            hold off;
         end
 
 
