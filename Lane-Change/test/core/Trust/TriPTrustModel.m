@@ -18,6 +18,7 @@ classdef TriPTrustModel < handle
         tacc = 1.2;% Trust-based acceleration scaling factor
         k = 5;     % Number of trust levels
         rating_vector; % Trust rating vector
+        rating_vector_global;
 
         % New properties for global estimate checks
         sigma2 = 1; % Sensitivity parameter for cross-validation trust factor
@@ -36,13 +37,24 @@ classdef TriPTrustModel < handle
         flag_glob_est_check_log ;
         flag_taget_attk_log ;
         flag_local_est_check_log ;
-        
+
         flag_taget_attk = false;
         flag_glob_est_check = false;
 
         flag_local_est_check = false;
         lead_state_lastest = [];
         lead_state_lastest_timestamp = 0;
+
+        D_pos_log = [];          % Log for position discrepancies
+        D_vel_log = [];          % Log for velocity discrepancies
+        anomaly_pos_log = [];    % Log for position anomaly flags
+        anomaly_vel_log = [];    % Log for velocity anomaly flags
+        anomaly_gamma_log = [];  % Already included from previous request
+
+        % Parameters for anomaly detection
+        w = 10;  % Sliding window size
+        Threshold_anomalie  = 3;   % Threshold for cumulative anomalies
+        reduce_factor = 0.5;  % Trust reduction factor
     end
 
     methods
@@ -54,6 +66,12 @@ classdef TriPTrustModel < handle
 
             self.rating_vector = zeros(1, self.k);
             self.rating_vector(5) = 1;
+
+            % for global bal
+            self.rating_vector_global = zeros(1, self.k);
+            self.rating_vector_global(5) = 1;
+
+
             self.last_d = 20;
 
             self.trust_sample_log = [];
@@ -67,6 +85,10 @@ classdef TriPTrustModel < handle
 
             self.lead_state_lastest = zeros(4,1);
 
+            % % Parameters for anomaly detection
+            % self.w = 10;  % Sliding window size
+            % self.Threshold_anomalie  = 3;   % Threshold for cumulative anomalies
+            % self.reduce_factor = 0.5;  % Trust reduction factor
         end
 
         function v_score_final = evaluate_velocity(~,host_id , target_id, v_y,v_host, v_leader, a_leader, b_leader , tolerance)
@@ -179,7 +201,7 @@ classdef TriPTrustModel < handle
             trust_sample = beacon_score * (v_score^self.wv) * (d_score^self.wd) * (a_score^self.wa) ;
         end
 
-        function update_rating_vector(self, trust_sample)
+        function update_rating_vector(self, trust_sample , type)
             %  Map trust sample to a specific trust level in the rating vector
 
             trust_level = min(round(trust_sample * (self.k - 1) + 1)  , (self.k) );
@@ -188,22 +210,33 @@ classdef TriPTrustModel < handle
 
             % Compute current trust score (sigma_y) to use in lambda_y calculation
 
-            current_trust_score = self.calculate_trust_score();
+            if (type == "local")
+                current_trust_score = self.calculate_trust_score( self.rating_vector);
+            else
+                current_trust_score = self.calculate_trust_score(self.rating_vector_global);
+            end
+
             % Define lambda_y as per equation (9): lambda_y = sigma_y * w_t
             lambda_y = current_trust_score * self.wt;
 
             % Update the rating vector (R_y) using the aging factor lambda_y
-            self.rating_vector = (1 - lambda_y) * self.rating_vector + trust_vector;
+            if type == "local"
+                self.rating_vector = (1 - lambda_y) * self.rating_vector + trust_vector;
+            else
+                self.rating_vector_global = (1 - lambda_y) * self.rating_vector_global + trust_vector;
+            end
+            % self.rating_vector = (1 - lambda_y) * self.rating_vector + trust_vector;
             % self.rating_vector
             % lambda_y
         end
 
-        function trust_score = calculate_trust_score(self)
+
+        function trust_score = calculate_trust_score(self,rating_vector)
             %Explain : https://discord.com/channels/1123389035713400902/1327310432381435914/1327403771663224873
 
             % Normalize the rating vector to ensure it represents probabilities
             % a = (1/self.k) = 1/5 = 0.2 in  self.C / self.k
-            S_y = (self.rating_vector + self.C / self.k) / (self.C + sum(self.rating_vector));
+            S_y = (rating_vector + self.C / self.k) / (self.C + sum(rating_vector));
 
             % Define weights with a small epsilon to avoid zero weight for the lowest level
             epsilon = 0.01; % Small positive constant
@@ -214,12 +247,12 @@ classdef TriPTrustModel < handle
         end
 
         % function est_value = compute_kinematic_estimations(v_prev, x_prev, v_current, x_current, TIME_STEP)
-        % 
-        % 
+        %
+        %
         % end
-        % 
+        %
 
-        %%% Main %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%% 
+        %%% Main %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
         function [final_score,local_trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, is_nearby, instant_idx)
             % calculateTrust - Computes trust scores for a specific vehicle
             %
@@ -242,9 +275,9 @@ classdef TriPTrustModel < handle
             % leader_velocity = leader_vehicle.observer.est_local_state_current(4);
             leader_state = host_vehicle.center_communication.get_local_state(leader_vehicle.vehicle_number , host_id);
             if ( isnan(leader_state))
-                % Use the lastest state of leader vehicle 
+                % Use the lastest state of leader vehicle
                 leader_state = self.lead_state_lastest ;
-                leader_beacon_interval = (instant_idx - self.lead_state_lastest_timestamp)*host_vehicle.dt; 
+                leader_beacon_interval = (instant_idx - self.lead_state_lastest_timestamp)*host_vehicle.dt;
             else
                 % save the lastest state of leader vehicle
                 self.lead_state_lastest = leader_state;
@@ -274,54 +307,90 @@ classdef TriPTrustModel < handle
 
 
             %% TODO : need to get real distance between host and target
-           
+
             target_state = host_vehicle.center_communication.get_local_state(target_id,host_id);
             if ( isnan(target_state))
                 beacon_score = 0;
+                v_score = 0;
+                d_score = 0;
+                a_score = 0;
+                local_trust_sample = 0;
             else
                 beacon_score = 1;
+                target_input = host_vehicle.center_communication.get_input(target_id);
+
+                target_pos_X = target_state(1);
+                target_reported_distance = (host_id - target_id)*(target_pos_X - host_pos_X) - half_lenght_vehicle;
+                target_reported_velocity = target_state(4);
+                target_reported_acceleration = target_input(1);
+
+                % reported_distance = (host_id - target_id)*(target_pos_X - host_pos_X) - half_lenght_vehicle;             % position host - pos neighbors
+                % reported_velocity = target_vehicle.observer.est_local_state_current(4);
+                % reported_acceleration = target_vehicle.input(1);
+
+
+                % Trust evaluation
+
+                v_score = self.evaluate_velocity( host_id , target_id , host_velocity , target_reported_velocity, leader_velocity, leader_acceleration, leader_beacon_interval,0.1);
+
+                d_score = 0;
+                if (is_nearby)
+                    d_score = self.evaluate_distance(target_reported_distance, host_distance_measurement);
+                end
+                a_score = self.evaluate_acceleration(target_reported_acceleration, host_acceleration, [host_distance_measurement, self.last_d], host_vehicle.dt);
+                self.last_d = host_distance_measurement;
+
+
+                % Compute trust sample for local estimation
+                local_trust_sample = self.calculate_trust_sample_wo_Acc(v_score, d_score, a_score, beacon_score , is_nearby);
             end
 
-            target_input = host_vehicle.center_communication.get_input(target_id);
-
-            target_pos_X = target_state(1);
-            target_reported_distance = (host_id - target_id)*(target_pos_X - host_pos_X) - half_lenght_vehicle;
-            target_reported_velocity = target_state(4);
-            target_reported_acceleration = target_input(1);
-
-            % reported_distance = (host_id - target_id)*(target_pos_X - host_pos_X) - half_lenght_vehicle;             % position host - pos neighbors
-            % reported_velocity = target_vehicle.observer.est_local_state_current(4);
-            % reported_acceleration = target_vehicle.input(1);
 
 
-            % Trust evaluation
-            
-            v_score = self.evaluate_velocity( host_id , target_id , host_velocity , target_reported_velocity, leader_velocity, leader_acceleration, leader_beacon_interval,0.1);
-            
-            d_score = 0;
-            if (is_nearby)
-                d_score = self.evaluate_distance(target_reported_distance, host_distance_measurement);
-            end
-            a_score = self.evaluate_acceleration(target_reported_acceleration, host_acceleration, [host_distance_measurement, self.last_d], host_vehicle.dt);
-            self.last_d = host_distance_measurement;
-
-
-            % Compute trust sample for local estimation
-            local_trust_sample = self.calculate_trust_sample_wo_Acc(v_score, d_score, a_score, beacon_score , is_nearby);
-
-            
             if (isnan( target_vehicle.center_communication.get_global_state(target_id,host_id)))
                 % Drop packet , not available
+                beacon_score = 0;
                 gamma_cross = 0;
                 gamma_local = 0;
+                global_trust_sample = 0;
             else
                 % Compute global estimate trust factors
-                gamma_cross = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
+                [gamma_cross, D_pos, D_vel] = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
                 gamma_local = self.compute_local_consistency_factor(host_vehicle, target_vehicle, neighbors);
+                global_trust_sample = gamma_cross*gamma_local;
             end
-            
+
             %% not use
             % gamma_expected = self.compute_cross_host_expected_2_factor(host_id,host_vehicle, target_id,target_vehicle);
+
+
+            % Compute extended trust sample
+            % trust_sample_ext = 0.5*trust_sample  +  0.5*(gamma_cross * gamma_local);
+
+            if (host_vehicle.scenarios_config.Monitor_sudden_change == true)
+                beta = self.monitor_sudden(gamma_cross , D_pos,D_vel); 
+            else
+                beta = 1; % Default value
+            end
+            %% Separate trust sample for local and global estimates
+            if (host_vehicle.scenarios_config.Dichiret_type == "Single")
+                trust_sample_ext = local_trust_sample  * global_trust_sample ;
+                self.update_rating_vector(trust_sample_ext , "local");
+                final_score = self.calculate_trust_score(self.rating_vector);
+
+            else % "Dual"
+                self.update_rating_vector(local_trust_sample , "local");
+                local_trust_sample = self.calculate_trust_score(self.rating_vector);
+
+                self.update_rating_vector(global_trust_sample , "global");
+                global_trust_sample = self.calculate_trust_score(self.rating_vector_global);
+
+                final_score = local_trust_sample * global_trust_sample;
+            end
+
+            final_score = final_score * beta;
+
+
 
             %% Flag Check
             self.flag_taget_attk = false;
@@ -334,23 +403,11 @@ classdef TriPTrustModel < handle
                 self.flag_glob_est_check = true;
             end
 
-            %% importance 
+            %% importance
             if (local_trust_sample <0.5 )
                 self.flag_local_est_check = true;
             end
 
-
-
-
-            % Compute extended trust sample
-            % trust_sample_ext = 0.5*trust_sample  +  0.5*(gamma_cross * gamma_local);
-
-            trust_sample_ext = local_trust_sample  * gamma_cross * gamma_local ;
-            % trust_sample_ext = trust_sample ;
-
-            self.update_rating_vector(trust_sample_ext);
-            final_score = self.calculate_trust_score();
-            %
 
             % final_score = trust_sample_ext ;
 
@@ -364,6 +421,7 @@ classdef TriPTrustModel < handle
             self.d_score_log = [self.d_score_log, d_score];
             self.a_score_log = [self.a_score_log, a_score];
             self.beacon_score_log = [self.beacon_score_log, beacon_score];
+
             self.final_score_log = [self.final_score_log, final_score];
 
             self.flag_taget_attk_log = [self.flag_taget_attk_log, self.flag_taget_attk];
@@ -372,10 +430,68 @@ classdef TriPTrustModel < handle
 
         end
 
+        function beta = monitor_sudden(self,gamma_cross,D_pos,D_vel)
+            % --- New Code: Anomaly Detection and Trust Adjustment ---
+
+            %% TODO in the case DOS ,so need to forget about the anomaly pos and velocity
+            % Anomaly detection for gamma_cross
+            anomaly_gamma = 0;  % Default value
+            if length(self.gamma_cross_log) >= self.w
+                window = self.gamma_cross_log(end-self.w+1:end);
+                mu_gamma = mean(window);
+                sigma_gamma = std(window);
+                if sigma_gamma > 0 && abs(gamma_cross - mu_gamma) > 2 * sigma_gamma
+                    anomaly_gamma = 1;
+                end
+            end
+            self.anomaly_gamma_log = [self.anomaly_gamma_log, anomaly_gamma];
+
+            % Log discrepancies
+            self.D_pos_log = [self.D_pos_log, D_pos];
+            self.D_vel_log = [self.D_vel_log, D_vel];
+
+            % Anomaly detection for position
+            anomaly_pos = 0;
+            if length(self.D_pos_log) >= self.w
+                window = self.D_pos_log(end-self.w+1:end);
+                mu_pos = mean(window);
+                sigma_pos = std(window);
+                if sigma_pos > 0 && abs(D_pos - mu_pos) > 2 * sigma_pos
+                    anomaly_pos = 1;
+                end
+            end
+            self.anomaly_pos_log = [self.anomaly_pos_log, anomaly_pos];
+
+            % Anomaly detection for velocity
+            anomaly_vel = 0;
+            if length(self.D_vel_log) >= self.w
+                window = self.D_vel_log(end-self.w+1:end);
+                mu_vel = mean(window);
+                sigma_vel = std(window);
+                if sigma_vel > 0 && abs(D_vel - mu_vel) > 2 * sigma_vel
+                    anomaly_vel = 1;
+                end
+            end
+            self.anomaly_vel_log = [self.anomaly_vel_log, anomaly_vel];
+            beta = 1; % Default value
+            % Cumulative check for trust adjustment
+            if length(self.anomaly_gamma_log) >= self.w
+                % self.w - 1 because length(self.beacon_score_log) only have w-1 elements
+                anomaly_drop_packet = (self.w - 1) - sum(self.beacon_score_log(end-self.w+2:end));
+                anomaly_count_gamma = sum(self.anomaly_gamma_log(end-self.w+1:end));
+                anomaly_count_pos = sum(self.anomaly_pos_log(end-self.w+1:end));
+                anomaly_count_vel = sum(self.anomaly_vel_log(end-self.w+1:end));
+                min_anomali = min([anomaly_count_gamma, anomaly_count_pos, anomaly_count_vel, anomaly_drop_packet]);
+                if min_anomali > self.Threshold_anomalie 
+                    beta = (1-self.reduce_factor*min_anomali / self.w); 
+                end
+            end
+        end
+
 
 
         % Only compare with the directed neighbor (not all neighbors) , or more specific is the target vehicle
-        function gamma_cross = compute_cross_host_target_factor(self, host_id,host_vehicle, target_id,target_vehicle)
+        function [gamma_cross, D_pos, D_vel] = compute_cross_host_target_factor(self, host_id,host_vehicle, target_id,target_vehicle)
             % Inputs:
             %   host_vehicle: The vehicle evaluating trust
             %   target_vehicle: The neighbor whose global estimate is being evaluated
@@ -392,10 +508,25 @@ classdef TriPTrustModel < handle
             % Compute covariance matrix (adaptive variance)
             sigma2_diag_element = [2,1 ,0.01, 0.5];
             sigma2_matrix = diag(sigma2_diag_element);
+
+            sigma2_pos = diag([2, 1]);    % Position (x, y)
+            sigma2_vel = diag([0.5]); % Velocity (vx, vy)
             % Compute total discrepancy D_i,l(k)
             D = 0;
+            D_pos = 0;
+            D_vel = 0;
+
             num_vehicles = size(target_global_estimate,2);
             for j = 1:num_vehicles
+
+                % Position difference
+                pos_diff = target_global_estimate(1:2, j) - host_global_estimate(1:2, j);
+                D_pos = D_pos + pos_diff' * inv(sigma2_pos) * pos_diff;
+
+                % Velocity difference
+                vel_diff = target_global_estimate(4, j) - host_global_estimate(4, j);
+                D_vel = D_vel + vel_diff' * inv(sigma2_vel) * vel_diff;
+
                 x_diff = target_global_estimate(:, j) - host_global_estimate(:, j);
                 D = D + x_diff' * inv(sigma2_matrix) * x_diff; % Mahalanobis distance
             end
@@ -407,14 +538,14 @@ classdef TriPTrustModel < handle
         function gamma_cross_expected = compute_cross_host_expected_factor(self, host_id, host_vehicle, target_id, target_vehicle)
             % Get target vehicle's global estimate
             target_global_estimate = target_vehicle.center_communication.get_global_state(target_id, host_id);
-            
+
             % Define variances for covariance matrix
             var_x = 3;         % Variance for X-difference
             var_y = 1;         % Variance for Y-difference
             var_angle = 0.01;  % Variance for angle-difference
             var_velocity = 1;  % Variance for velocity-difference
             sigma2_matrix = diag([var_x, var_y, var_angle, var_velocity]);
-            
+
             % Retrieve control parameters (assumed available as properties or from the vehicle)
             s0      = 8;       % Minimum spacing (m)
             h_base  = 0.5;   % Base time headway (s) for the first follower (vehicle 2)
@@ -423,39 +554,39 @@ classdef TriPTrustModel < handle
                 gamma_control = host_vehicle.gamma_log(end);
             else
                 gamma_control = 1;
-            end            
+            end
             % Initialize total discrepancy
             D = 0;
             num_vehicles = size(target_global_estimate, 2);
-            
+
             % Loop over consecutive vehicle pairs in the global estimate
             for j = 1:num_vehicles - 1
                 % Difference between vehicle j and j+1 in the global state vector
                 state_diff = target_global_estimate(:, j) - target_global_estimate(:, j+1);
-                
+
                 % Compute adaptive expected spacing for the follower (vehicle n = j+1)
                 n = j + 1; % Vehicle index in platoon (leader is n=1)
                 % Adaptive headway for this vehicle
                 h_n = h_base - delta_h * (n - 2);
-                
+
                 % Assume state vector: [x; y; angle; velocity]
                 % Use the velocity of the follower vehicle (j+1) for the spacing calculation
                 v = target_global_estimate(4, j+1);
-                
+
                 % Compute expected spacing using the mixing formula:
                 % s_expected = s0 + (gamma*h_base + (1-gamma)*h_n)*v
                 s_expected = s0 + ((1 - gamma_control) * h_base + gamma_control * h_n) * v;
-                
+
                 % Define the expected difference vector for this gap. Only the X-component is adaptive.
                 mu_diff_gap = [s_expected; 0; 0; 0];
-                
+
                 % Calculate difference from expected value for this pair
                 diff_from_expected = state_diff - mu_diff_gap;
-                
+
                 % Accumulate the discrepancy using the Mahalanobis distance
                 D = D + diff_from_expected' * inv(sigma2_matrix) * diff_from_expected;
             end
-            
+
             % Compute the cross expected trust factor as an exponential decay with the total discrepancy
             gamma_cross_expected = exp(-D);
         end
@@ -463,14 +594,14 @@ classdef TriPTrustModel < handle
         function gamma_cross_expected = compute_cross_host_expected_2_factor(self, host_id, host_vehicle, target_id, target_vehicle)
             % Get target vehicle's global estimate
             target_global_estimate = target_vehicle.center_communication.get_global_state(target_id, host_id);
-            
+
             % Define variances for covariance matrix
             var_x = 3;         % Variance for X-difference
             var_y = 1;         % Variance for Y-difference
             var_angle = 0.01;  % Variance for angle-difference
             var_velocity = 0.5;  % Variance for velocity-difference
             sigma2_matrix = diag([var_x, var_y, var_angle, var_velocity]);
-            
+
             % Retrieve control parameters (assumed available as properties or from the vehicle)
             s0      = 8;       % Minimum spacing (m)
             h_base  = 0.4;   % Base time headway (s) for the first follower (vehicle 2)
@@ -480,20 +611,20 @@ classdef TriPTrustModel < handle
                 gamma_control = host_vehicle.gamma_log(end);
             else
                 gamma_control = 1;
-            end            
+            end
             % Initialize total discrepancy
             D = 0;
             num_vehicles = size(target_global_estimate, 2);
-            
+
             % Loop over consecutive vehicle pairs in the global estimate
             for j = 1:num_vehicles - 1
                 % Difference between vehicle j and j+1 in the global state vector
                 state_diff = target_global_estimate(:, j) - target_global_estimate(:, j+1);
-                
+
                 % Assume state vector: [x; y; angle; velocity]
                 % Use the velocity of the follower vehicle (j+1) for the spacing calculation
                 v = target_global_estimate(4, j+1);
-                
+
                 s_acc = s0 + T*v; % h_base = T
                 s_i = s0 + h_base*v/j;
                 % Compute expected spacing using the mixing formula:
@@ -503,37 +634,37 @@ classdef TriPTrustModel < handle
 
                 % Define the expected difference vector for this gap. Only the X-component is adaptive.
                 mu_diff_gap = [s_expected; 0; 0; 0];
-                
+
                 % Calculate difference from expected value for this pair
                 diff_from_expected = state_diff - mu_diff_gap;
-                
+
                 % Accumulate the discrepancy using the Mahalanobis distance
                 D = D + diff_from_expected' * inv(sigma2_matrix) * diff_from_expected;
             end
-            
+
             % Compute the cross expected trust factor as an exponential decay with the total discrepancy
             gamma_cross_expected = exp(-D);
         end
-        
-        
+
+
         % function gamma_cross_expected = compute_cross_host_expected_factor(self, host_id, host_vehicle, target_id, target_vehicle)
         %     % Get target vehicle's global estimate
         %     target_global_estimate = target_vehicle.center_communication.get_global_state(target_id, host_id);
-        
+
         %     % Define expected differences
         %     expected_diff_x = 20;      % Expected X-spacing (m)
         %     expected_diff_y = 0;       % Expected Y-offset (m)
         %     expected_diff_angle = 0;   % Expected angle difference (rad)
         %     expected_diff_velocity = 0; % Expected velocity difference (m/s)
         %     mu_diff = [expected_diff_x; expected_diff_y; expected_diff_angle; expected_diff_velocity];
-        
+
         %     % Define variances for covariance matrix
         %     var_x = 1;         % Variance for X-difference
         %     var_y = 1;         % Variance for Y-difference
         %     var_angle = 0.01;  % Variance for angle-difference
         %     var_velocity = 1;  % Variance for velocity-difference
         %     sigma2_matrix = diag([var_x, var_y, var_angle, var_velocity]);
-        
+
         %     % Compute total discrepancy
         %     D = 0;
         %     num_vehicles = size(target_global_estimate, 2);
@@ -542,7 +673,7 @@ classdef TriPTrustModel < handle
         %         diff_from_expected = x_diff - mu_diff;
         %         D = D + diff_from_expected' * inv(sigma2_matrix) * diff_from_expected; % Mahalanobis distance
         %     end
-        
+
         %     % Compute trust factor
         %     gamma_cross_expected = exp(-D);
         % end

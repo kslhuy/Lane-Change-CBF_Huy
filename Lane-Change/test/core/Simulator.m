@@ -81,8 +81,8 @@ classdef Simulator
                         % % Adjust xlim dynamically to follow the ego vehicle
 
 
-                        offset_x = self.other_vehicles(1).state(1); % Assuming state(1) is the X position
-                        xlim([offset_x  - 200, offset_x + 100]); % Keep the ego vehicle in the center
+                        offset_x = (self.other_vehicles(4).state(1) + self.other_vehicles(3).state(1))/2 + 5; % Assuming state(1) is the X position
+                        xlim([offset_x  - 100, offset_x + 200]); % Keep the ego vehicle in the center
                 
 
                         ylim([-30, 30]); % Adjusted for better visibility

@@ -215,7 +215,7 @@ classdef Vehicle < handle
                 self.observer.Distributed_Observer(instant_index, weights);
                 % disp('Controller is empty');
                 self.get_lane_id(self.state);
-                speed = self.state(4);
+                % speed = self.state(4);
 
                 acceleration = self.scenarios_config.get_LeadInput(instant_index); % acceleration is the input of the lead vehicle
 
@@ -228,7 +228,7 @@ classdef Vehicle < handle
                 elseif self.state(4) <= llim
                     self.state(4) = llim;
                 end
-                dx = speed * self.dt + 0.5 * acceleration * self.dt^2; %dx=v*dt+0.5*a*dt^2
+                dx = self.state(4) * self.dt + 0.5 * acceleration * self.dt^2; %dx=v*dt+0.5*a*dt^2
                 self.state = [self.state(1) + dx; self.state(2); self.state(3); self.state(4)]; % new state of normal cars
                 %  no need update input , beacuse the input is constant
                 self.input = [acceleration;0]; % update the input

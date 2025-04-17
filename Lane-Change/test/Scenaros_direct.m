@@ -18,8 +18,8 @@ param_sys = ParamVeh();
 dt = 0.01; % time step
 simulation_time = 25; % simulation time
 Road_type = "Highway"; % "Highway" , "Urban"
-is_lead_input_change = false; % if the lead input is changing (for different senarios)
-
+% is_lead_input_change = false; % if the lead input is changing (for different senarios)
+lead_senario = "Deceleration"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
 
 % Observer related
 use_predict_observer = true;
@@ -34,7 +34,8 @@ data_type_for_u2 = "est"; % "est" , "true"
 
 % trust related
 opinion_type = "both"; % opinion type " distance" , " trust" , " both"
-
+Dichiret_type = "Dual" ; % "Single" , "Dual"
+monitor_sudden_change = false; % if the sudden change is monitored
 % model related
 model_vehicle_type = "normal"; % "delay_v" , "delay_a" , "normal"
 
@@ -54,21 +55,20 @@ Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 IsShowAnimation = true;
 debug_mode = false;
 if (debug_mode )
-    % dbstop in Vehicle at 132;
-    % dbstop in Observer at 126 if instant_index>=999;
-    % dbstop in Observer at 80 if instant_index>=1000;
-    dbstop in Observer at 75 if instant_index>=1000;
-    % dbstop in Observer at 80 if instant_index>=1000;
+    dbstop if error;
+    % dbstop in Observer at 75 if instant_index>=1000;
 end
 
 Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type,debug_mode );
-Scenarios_config.set_LeadInput_change(is_lead_input_change); % For different senarios
+Scenarios_config.set_Lead_Senarios(lead_senario); % For different senarios
 % Observer related
 Scenarios_config.set_predict_controller_type(predict_controller_type);
 Scenarios_config.set_Use_predict_observer(use_predict_observer);
 Scenarios_config.set_Local_observer_type(Local_observer_type);
 Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
 
+Scenarios_config.set_Trip_Dichiret(Dichiret_type); % "Single" , "Dual"
+Scenarios_config.set_monitor_sudden_change(monitor_sudden_change); % if the sudden change is monitored
 
 % Define driving Senarios lanes
 % Create a straight lane with specified width and length
@@ -209,7 +209,7 @@ car1.trip_models{2}.plot_trust_log(1 , 2)
 
 car2.trip_models{1}.plot_trust_log(2 ,1)
 car2.trip_models{3}.plot_trust_log(2,3)
-car2.trip_models{3}.plot_trust_log(2,4)
+car2.trip_models{4}.plot_trust_log(2,4)
 
 
 
