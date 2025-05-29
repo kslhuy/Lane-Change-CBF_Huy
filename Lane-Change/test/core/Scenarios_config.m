@@ -6,8 +6,8 @@ classdef Scenarios_config < handle
         gamma_type; % type gamma for switching control = " min" , " max " , " mean "
         opinion_type; % opinion type " distance" , " trust" , " both"
         controller_type; % "local" , "coop" , "mix"
-        model_vehicle_type; % "delay_v" , "delay_a" , "normal"
-        data_type_for_u2; % "est" , "true"
+        model_vehicle_type = "normal"; % "delay_v" , "delay_a" , "normal"
+        data_type_for_u2 = "est"; % "est" , "true"
 
         lead_senario; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
 
@@ -19,6 +19,7 @@ classdef Scenarios_config < handle
         Is_noise_mesurement = false; % if the noise is in the mesurement
         Dichiret_type = "Single"; % "Single" , "Dual"
         Monitor_sudden_change = false; % if the sudden change is monitored
+        use_local_data_from_other = false; % if the local data from other vehicles is used
     end
     methods
         function self = Scenarios_config(dt , simulation_time , scenario_where , controller_type ,data_type_for_u2, gamma_type , opinion_type, model_vehicle_type, debug_mode )
@@ -108,6 +109,9 @@ classdef Scenarios_config < handle
 
 
 
+        function set_Use_local_data_from_other(self , use_local_data_from_other)
+            self.use_local_data_from_other = use_local_data_from_other;
+        end
 
         function set_Use_predict_observer(self, use_predict_observer)
             self.Use_predict_observer = use_predict_observer;

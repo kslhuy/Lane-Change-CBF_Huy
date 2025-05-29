@@ -87,11 +87,6 @@ classdef IDM_control < handle % Extended Look-Ahead Controller for Lane-Changing
             e = 0; % Placeholder for errors
         end
 
-        % function self = assign_otherveicle(self , other_vehicles)
-        %     disp('Assigning other vehicles IDM controller');
-        %     self.other_vehicles = other_vehicles;
-        % end
-
         function [x, y, theta, v] = unpack_state(~, state)
             x = state(1);
             y = state(2);

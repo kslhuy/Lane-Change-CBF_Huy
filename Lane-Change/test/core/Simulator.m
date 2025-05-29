@@ -36,17 +36,17 @@ classdef Simulator
 
             % Start the timer
             tic;
-
+            % Update other vehicles' positions
+            num_car = size(self.other_vehicles, 1);
             for i = 1:num
-                % Update other vehicles' positions
-                num_car = size(self.other_vehicles, 1);
+
                 if num_car >= 1
                     for k = 1:num_car
                         self.other_vehicles(k).update(i); % Update vehicle state
                     end
-                    % for k = 1:num_car
-                    %     self.other_vehicles(k).send_data(i); % Update vehicle state
-                    % end
+                    for k = 1:num_car
+                        self.other_vehicles(k).send_data(i); % Update vehicle state
+                    end
                     
                 end
 

@@ -28,7 +28,7 @@ classdef CACC < handle
             h = self.param_opt.hi;         % Time-gap parameter
 
             % Extract current state
-            [x, y, theta, v] = self.unpack_state(state);
+            [x, y, theta, v,a] = self.unpack_state(state);
 
             % Get leading vehicles
             [~, surrounding_vehicles, ~, ~] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag,host_car_id);
@@ -53,15 +53,18 @@ classdef CACC < handle
                     if (type_state == "true")
                         x_j = car_j.state(1);
                         v_j = car_j.state(4);
+                        a_j = car_j.state(5);
                     else %estimated                        
                         x_j = self.controller.vehicle.observer.est_global_state_current(1,car_j.vehicle_number);
                         v_j = self.controller.vehicle.observer.est_global_state_current(4,car_j.vehicle_number); 
+                        a_j = self.controller.vehicle.observer.est_global_state_current(5,car_j.vehicle_number);
                     end
                     
                     spacing_error = x_j - x - ((host_car_id - car_j.vehicle_number) * s0 + h * v);
                     velocity_error = v_j - v;
+                    accel_error = a_j - a;
 
-                    u_coop = u_coop + K * [spacing_error ; velocity_error];
+                    u_coop = u_coop + K * [spacing_error ; velocity_error ; accel_error];
                 end
 
                 u_coop = u_coop / num_vehicles; % Normalize by number of preceding vehicles
@@ -83,11 +86,12 @@ classdef CACC < handle
             acc = input(1);
             beta = input(2);
         end
-        function [x, y, psi, v] = unpack_state(self, state)
+        function [x, y, psi, v,a] = unpack_state(self, state)
             x = state(1);
             y = state(2);
             psi = state(3);
             v = state(4);
+            a = state(5);
         end
     end
 end

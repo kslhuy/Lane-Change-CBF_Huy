@@ -258,9 +258,9 @@ classdef Attack_module < handle
                                 perturbation(vel_rows) = a_bias * (timestamp - self.scenario(i).start_time);
                                 x_bar_j(vel_rows) = x_bar_j(vel_rows) + perturbation(vel_rows);
                             end
-                        % case 'drop'
-                        %     perturbation = NaN;
-                        %     x_bar_j = NaN; % No data transmitted
+                            % case 'drop'
+                            %     perturbation = NaN;
+                            %     x_bar_j = NaN; % No data transmitted
                         case 'drop'
                             drop_chance = fault_intensity;  % Use fault_intensity as drop rate
                             if rand < drop_chance
@@ -284,7 +284,7 @@ classdef Attack_module < handle
         end
 
         %TODO : GLOBAL Should have another option to set attack in all rows
-        
+
         % Helper function to get rows to attack
         function attack_rows = GetAttackRows_global(self, attacked_data, num_rows)
             % GETATTACKROWS_GLOBAL Determines the rows to attack based on the attacked data type.

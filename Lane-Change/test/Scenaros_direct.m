@@ -16,28 +16,29 @@ param_sys = ParamVeh();
 
 %% Simulation and Senarios related  
 dt = 0.01; % time step
-simulation_time = 25; % simulation time
+simulation_time = 23; % simulation time
 Road_type = "Highway"; % "Highway" , "Urban"
 % is_lead_input_change = false; % if the lead input is changing (for different senarios)
-lead_senario = "Deceleration"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
+lead_senario = "constant"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
 
 % Observer related
-use_predict_observer = true;
+use_predict_observer = false; % Will override distributed observer with a prediction model
 predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other"
 Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
 set_Is_noise_mesurement = false; % if the measurement is noisy
+use_local_data_from_other = true; % if the local data from other vehicles is used (true = ourpaper , false = another paper)
 
 % controller related
-gamma_type = "min"; % type gamma for switching control = " min" , " max " , " mean "
+gamma_type = "self_belief"; % type gamma for switching control = " min" , " max " , " mean " , "self_belief"
 controller_type = "mix"; % type of controller for the ego vehicle: "local" , "coop" , "mix" 
-data_type_for_u2 = "est"; % "est" , "true"
+data_type_for_u2 = "true"; % "est" , "true" using the estimated or true data for u2 (CACC)
 
 % trust related
 opinion_type = "both"; % opinion type " distance" , " trust" , " both"
-Dichiret_type = "Dual" ; % "Single" , "Dual"
+Dichiret_type = "Single" ; % "Single" , "Dual"
 monitor_sudden_change = false; % if the sudden change is monitored
 % model related
-model_vehicle_type = "normal"; % "delay_v" , "delay_a" , "normal"
+model_vehicle_type = "delay_a"; % "delay_v" , "delay_a" , "normal","paper"
 
 %% Graph related
 graph = [0 1 1 1;  % Adjacency matrix
@@ -52,11 +53,14 @@ Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 
 
 % Log and Debug related
-IsShowAnimation = true;
+IsShowAnimation = false;
 debug_mode = false;
 if (debug_mode )
     dbstop if error;
     % dbstop in Observer at 75 if instant_index>=1000;
+    dbstop in TriPTrustModel at 412 if instant_idx>=200;
+    % dbstop in TriPTrustModel at 411 if host_id <= 1;
+
 end
 
 Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type,debug_mode );
@@ -66,6 +70,8 @@ Scenarios_config.set_predict_controller_type(predict_controller_type);
 Scenarios_config.set_Use_predict_observer(use_predict_observer);
 Scenarios_config.set_Local_observer_type(Local_observer_type);
 Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
+
+Scenarios_config.set_Use_local_data_from_other( use_local_data_from_other)
 
 Scenarios_config.set_Trip_Dichiret(Dichiret_type); % "Single" , "Dual"
 Scenarios_config.set_monitor_sudden_change(monitor_sudden_change); % if the sudden change is monitored
@@ -90,9 +96,9 @@ t_star = 10;
 t_end = 15;
 attacker_vehicle_id = 1;
 victim_id = -1;
-case_nb_attack = 7;
-data_type_attack = "global"; % "local" , "global",
-attack_type = "DoS"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus"
+case_nb_attack = 3;
+data_type_attack = "local"; % "local" , "global",
+attack_type = "None"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus","None"
 % scenario_Attack_params = struct('attacker_id', attacker_id, ...
 %                         'victim_id', victim_id, ...
 %                         'start_time', t_star, ...
@@ -134,16 +140,16 @@ direction_flag = 0; % 1 stands for changing to the left adjacent lane, 0 stands 
 %% Comunication Module
 center_communication = CenterCommunication(attack_module);
 
-
-car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 23], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+% [80; 0.5 * lane_width; 0; 23 ; 0] = state initialization
+car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 23 ; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
 % car2 , car3 is in the middle lane, lane middle
-car2 = Vehicle(2, "IDM", param_sys, [60; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+car2 = Vehicle(2, "IDM", param_sys, [60; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
-car3 = Vehicle(3, "IDM", param_sys, [40; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+car3 = Vehicle(3, "IDM", param_sys, [40; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
 % car4 is in the lane highest
-car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
 
 
@@ -207,11 +213,12 @@ car4.plot_trust_log()
 %% Plot the trust log for each trip model
 car1.trip_models{2}.plot_trust_log(1 , 2)
 
-car2.trip_models{1}.plot_trust_log(2 ,1)
+car2.trip_models{1}.plot_trust_log(2,1)
 car2.trip_models{3}.plot_trust_log(2,3)
 car2.trip_models{4}.plot_trust_log(2,4)
 
 
+car3.trip_models{1}.plot_trust_log(3,1)
 
 car3.trip_models{2}.plot_trust_log(3,2)
 car3.trip_models{4}.plot_trust_log(3,4)

@@ -30,7 +30,6 @@ classdef Vehicle < handle
         center_communication; % Add a reference to the CenterCommunication object
         graph;
         trust_log;
-        state5;
         u1_log;
         u2_log;
         u_target_log;
@@ -47,7 +46,6 @@ classdef Vehicle < handle
             self.vehicle_number = vehicle_number ;
 
             self.state = state_initial;
-            self.state5 = [state_initial ; 0];
 
             self.param = veh_param;
 
@@ -128,9 +126,6 @@ classdef Vehicle < handle
 
         function update(self,instant_index)
 
-            % if (self.scenarios_config.debug_mode && instant_index >= 999)
-            %     disp('stop');
-            % end
 
             %% Identify vehicles is connected with the ego vehicle's
             connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
@@ -138,7 +133,7 @@ classdef Vehicle < handle
 
             calculateTrustAndOpinion3(self, instant_index, connected_vehicles_idx );
 
-            %% Wiegth trust update
+            %% Weigth trust update
             if (instant_index*self.dt >= 3)
                 weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :) , "equal");
             else
@@ -146,7 +141,8 @@ classdef Vehicle < handle
             end
             %% Update normal car dynamics , like controller and observer
             normal_car_update(self,instant_index , weights_Dis);
-            send_data(self,instant_index)
+            % TODO : update the input log , currently it is updated in the SIMULATOR class
+            % send_data(self,instant_index)
 
 
         end
@@ -163,39 +159,38 @@ classdef Vehicle < handle
 
         function normal_car_update(self,instant_index , weights)
 
-            if self.typeController ~= "None"
+            if self.typeController ~= "None" 
                 % disp('Controller is not empty');
                 self.get_lane_id(self.state);
 
-                %% Observer
-                self.observer.Local_observer(self.state , instant_index);
-                self.observer.Distributed_Observer(instant_index , weights);
                 %% Controller
                 [~, u_1, e_1] = self.controller.get_optimal_input(self.vehicle_number, self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"true", 0);
                 [~, u_2, e_2] = self.controller2.get_optimal_input(self.vehicle_number ,self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag, self.scenarios_config.data_type_for_u2, 0);
 
-
+                
                 if (self.scenarios_config.gamma_type == "max")
                     gamma = max(self.trust_log(1, instant_index, :));
                 elseif (self.scenarios_config.gamma_type == "min")
                     gamma = min(self.trust_log(1, instant_index, :));
-                else %% = mean
+                elseif (self.scenarios_config.gamma_type == "mean") %% = mean
                     gamma = mean(self.trust_log(1, instant_index, :));
+                else %% self_belief
+                    gamma = self.observer.self_belief;
                 end
 
                 %% calculate the optimal input of the vehicle
                 %using low pass filter to smooth the input
 
-
-                U_target = (1 - gamma)*u_1 + gamma*u_2;
-
+                U_target = [0,0];
                 if (self.scenarios_config.controller_type == "local")
                     U_final = u_1 ;
                 elseif (self.scenarios_config.controller_type == "coop")
                     U_final = u_2 ;
                 else % "mix" case
                     tau_filter = 0.02;
-                    U_final = self.input + tau_filter*(U_target - self.input) ; % self.input is last input
+                    U_target(1) = (1 - gamma)*u_1(1) + gamma*u_2(1);
+                    U_final = u_1;
+                    U_final(1) = self.input(1) + tau_filter*(U_target(1) - self.input(1)) ; % self.input is last input
                 end
 
                 %% Update new state
@@ -203,16 +198,22 @@ classdef Vehicle < handle
                     self.Bicycle_delay_v(self.state, U_final); 
                 elseif (self.scenarios_config.model_vehicle_type == "delay_a")
                     self.Bicycle_delay_a(self.state, U_final);
+                elseif (self.scenarios_config.model_vehicle_type == "normal")
+                    self.Bicycle(self.state, U_final);
                 else
-                    self.Bicycle(self.state(1:3), U_final); % calculate dX through normal model
+                    self.Bicycle_no_theta(self.state, U_final); % calculate dX through normal model
                 end
+                self.input = U_final; % update the input
+
+
+                %% Observer
+                self.observer.Local_observer(self.state , instant_index);
+                self.observer.Distributed_Observer(instant_index , weights);
 
             else
                 %% NO Controller = vehicle 1 (lead)
 
-                %% Observer
-                self.observer.Local_observer(self.state,instant_index);
-                self.observer.Distributed_Observer(instant_index, weights);
+                
                 % disp('Controller is empty');
                 self.get_lane_id(self.state);
                 % speed = self.state(4);
@@ -229,7 +230,7 @@ classdef Vehicle < handle
                     self.state(4) = llim;
                 end
                 dx = self.state(4) * self.dt + 0.5 * acceleration * self.dt^2; %dx=v*dt+0.5*a*dt^2
-                self.state = [self.state(1) + dx; self.state(2); self.state(3); self.state(4)]; % new state of normal cars
+                self.state = [self.state(1) + dx; self.state(2); self.state(3); self.state(4) ; 0]; % new state of normal cars
                 %  no need update input , beacuse the input is constant
                 self.input = [acceleration;0]; % update the input
 
@@ -240,6 +241,10 @@ classdef Vehicle < handle
 
                 e_1 = 0;
                 e_2 = 0;
+
+                %% Observer
+                self.observer.Local_observer(self.state,instant_index);
+                self.observer.Distributed_Observer(instant_index, weights);
             end
 
             %% Log control input
@@ -265,16 +270,18 @@ classdef Vehicle < handle
             l_r = self.param.l_r;
             l = l_f + l_r;
             [x, y, phi] = self.unpack_state(state);
-            [a, beta] = self.unpack_input(input); % input is V beacause its aldready convert in calling fucntion
-            v = self.state(4) + self.dt * a;
-            delta_f = atan(l*tan(beta)/l_r); % calculate front steering angle from slip angle
-            xdot = v * cos(phi+beta); % velocity in x direction
-            ydot = v * sin(phi+beta); % velocity in y direction
-            phidot = v * sin(beta) / l_r; % yaw rate
-            dX = [xdot; ydot; phidot];
-
-            self.state = self.state + self.dt .* [dX; input(1)]; % update the state of the vehicle
+            [a, delta_f] = self.unpack_input(input); % input is V beacause its aldready convert in calling fucntion
+            % v = self.state(4) + self.dt * a;
+            v = self.state(4);
+            xdot = v * cos(phi); % velocity in x direction
+            ydot = v * sin(phi); % velocity in y direction
+            phidot = v * tan(delta_f) / l_r; % yaw rate
+            vdot = a; % acceleration
+            
+            dX = [xdot; ydot; phidot;vdot ; 0];
+            self.state = self.state + self.dt*dX ; % update the state of the vehicle
             self.input = input; % update the input
+            self.state(5) = a; % just put the acceleration in the state
         end
 
         function  Bicycle_delay_v(self, state, input)
@@ -282,18 +289,20 @@ classdef Vehicle < handle
             l_f = self.param.l_f;
             l_r = self.param.l_r;
             l = l_f + l_r;
-            [x, y, phi , v] = self.unpack_state_v2(state);
-            [a, beta] = self.unpack_input(input); % input is V beacause its aldready convert in calling fucntion
-            v_dot =  a - (1/self.param.tau)*v;
 
-            delta_f = atan(l*tan(beta)/l_r); % calculate front steering angle from slip angle
-            xdot = v * cos(phi+beta); % velocity in x direction
-            ydot = v * sin(phi+beta); % velocity in y direction
-            phidot = v * sin(beta) / l_r; % yaw rate
-            dX = [xdot; ydot; phidot ; v_dot];
+            [x, y, phi , v] = self.unpack_state_v2(state);
+            [a, delta_f] = self.unpack_input(input); % input is V beacause its aldready convert in calling fucntion
+            v_dot =  (1/self.param.tau)*a - (1/self.param.tau)*v;
+
+            xdot = v * cos(phi); % velocity in x direction
+            ydot = v * sin(phi); % velocity in y direction
+            phidot = v * tan(delta_f) / l_r; % yaw rate
+            dX = [xdot; ydot; phidot ; v_dot ; 0];
 
             self.input = input; % update the input
             self.state = self.state + self.dt .* dX;
+            self.state(5) = a; % just put the acceleration in the state
+
         end
 
         function Bicycle_delay_a(self, state , input)
@@ -301,42 +310,73 @@ classdef Vehicle < handle
             l_f = self.param.l_f;
             l_r = self.param.l_r;
             l = l_f + l_r;
+            tau = self.param.tau;
 
-            % Unpack state (5 states: x, y, phi, v, a)
-            % if length(state) == 4 % If only 4 states are provided, assume a = 0 initially
-            %     [x, y, phi, v] = self.unpack_state_v2(state);
-            %     a = 0;
-            %     state = [state; 0]; % Extend state to 5 elements
-            % else % Already 5 states
-            %     [x, y, phi, v] = self.unpack_state_v2(state(1:4));
-            %     a = state(5); % Acceleration
-            % end
             [x, y, phi, v] = self.unpack_state_v2(state(1:4));
 
+            theta = 0;    
+            A = [   0 0 -v*sin(theta) cos(theta) 0;
+                    0 0 v*cos(theta) sin(theta) 0;
+                    0 0 0 0 0;
+                    0 0 0 0 1;
+                    0 0 0 0 -1/tau];
 
 
-            u_a = input(1); % input Jerk (rate of change acceleration)
-            beta = input(2); % Slip angle
+            B = [0 0;
+                0 0;
+                0 1;
+                0 0;
+                1/tau 0];
 
-            % Calculate front steering angle
-            delta_f = atan(l * tan(beta) / l_r);
+            
+            a = state(5);
+            u_a = input(1); % Jerk
+            delta_f = input(2); % Front steering angle
+        
+            % xdot = v * cos(phi);
+            % ydot = v * sin(phi);
+            % phidot = v * tan(delta_f) / l;
+            % vdot = a;
+            % adot = (1/tau) * u_a - (1/tau) * a;
+        
+            % dX = [xdot; ydot; phidot; vdot; adot];
+        
+            dX = A*self.state + B*input;
+        
 
-            % Extended model dynamics
-            xdot = v * cos(phi + beta); % Velocity in x direction
-            ydot = v * sin(phi + beta); % Velocity in y direction
-            phidot = v * sin(beta) / l_r; % Yaw rate
-            vdot = self.state5(5); % Acceleration
-            adot = (1/self.param.tau) * u_a - (1/self.param.tau)*self.state5(5); % Jerk
-            % Return state derivative
-            dX = [xdot; ydot; phidot; vdot; adot];
 
-            self.state5 = self.state5 + self.dt .* dX;
-            self.state = self.state5(1:4); % update the state of the vehicle
+            self.state = self.state + self.dt * dX;
+            self.input = input;
+        end
 
-            self.input = input; % update the input
-            % self.state_log = [self.state_log, self.state]; % update the state history
-            % self.input_log = [self.input_log, self.input]; % update the input history
-            % self.other_log = [self.other_log(1, :), self.lane_id; self.other_log(2, :), e];
+        function Bicycle_no_theta(self, state , input)
+            % Unpack parameters
+            l_f = self.param.l_f;
+            l_r = self.param.l_r;
+            l = l_f + l_r;
+            tau = self.param.tau;
+
+            [x, y, phi, v] = self.unpack_state_v2(state(1:4));
+
+            Ai_conti = [0 0 0 1 0;
+                        0 0 0 0 0;
+                        0 0 0 0 0;
+                        0 0 0 0 1;
+                        0 0 0 0 -1/tau];
+            Bi_conti = [0 0;
+                        0 0;
+                        0 0;
+                        0 0;
+                        1/tau 0];
+            % Discretization of the state-space model
+            A = (eye(length(Ai_conti))+self.dt*Ai_conti);
+            B = self.dt*Bi_conti;
+                            
+            self.state = A*self.state + B * self.input;
+            self.input = input;
+
+
+
         end
 
         function [] = get_lane_id(self, state)
@@ -554,52 +594,71 @@ classdef Vehicle < handle
         %% Function for plot
         function plot_ground_error_global_est(self , vehicles)
             figure("Name", "Error global est " + num2str(self.vehicle_number), "NumberTitle", "off");
-
-            subplot(4,1,1);
-
             nb_vehicles = length(vehicles);
-            vehicle_labels = arrayfun(@(i) sprintf('Vehicle %d', i), 1:nb_vehicles, 'UniformOutput', false);
+            state_labels = {'Error Position X', ' Error Position Y', 'Error Theta', 'Error Velocity','Error Acc'};
+            num_states = size(self.observer.est_global_state_log, 1); % Number of states
 
-            for i = 1:nb_vehicles
-                plot( self.observer.est_global_state_log(1, 1:end, i) - vehicles(i).state_log(1, 1:end-1), 'LineWidth', 1);
-                hold on;
+
+             for state_idx = 1:num_states
+                subplot(num_states, 1, state_idx);
+                for v = 1:nb_vehicles
+                    plot( self.observer.est_global_state_log(state_idx, 1:end, v) - vehicles(v).state_log(state_idx, 1:end-1), 'LineWidth', 1 , 'DisplayName', ['Vehicle ', num2str(v)]);
+                    hold on;
+
+                    % plot(squeeze(self.est_global_state_log(state_idx, 1:end-1, v)), 'DisplayName', ['Vehicle ', num2str(v)]);
+                end
+                title(state_labels{state_idx});
+                % xlabel('Time (s)');
+                ylabel(state_labels{state_idx});
+                legend;
+                grid on;
             end
 
-            % % Assuming Is_ok is a logical array with the same time steps as the logs
-            % is_not_ok = ~self.observer.Is_ok_log;
-            % bad_time_steps = find(is_not_ok); % Indices where Is_ok is true
 
-            legend(vehicle_labels);
+            % subplot(4,1,1);
 
-            title(['Comparison global est state with local true platoon car ' num2str(self.vehicle_number)]);
+            % vehicle_labels = arrayfun(@(i) sprintf('Vehicle %d', i), 1:nb_vehicles, 'UniformOutput', false);
 
-            % % Add vertical lines where Is_ok is false
-            % for t = bad_time_steps
-            %     xline(t, '--r', 'LineWidth', 1.2, 'Alpha', 0.3); % Red dashed line
+            % for i = 1:nb_vehicles
+            %     plot( self.observer.est_global_state_log(1, 1:end, i) - vehicles(i).state_log(1, 1:end-1), 'LineWidth', 1);
+            %     hold on;
             % end
 
+            % % % Assuming Is_ok is a logical array with the same time steps as the logs
+            % % is_not_ok = ~self.observer.Is_ok_log;
+            % % bad_time_steps = find(is_not_ok); % Indices where Is_ok is true
 
-            subplot(4,1,2);
+            % legend(vehicle_labels);
 
-            for i = 1:nb_vehicles
-                plot( self.observer.est_global_state_log(2, 1:end, i) - vehicles(i).state_log(2, 1:end-1), 'LineWidth', 1);
-                hold on;
-            end
-            % legend('error Y');
+            % title(['Comparison global est state with local true platoon car ' num2str(self.vehicle_number)]);
 
-            subplot(4,1,3);
+            % % % Add vertical lines where Is_ok is false
+            % % for t = bad_time_steps
+            % %     xline(t, '--r', 'LineWidth', 1.2, 'Alpha', 0.3); % Red dashed line
+            % % end
 
-            for i = 1:nb_vehicles
-                plot( self.observer.est_global_state_log(3, 1:end, i) - vehicles(i).state_log(3, 1:end-1), 'LineWidth', 1);
-                hold on;
-            end
 
-            subplot(4,1,4);
+            % subplot(4,1,2);
 
-            for i = 1:nb_vehicles
-                plot( self.observer.est_global_state_log(4, 1:end, i) - vehicles(i).state_log(4, 1:end-1), 'LineWidth', 1);
-                hold on;
-            end
+            % for i = 1:nb_vehicles
+            %     plot( self.observer.est_global_state_log(2, 1:end, i) - vehicles(i).state_log(2, 1:end-1), 'LineWidth', 1);
+            %     hold on;
+            % end
+            % % legend('error Y');
+
+            % subplot(4,1,3);
+
+            % for i = 1:nb_vehicles
+            %     plot( self.observer.est_global_state_log(3, 1:end, i) - vehicles(i).state_log(3, 1:end-1), 'LineWidth', 1);
+            %     hold on;
+            % end
+
+            % subplot(4,1,4);
+
+            % for i = 1:nb_vehicles
+            %     plot( self.observer.est_global_state_log(4, 1:end, i) - vehicles(i).state_log(4, 1:end-1), 'LineWidth', 1);
+            %     hold on;
+            % end
 
             xlabel('Time (s)');
         end

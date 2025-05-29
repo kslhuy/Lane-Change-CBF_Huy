@@ -36,8 +36,8 @@ classdef ParamOptEgo
         %% CACC
 
         % Control GAin
-        k_s = 1;
-        k_v = 3;
+        k_s = 1.2;
+        k_v = 2.5;
         k_a = 0.1;
         K;
 
@@ -49,8 +49,7 @@ classdef ParamOptEgo
     methods
         function self = ParamOptEgo(dt)
             self.dt = dt;
-            self.K = [self.k_s , self.k_v ];
-
+            self.K = [self.k_s , self.k_v , self.k_a];
         end
     end
 end

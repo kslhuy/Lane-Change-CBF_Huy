@@ -1,91 +1,92 @@
 clc
 close all
-clear 
+clear
 
 addpath ../test/core/
 
 addpath('Function');
 addpath('core/observer');
+addpath('core/Controller');
 addpath('core/Trust');
 addpath('core/communication');
 
+%% Params affect the simulation
+param_sys = ParamVeh();
 
+%% Simulation and Scenarios related
+dt = 0.01; % time step
+simulation_time = 15; % simulation time
+Road_type = "Highway"; % "Highway", "Urban"
+lead_senario = "constant"; % "constant", "Acceleration", "Deceleration", "Lane_change"
 
-% Params = dt , simulation_time , scenario
-% "Highway" , "Urban"
-Scenarios_config = Scenarios_config( 0.01, 15,  "Highway");
+% Observer related
+use_predict_observer = true;
+predict_controller_type = "true_other"; % "self", "true_other", "predict_other"
+Local_observer_type = "kalman"; % "measurement", "kalman", "observer"
+set_Is_noise_measurement = false; % if the measurement is noisy
 
+% Controller related
+gamma_type = "min"; % type gamma for switching control = "min", "max", "mean"
+controller_type = "mix"; % type of controller for the ego vehicle: "local", "coop", "mix"
+data_type_for_u2 = "est"; % "est", "true"
 
-%% Graph 
+% Trust related
+opinion_type = "both"; % opinion type "distance", "trust", "both"
+Dichiret_type = "Dual"; % "Single", "Dual"
+monitor_sudden_change = false; % if the sudden change is monitored
+
+% Model related
+model_vehicle_type = "normal"; % "delay_v", "delay_a", "normal"
+
+%% Graph related
 graph = [0 1 1 0;  % Adjacency matrix
          1 0 1 1;
          1 1 0 1;
          0 1 1 0];
 
+trust_threshold = 0.5; % for cutting communication in the graph
+kappa = 1; % parameter in the design weights matrix
+Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 
-%% Not use this part
-% Generate virtual graphs for each vehicle
-num_vehicles = size(graph, 1);
-virtual_graphs = cell(num_vehicles, 1);
-weights = cell(num_vehicles, 1);
-
-for j = 1:num_vehicles
-    virtual_graphs{j} = generate_virtual_graph(graph, j);
-    % fprintf('Virtual graph matrix for vehicle %d:\n', j);
-    % disp(virtual_graphs{j});
-
-    weights{j} = calculate_weights_Defaut(virtual_graphs{j});
-    % fprintf('Consensus weights matrix for vehicle %d:\n', j);
-    % disp(weights{j});
+%% Log and Debug related
+IsShowAnimation = true;
+debug_mode = false;
+if debug_mode
+    dbstop if error;
 end
 
-weights_Dis_1 = weights{1,1}(1+1,:); 
-weights_Dis_2 = weights{2,1}(2+1,:); 
-weights_Dis_3 = weights{3,1}(3+1,:); 
-weights_Dis_4 = weights{4,1}(4+1,:); 
-%--------- Not use this part
+Scenarios_config = Scenarios_config(dt, simulation_time, Road_type, controller_type, data_type_for_u2, gamma_type, opinion_type, model_vehicle_type, debug_mode);
+Scenarios_config.set_Lead_Senarios(lead_senario); % For different scenarios
+% Observer related
+Scenarios_config.set_predict_controller_type(predict_controller_type);
+Scenarios_config.set_Use_predict_observer(use_predict_observer);
+Scenarios_config.set_Local_observer_type(Local_observer_type);
+% Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
+Scenarios_config.set_Trip_Dichiret(Dichiret_type); % "Single", "Dual"
+Scenarios_config.set_monitor_sudden_change(monitor_sudden_change); % if the sudden change is monitored
 
-Weight_Trust_module = Weight_Trust_module(graph, 0.5, 1);
+%% Define driving scenarios lanes
+lane_width = Scenarios_config.getLaneWidth(); % width of each single lane
+num_lanes = 3; % number of the lanes
+max_length = 750; % maximum length of the lanes
+straightLanes = StraightLane(num_lanes, lane_width, max_length);
 
-
-%% define driving lanes
-lane_width = Scenarios_config.getLaneWidth();
-% Create a straight lane with specified width and length
-% Params
-% num_lanes; % number of the lanes
-% lane_width; % width of each single lane
-% max_length; % maximum length of the lanes
-
-straightLanes = StraightLane(3, lane_width, 750);
-
-
-
-%% define driving scenario
-% car1 is in the same lane with car1 vehicle , lane lowest
-
-initial_lane_id = 1;
-direction_flag = 0; % 1 stands for changing to the left adjacent lane, 0 stands for keeping the current lane, -1 stands for changing
-
-param_sys = ParamVeh();
-
-%% Set Attack senario
+%% Set Attack scenario
 attack_module = Attack_module(Scenarios_config.dt);
-% Define a time-based attack scenario
-% Attack with 'bias' type between 5 and 10 seconds with intensity 0.5
-scenario_Attack_params = struct('target_vehicle_id',2, ...
-                        'start_time', 5, ...      % Start at 5 seconds
-                         'end_time', 10, ...       % End at 10 seconds
-                         'attack_type', 'bias', ... % Bias attack
-                         'fault_intensity', 0.5, ... % Add 0.5 to data
-                         'data_type', 'local', ...     % Local attack
-                         'attack_row' , 'velocity');   % 'velocity' , 'X' , 'Y' , 'all' data
+t_star = 5;
+t_end = 10;
+attacker_vehicle_id = 2;
+victim_id = -1;
+case_nb_attack = 1;
+data_type_attack = "local"; % "local", "global"
+attack_type = "none"; % "DoS", "faulty", "scaling", "Collusion", "Bogus"
 
-attack_module.setScenario('time_based', scenario_Attack_params);
+attack_module = Atk_Scenarios(attack_module, attack_type, data_type_attack, case_nb_attack, t_star, t_end, attacker_vehicle_id, victim_id);
 
-%% END Attack senario
-
+%% Communication Module
 center_communication = CenterCommunication(attack_module);
 
+%% Define Vehicles
 
 % %% --- CAR1 :  define a controller for a surrounding vehicle, which changes the lane
 % car1_controller_flag = 1; 
@@ -108,8 +109,8 @@ car1_acc_flag = 0;
 car1_initial_lane_id = 1; % the initial lane id of car1 vehicle
 car1_direction_flag = 1; % the direction of the lane chane process of car1 vehicle
 car1_desired_speed = 27.5;
-car1_veh_initial_state = [0; 0.5 * lane_width; 0; car1_desired_speed];
-car1_veh_initial_input = [0; 0];
+% car1_veh_initial_state = [0; 0.5 * lane_width; 0; car1_desired_speed];
+% car1_veh_initial_input = [0; 0];
 car1_lim_slip_angle = 15 * pi / 180;
 car1_lim_acc = 0.3 * 9.81;
 car1_lim_slip_rate = 15 * pi / 180;
@@ -119,8 +120,11 @@ controller_goal_1 = EgoControllerGoal(car1_initial_lane_id, car1_direction_flag,
 
 
 
-car1 = Vehicle(1, "CBF_CLF_QP", param_sys, [80; 0.5 * lane_width; 0; 24], car1_initial_lane_id,  straightLanes, car1_direction_flag, 0, Scenarios_config, Weight_Trust_module);
+car1 = Vehicle(1, "CLF_QP", param_sys, [80; 0.5 * lane_width; 0; 24], car1_initial_lane_id,  straightLanes, car1_direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
+% Car2, Car3, Car4: Look-ahead controllers in the middle lane
+initial_lane_id = 1;
+direction_flag = 0; % No lane change
 
 % car2 , car3 is in the middle lane, lane middle 
 car2 = Vehicle(2, "look_ahead", param_sys, [60; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
@@ -135,29 +139,36 @@ car4 = Vehicle(4, "look_ahead", param_sys, [20; 0.5 * lane_width; 0; 26], initia
 
 platton_vehicles = [car1; car2; car3; car4];
 
-car1.assign_neighbor_vehicle(platton_vehicles, controller_goal_1, center_communication , graph);
-car2.assign_neighbor_vehicle(platton_vehicles, [], center_communication,  graph);
-car3.assign_neighbor_vehicle(platton_vehicles, [], center_communication, graph );
-car4.assign_neighbor_vehicle(platton_vehicles, [], center_communication, graph);
+car1.assign_neighbor_vehicle(platton_vehicles, controller_goal_1,"CLF_QP", center_communication , graph);
+car2.assign_neighbor_vehicle(platton_vehicles, [],"look_ahead", center_communication,  graph);
+car3.assign_neighbor_vehicle(platton_vehicles, [],"look_ahead", center_communication, graph );
+car4.assign_neighbor_vehicle(platton_vehicles, [],"look_ahead", center_communication, graph);
+
+
 % car5.assign_neighbor_vehicle(platton_vehicles);
 
 
 
-%% define a simulator and start simulation
-simulator0 = Simulator(straightLanes, [] , platton_vehicles, Scenarios_config.dt);
+%% Define a simulator and start simulation
+simulator0 = Simulator(straightLanes, [], platton_vehicles, Scenarios_config.dt, IsShowAnimation);
 [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time);
 
-%% Plot the movement of all the vehicles in platoon 
+%% Plot the movement of the vehicles
 num_vehicles = length(platton_vehicles);
 simulator0.plot_movement_log(platton_vehicles, Scenarios_config, num_vehicles);
+simulator0.plot_relative_movement_log(platton_vehicles, Scenarios_config, num_vehicles);
 
-%%
-car1.observer.plot_global_state_log()
-car1.plot_ground_truth_vs_estimated()
+%% Plot the global state log
+car1.observer.plot_global_state_log();
+car2.observer.plot_global_state_log();
+car3.observer.plot_global_state_log();
+car4.observer.plot_global_state_log();
 
-car2.observer.plot_global_state_log()
-car3.observer.plot_global_state_log()
-car4.observer.plot_global_state_log()
+%% Plot the local estimation error
+car1.observer.plot_error_local_estimated();
+car2.observer.plot_error_local_estimated();
+car3.observer.plot_error_local_estimated();
+car4.observer.plot_error_local_estimated();
 
 
 % car1.plot_trust_log()

@@ -17,7 +17,7 @@ classdef CLF_CBF_QP < handle
             self.goal = controller.goal;
             self.straightlane = controller.straightlane;
         end
-        function [acc_flag, input, e] = get_optimal_input(self, host_car_id,state, last_input, lane_id, input_log, current_lane_id, direction_flag, acc_flag)
+        function [acc_flag, input, e] = get_optimal_input(self, host_car_id,state, last_input, lane_id, input_log, current_lane_id, direction_flag,type_state, acc_flag)
 
             %% load parameter and control objective
             safety_factor = self.goal.safety_factor;
