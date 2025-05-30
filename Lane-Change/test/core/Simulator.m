@@ -166,18 +166,31 @@ classdef Simulator
             hold off
 
 
-            % Plot yaw history
+            % Plot accel history
             subplot(6, 1, 4)
             hold on
             for i = 1:num_vehicles
-                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(3, :),"LineWidth",1)
+                plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(5, :),"LineWidth",1)
             end
-            title('Yaw history')
-            ylabel('rad')
+            title('Acc history')
+            ylabel('m/s^2')
             % xlabel('s')
-            ylim([-0.3, 0.3])
+            % ylim([-0.3, 0.3])
             legend(vehicle_labels)
             hold off
+
+            % % Plot yaw history
+            % subplot(6, 1, 4)
+            % hold on
+            % for i = 1:num_vehicles
+            %     plot(0:scenarios_config.dt:scenarios_config.simulation_time, vehicles(i).state_log(3, :),"LineWidth",1)
+            % end
+            % title('Yaw history')
+            % ylabel('rad')
+            % % xlabel('s')
+            % ylim([-0.3, 0.3])
+            % legend(vehicle_labels)
+            % hold off
 
 
 

@@ -159,7 +159,7 @@ classdef Vehicle < handle
 
         function normal_car_update(self,instant_index , weights)
 
-            if self.typeController ~= "None" 
+            if self.typeController ~= "None"
                 % disp('Controller is not empty');
                 self.get_lane_id(self.state);
 
@@ -167,7 +167,7 @@ classdef Vehicle < handle
                 [~, u_1, e_1] = self.controller.get_optimal_input(self.vehicle_number, self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"true", 0);
                 [~, u_2, e_2] = self.controller2.get_optimal_input(self.vehicle_number ,self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag, self.scenarios_config.data_type_for_u2, 0);
 
-                
+
                 if (self.scenarios_config.gamma_type == "max")
                     gamma = max(self.trust_log(1, instant_index, :));
                 elseif (self.scenarios_config.gamma_type == "min")
@@ -195,7 +195,7 @@ classdef Vehicle < handle
 
                 %% Update new state
                 if (self.scenarios_config.model_vehicle_type == "delay_v")
-                    self.Bicycle_delay_v(self.state, U_final); 
+                    self.Bicycle_delay_v(self.state, U_final);
                 elseif (self.scenarios_config.model_vehicle_type == "delay_a")
                     self.Bicycle_delay_a(self.state, U_final);
                 elseif (self.scenarios_config.model_vehicle_type == "normal")
@@ -213,7 +213,7 @@ classdef Vehicle < handle
             else
                 %% NO Controller = vehicle 1 (lead)
 
-                
+
                 % disp('Controller is empty');
                 self.get_lane_id(self.state);
                 % speed = self.state(4);
@@ -277,7 +277,7 @@ classdef Vehicle < handle
             ydot = v * sin(phi); % velocity in y direction
             phidot = v * tan(delta_f) / l_r; % yaw rate
             vdot = a; % acceleration
-            
+
             dX = [xdot; ydot; phidot;vdot ; 0];
             self.state = self.state + self.dt*dX ; % update the state of the vehicle
             self.input = input; % update the input
@@ -314,12 +314,12 @@ classdef Vehicle < handle
 
             [x, y, phi, v] = self.unpack_state_v2(state(1:4));
 
-            theta = 0;    
+            theta = 0;
             A = [   0 0 -v*sin(theta) cos(theta) 0;
-                    0 0 v*cos(theta) sin(theta) 0;
-                    0 0 0 0 0;
-                    0 0 0 0 1;
-                    0 0 0 0 -1/tau];
+                0 0 v*cos(theta) sin(theta) 0;
+                0 0 0 0 0;
+                0 0 0 0 1;
+                0 0 0 0 -1/tau];
 
 
             B = [0 0;
@@ -328,21 +328,21 @@ classdef Vehicle < handle
                 0 0;
                 1/tau 0];
 
-            
+
             a = state(5);
             u_a = input(1); % Jerk
             delta_f = input(2); % Front steering angle
-        
+
             % xdot = v * cos(phi);
             % ydot = v * sin(phi);
             % phidot = v * tan(delta_f) / l;
             % vdot = a;
             % adot = (1/tau) * u_a - (1/tau) * a;
-        
+
             % dX = [xdot; ydot; phidot; vdot; adot];
-        
+
             dX = A*self.state + B*input;
-        
+
 
 
             self.state = self.state + self.dt * dX;
@@ -359,19 +359,19 @@ classdef Vehicle < handle
             [x, y, phi, v] = self.unpack_state_v2(state(1:4));
 
             Ai_conti = [0 0 0 1 0;
-                        0 0 0 0 0;
-                        0 0 0 0 0;
-                        0 0 0 0 1;
-                        0 0 0 0 -1/tau];
+                0 0 0 0 0;
+                0 0 0 0 0;
+                0 0 0 0 1;
+                0 0 0 0 -1/tau];
             Bi_conti = [0 0;
-                        0 0;
-                        0 0;
-                        0 0;
-                        1/tau 0];
+                0 0;
+                0 0;
+                0 0;
+                1/tau 0];
             % Discretization of the state-space model
             A = (eye(length(Ai_conti))+self.dt*Ai_conti);
             B = self.dt*Bi_conti;
-                            
+
             self.state = A*self.state + B * self.input;
             self.input = input;
 
@@ -599,13 +599,13 @@ classdef Vehicle < handle
             num_states = size(self.observer.est_global_state_log, 1); % Number of states
 
 
-             for state_idx = 1:num_states
+            for state_idx = 1:num_states
                 subplot(num_states, 1, state_idx);
                 for v = 1:nb_vehicles
                     plot( self.observer.est_global_state_log(state_idx, 1:end, v) - vehicles(v).state_log(state_idx, 1:end-1), 'LineWidth', 1 , 'DisplayName', ['Vehicle ', num2str(v)]);
-                    hold on;
-
-                    % plot(squeeze(self.est_global_state_log(state_idx, 1:end-1, v)), 'DisplayName', ['Vehicle ', num2str(v)]);
+                    % plot(vehicles(v).state_log(state_idx, 1:end-1), 'DisplayName', ['Vehicle ', num2str(v)]);
+                    % hold on;
+                    % plot(self.observer.est_global_state_log(state_idx, 1:end, v), 'DisplayName', ['Vehicle ', num2str(v)]);
                 end
                 title(state_labels{state_idx});
                 % xlabel('Time (s)');

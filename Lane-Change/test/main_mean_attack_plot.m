@@ -1,3 +1,9 @@
+%%%%%%%%%
+%%%%%%%%%
+%%%%%%%%%
+%%%%%%%%%
+%% Here plot mean for all scenarios with the cyberattack ( Bogus type ). 
+
 clc
 close all
 clear
@@ -25,10 +31,11 @@ Road_type = "Highway"; % "Highway" , "Urban"
 % lead_senario = "Deceleration"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
 
 % Observer related
-use_predict_observer = true;
+use_predict_observer = false; % Will override distributed observer with a prediction model
 predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other"
 Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
 set_Is_noise_mesurement = false; % if the measurement is noisy
+use_local_data_from_other = true; % if the local data from other vehicles is used (true = ourpaper , false = another paper)
 
 % controller related
 gamma_type = "min"; % type gamma for switching control = " min" , " max " , " mean "
@@ -68,6 +75,8 @@ Scenarios_config.set_predict_controller_type(predict_controller_type);
 Scenarios_config.set_Use_predict_observer(use_predict_observer);
 Scenarios_config.set_Local_observer_type(Local_observer_type);
 Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
+
+Scenarios_config.set_Use_local_data_from_other( use_local_data_from_other)
 
 Scenarios_config.set_Trip_Dichiret(Dichiret_type); % "Single" , "Dual"
 Scenarios_config.set_monitor_sudden_change(monitor_sudden_change); % if the sudden change is monitored

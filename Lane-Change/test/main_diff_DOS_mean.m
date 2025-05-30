@@ -1,3 +1,9 @@
+%%%%%%%%%
+%%%%%%%%%
+%%%%%%%%%
+%%%%%%%%%
+%% Here plot mean for all scenarios with the cyberattack ( DOS type ). 
+
 clc
 close all
 clear

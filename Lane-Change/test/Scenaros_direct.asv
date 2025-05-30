@@ -57,7 +57,7 @@ IsShowAnimation = false;
 debug_mode = false;
 if (debug_mode )
     % dbstop if error;
-    dbstop in Observer at 134 if instant_index>=1000;
+    dbstop in Observer at 13 if instant_index>=1000;
     % dbstop in TriPTrustModel at 412 if instant_idx>=200;
     % dbstop in TriPTrustModel at 411 if host_id <= 1;
 

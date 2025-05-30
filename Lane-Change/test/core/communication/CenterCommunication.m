@@ -15,8 +15,8 @@ classdef CenterCommunication < handle
         trust_score_storage; % A container to store the local state of all vehicles
         
         attack_module; % A container to store the local state of all vehicles
-        
-        
+
+
         
     end
     

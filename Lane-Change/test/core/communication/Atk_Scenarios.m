@@ -23,6 +23,10 @@ switch attack_type
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',5,'frequency',0.5), data_type, {'X'});
             case 7
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 10, data_type, {'X'});
+            case 8
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 2.5, data_type, {'velocity'});
+            case 9
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 0.2, data_type, {'acceleration'});
             otherwise
                 disp("Invalid Bogus case number"); return;
         end

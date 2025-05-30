@@ -1,3 +1,9 @@
+%%%%%%%%%
+%%%%%%%%%
+%%%%%%%%%
+%%%%%%%%%
+%% Here plot mean for 3 scenarios of lead accelearion , without the cyberattack. 
+
 clc
 close all
 clear
@@ -21,26 +27,26 @@ param_sys = ParamVeh();
 dt = 0.01; % time step
 simulation_time = 22; % simulation time
 Road_type = "Highway"; % "Highway" , "Urban"
-% is_lead_input_change = false; % if the lead input is changing (for different senarios)
-% lead_senario = "Deceleration"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
 
 % Observer related
-use_predict_observer = true;
+use_predict_observer = false; % Will override distributed observer with a prediction model
 predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other"
 Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
 set_Is_noise_mesurement = false; % if the measurement is noisy
+use_local_data_from_other = true; % if the local data from other vehicles is used (true = ourpaper , false = another paper)
+
 
 % controller related
-gamma_type = "min"; % type gamma for switching control = " min" , " max " , " mean "
-controller_type = "mix"; % type of controller for the ego vehicle: "local" , "coop" , "mix"
-data_type_for_u2 = "est"; % "est" , "true"
+gamma_type = "self_belief"; % type gamma for switching control = " min" , " max " , " mean " , "self_belief"
+controller_type = "mix"; % type of controller for the ego vehicle: "local" , "coop" , "mix" 
+data_type_for_u2 = "true"; % "est" , "true" using the estimated or true data for u2 (CACC)
 
 % trust related
 opinion_type = "both"; % opinion type " distance" , " trust" , " both"
-Dichiret_type = "Dual" ; % "Single" , "Dual"
+Dichiret_type = "Single" ; % "Single" , "Dual"
 monitor_sudden_change = false; % if the sudden change is monitored
 % model related
-model_vehicle_type = "normal"; % "delay_v" , "delay_a" , "normal"
+model_vehicle_type = "delay_a"; % "delay_v" , "delay_a" , "normal","paper"
 
 %% Graph related
 graph = [0 1 1 1;  % Adjacency matrix
@@ -50,7 +56,7 @@ graph = [0 1 1 1;  % Adjacency matrix
 
 trust_threshold = 0.5; % for cut the communication in the graph
 kappa = 1; % parameter in the design weigts matrix
-weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
+Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 
 
 
@@ -68,6 +74,8 @@ Scenarios_config.set_predict_controller_type(predict_controller_type);
 Scenarios_config.set_Use_predict_observer(use_predict_observer);
 Scenarios_config.set_Local_observer_type(Local_observer_type);
 Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
+
+Scenarios_config.set_Use_local_data_from_other( use_local_data_from_other)
 
 Scenarios_config.set_Trip_Dichiret(Dichiret_type); % "Single" , "Dual"
 Scenarios_config.set_monitor_sudden_change(monitor_sudden_change); % if the sudden change is monitored
@@ -127,15 +135,16 @@ for l = 1:length(lead_senarios)
     lead_senario = lead_senarios(l);
     Scenarios_config.set_Lead_Senarios(lead_senario); % For different senarios
 
-    car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 23], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weight_Trust_module);
-
+    % [80; 0.5 * lane_width; 0; 23 ; 0] = state initialization
+    car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 23 ; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+    
     % car2 , car3 is in the middle lane, lane middle
-    car2 = Vehicle(2, "IDM", param_sys, [60; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weight_Trust_module);
-
-    car3 = Vehicle(3, "IDM", param_sys, [40; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weight_Trust_module);
-
+    car2 = Vehicle(2, "IDM", param_sys, [60; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+    
+    car3 = Vehicle(3, "IDM", param_sys, [40; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+    
     % car4 is in the lane highest
-    car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weight_Trust_module);
+    car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
 
 
 
