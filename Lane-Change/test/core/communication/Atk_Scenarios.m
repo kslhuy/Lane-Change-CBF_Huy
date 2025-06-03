@@ -27,6 +27,8 @@ switch attack_type
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 2.5, data_type, {'velocity'});
             case 9
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 0.2, data_type, {'acceleration'});
+            case 10
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 2, data_type, {'velocity'});
             otherwise
                 disp("Invalid Bogus case number"); return;
         end

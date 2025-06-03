@@ -219,6 +219,7 @@ classdef Vehicle < handle
                 % speed = self.state(4);
 
                 acceleration = self.scenarios_config.get_LeadInput(instant_index); % acceleration is the input of the lead vehicle
+                self.state(5) = acceleration; % State 5 is also acceleration 
 
                 self.state(4) = self.state(4) + acceleration * self.dt; % new speed
                 % speed limit according to different scenarios
@@ -230,7 +231,7 @@ classdef Vehicle < handle
                     self.state(4) = llim;
                 end
                 dx = self.state(4) * self.dt + 0.5 * acceleration * self.dt^2; %dx=v*dt+0.5*a*dt^2
-                self.state = [self.state(1) + dx; self.state(2); self.state(3); self.state(4) ; 0]; % new state of normal cars
+                self.state = [self.state(1) + dx; self.state(2); self.state(3); self.state(4) ; self.state(5)]; % new state of normal cars
                 %  no need update input , beacuse the input is constant
                 self.input = [acceleration;0]; % update the input
 
@@ -604,7 +605,7 @@ classdef Vehicle < handle
                 for v = 1:nb_vehicles
                     plot( self.observer.est_global_state_log(state_idx, 1:end, v) - vehicles(v).state_log(state_idx, 1:end-1), 'LineWidth', 1 , 'DisplayName', ['Vehicle ', num2str(v)]);
                     % plot(vehicles(v).state_log(state_idx, 1:end-1), 'DisplayName', ['Vehicle ', num2str(v)]);
-                    % hold on;
+                    hold on;
                     % plot(self.observer.est_global_state_log(state_idx, 1:end, v), 'DisplayName', ['Vehicle ', num2str(v)]);
                 end
                 title(state_labels{state_idx});

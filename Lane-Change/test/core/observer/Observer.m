@@ -87,16 +87,17 @@ classdef Observer < handle
             host_id = self.vehicle.vehicle_number; % The vehicle that is estimating the state of other vehicles
             confidence_scores = zeros(num_vehicles, 1); % Store per-vehicle confidence
 
+
+
+
             % j is the vehicle we want to estimate
             for j = 1:num_vehicles
-
-
                 %% TODO : need change the weight out side (and make it Like in the paper Shenya)
                 %% if j is not host vehicle
-                % OR if j is not the direct neighbor of host vehicle
-                % And if TrIP of host in j have flag_local_est_check
+                % And local data of j is flag_local_est_check (not good)
+                % OR the final score of j is less than 0.5
                 % So we need to set the weight of local state to 0
-                if( (host_id ~= j || abs(host_id - j) == 1)  && self.vehicle.trip_models{j}.flag_local_est_check)
+                if( (host_id ~= j )  && (self.vehicle.trip_models{j}.flag_local_est_check  ) )
                     weights_new  = weights;
                     weights_new(1) = 0;
                 else
@@ -105,7 +106,7 @@ classdef Observer < handle
 
                 %%-----  Get local of j vehicle
                 x_bar_j = self.vehicle.center_communication.get_local_state(j,host_id);
-                if ( isnan(x_bar_j))
+                if ( isnan(x_bar_j)) % Case DOS attack or no local state is received
                     x_bar_j = zeros(size(self.est_local_state_current)); % If we don't have local state of j vehicle
                     weights_new(1) = 0;
                 end
@@ -117,9 +118,9 @@ classdef Observer < handle
                 for k = 1:num_vehicles
                     % Go in car number "k" , Get car "j" in global estimat of "k"
                     x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k,self.vehicle.vehicle_number);
-                    if ( isnan(x_hat_i_j_full))
+                    if ( isnan(x_hat_i_j_full))% Case DOS attack or no global state is received
                         x_hat_i_j_full = zeros(size(self.est_global_state_current)); % If we don't have local state of j vehicle
-                        weights_new(k+1) = 0;
+                        weights_new(k+1) = 0; 
                     end
                     x_hat_i_j(:,k) =  x_hat_i_j_full(:,j);
                 end
@@ -128,8 +129,16 @@ classdef Observer < handle
                 %% CONTROLLER
                 u_j =  Get_controller(self,j); % Get the control input of vehicle j
 
-
-
+                %% Just let the attacker update with its local state 
+                if (self.vehicle.scenarios_config.attacker_update_locally && ~isempty(self.vehicle.center_communication.attack_module.scenario))
+                    if host_id == self.vehicle.center_communication.attack_module.scenario(1).attacker_id
+                        % If the host vehicle is the attacker, set all weights to 0
+                        weights_new = zeros(size(weights));
+                        weights_new(1) = weights(1); % Keep the local state weight
+                    else
+                        weights_new = weights; % Use the provided weights
+                    end
+                end
 
                 use_local_data_from_other = self.vehicle.scenarios_config.use_local_data_from_other;
                 %% Estimate the state of vehicle j using the distributed observer

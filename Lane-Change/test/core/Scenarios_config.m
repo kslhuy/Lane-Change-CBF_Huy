@@ -20,6 +20,8 @@ classdef Scenarios_config < handle
         Dichiret_type = "Single"; % "Single" , "Dual"
         Monitor_sudden_change = false; % if the sudden change is monitored
         use_local_data_from_other = false; % if the local data from other vehicles is used
+
+        attacker_update_locally = true; % if the attacker is not updated from the others , only use local data
     end
     methods
         function self = Scenarios_config(dt , simulation_time , scenario_where , controller_type ,data_type_for_u2, gamma_type , opinion_type, model_vehicle_type, debug_mode )
@@ -68,6 +70,10 @@ classdef Scenarios_config < handle
 
         function set_Lead_Senarios(self , lead_senario )
             self.lead_senario = lead_senario;
+        end
+
+        function Is_attacker_not_update(self , attacker_update_locally)
+            self.attacker_update_locally = attacker_update_locally;
         end
 
         function lead_input = get_LeadInput(self , instant_index)

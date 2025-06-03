@@ -34,6 +34,7 @@ predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other
 Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
 set_Is_noise_mesurement = false; % if the measurement is noisy
 use_local_data_from_other = true; % if the local data from other vehicles is used (true = ourpaper , false = another paper)
+attacker_update_locally = false; % if the attacker does update observer by only using the local data   
 
 
 % controller related

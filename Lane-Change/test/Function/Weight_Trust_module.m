@@ -77,7 +77,8 @@ classdef Weight_Trust_module < handle
                 weights_Dis(1, l+1) = weight;
             end
 
-            % Set weight to virtual node: W(1, 1)                
+            % Set weight to virtual node: W(1, 1)   
+        
             if(type == "local")
                 %% Using weight matrix priotizing local estimation
                 weights_Dis(1, 1) = 1 - (length(N_i_t)+1) * weight;
@@ -87,7 +88,9 @@ classdef Weight_Trust_module < handle
 
                 weights_Dis(1, 1) = weight;
             end
-
+            %% NOTE : Either using local or distributed weight matrix
+            %% One problem is the weight matrix W(1, 1) still need to be ajusted based on the trust 
+            %% See more details in Observer class      
         end
 
 

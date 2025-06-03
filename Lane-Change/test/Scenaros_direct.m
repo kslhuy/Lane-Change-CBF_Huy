@@ -19,7 +19,7 @@ dt = 0.01; % time step
 simulation_time = 23; % simulation time
 Road_type = "Highway"; % "Highway" , "Urban"
 % is_lead_input_change = false; % if the lead input is changing (for different senarios)
-lead_senario = "constant"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
+lead_senario = "Deceleration"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
 
 % Observer related
 use_predict_observer = false; % Will override distributed observer with a prediction model
@@ -27,6 +27,7 @@ predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other
 Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
 set_Is_noise_mesurement = false; % if the measurement is noisy
 use_local_data_from_other = true; % if the local data from other vehicles is used (true = ourpaper , false = another paper)
+attacker_update_locally = false; % if the attacker does update observer by only using the local data   
 
 % controller related
 gamma_type = "self_belief"; % type gamma for switching control = " min" , " max " , " mean " , "self_belief"
@@ -34,6 +35,7 @@ controller_type = "mix"; % type of controller for the ego vehicle: "local" , "co
 data_type_for_u2 = "true"; % "est" , "true" using the estimated or true data for u2 (CACC)
 
 % trust related
+
 opinion_type = "both"; % opinion type " distance" , " trust" , " both"
 Dichiret_type = "Single" ; % "Single" , "Dual"
 monitor_sudden_change = false; % if the sudden change is monitored
@@ -57,7 +59,7 @@ IsShowAnimation = false;
 debug_mode = false;
 if (debug_mode )
     % dbstop if error;
-    dbstop in Observer at 134 if instant_index>=1000;
+    dbstop in Observer at 134 if instant_index>=999;
     % dbstop in TriPTrustModel at 412 if instant_idx>=200;
     % dbstop in TriPTrustModel at 411 if host_id <= 1;
 
@@ -72,6 +74,7 @@ Scenarios_config.set_Local_observer_type(Local_observer_type);
 Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
 
 Scenarios_config.set_Use_local_data_from_other( use_local_data_from_other)
+Scenarios_config.Is_attacker_not_update(attacker_update_locally);
 
 Scenarios_config.set_Trip_Dichiret(Dichiret_type); % "Single" , "Dual"
 Scenarios_config.set_monitor_sudden_change(monitor_sudden_change); % if the sudden change is monitored
@@ -96,9 +99,9 @@ t_star = 10;
 t_end = 15;
 attacker_vehicle_id = 1;
 victim_id = -1;
-case_nb_attack = 9;
-data_type_attack = "local"; % "local" , "global",
-attack_type = "Bogus"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus","None"
+case_nb_attack = 2;
+data_type_attack = "local"; % "local" , "global", "none"
+attack_type = "None"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus","None"
 % scenario_Attack_params = struct('attacker_id', attacker_id, ...
 %                         'victim_id', victim_id, ...
 %                         'start_time', t_star, ...

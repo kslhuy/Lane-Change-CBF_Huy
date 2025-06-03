@@ -166,8 +166,19 @@ classdef TriPTrustModel < handle
 
         end
 
-        function d_score = evaluate_distance(~, d_y, d_measured)
-            d_score = max(1 - abs((d_y - d_measured)/d_measured), 0);
+        function d_score = evaluate_distance(~, d_y, d_measured , is_nearby)
+            if is_nearby
+                % For nearby vehicles, use a stricter distance evaluation
+                d_score = max(1 - abs((d_y - d_measured)/d_measured), 0);
+            else
+                % For distant vehicles, allow more tolerance
+                % TODO : need to change the distance measure for the far away vehicle
+                % d_y is the reported distance , d_measured is the measured distance
+                % so if the reported distance is close to the measured distance, then score is high
+                % d_score = 0;
+                d_score = max(1 - abs((d_y - d_measured)/d_measured), 0);
+
+            end
         end
 
         function a_score = evaluate_acceleration(~, a_y, a_host, d, ts)
@@ -271,7 +282,10 @@ classdef TriPTrustModel < handle
             if (is_nearby)
                 trust_sample = beacon_score * (v_score^self.wv_nearby) * (d_score^self.wd_nearby) * (a_score^self.wa_nearby) ;
             else
-                trust_sample = beacon_score * (v_score^self.wv)* (a_score^self.wa) ;
+                %% TEST CODE : assume known all the scores
+                trust_sample = beacon_score * (v_score^self.wv_nearby) * (d_score^self.wd_nearby) * (a_score^self.wa_nearby) ;
+
+                % trust_sample = beacon_score * (v_score^self.wv)* (a_score^self.wa) ;
             end            
         end
 
@@ -342,7 +356,8 @@ classdef TriPTrustModel < handle
             target_id = target_vehicle.vehicle_number;
             % Reported data for trust evaluation
 
-            half_lenght_vehicle = target_vehicle.param.l_r; % distance between vehicle's c.g. and rear axle
+            % half_lenght_vehicle = target_vehicle.param.l_r; % distance between vehicle's c.g. and rear axle
+            vehicle_length = target_vehicle.param.l_r + target_vehicle.param.l_f ; % total length of a vehicle
 
             % leader_velocity = leader_vehicle.observer.est_local_state_current(4);
             leader_state = host_vehicle.center_communication.get_local_state(leader_vehicle.vehicle_number , host_id);
@@ -373,8 +388,34 @@ classdef TriPTrustModel < handle
 
             % Why target_vehicle.state(1) : because is the host_distance_measurement , its in the point view of Host
             % So need to be acurate , not disturb by attack like "target_pos_X" (below )
-            host_distance_measurement = (host_id - target_id)*(target_vehicle.state(1) - host_pos_X) - half_lenght_vehicle;
+            
+            % if is_nearby
+            %     delta_X = target_vehicle.state(1) - host_pos_X;  % center-to-center distance
 
+            %     if delta_X >= 0
+            %         % Host is behind target → rear-to-bumper (e.g., vehicle 1 to 4)
+            %         host_distance_measurement = delta_X + vehicle_length;
+            %     else
+            %         % Host is in front of target → bumper-to-rear (e.g., vehicle 4 to 1)
+            %         host_distance_measurement = abs(delta_X) - vehicle_length;
+            %     end
+            %     % host_distance_measurement = (host_id - target_id)*(target_vehicle.state(1) - host_pos_X) - vehicle_length;
+            % else
+            %     % For distant vehicles, use the host distance measurement
+            %     host_distance_measurement = target_vehicle.state(1) - host_pos_X - vehicle_length;
+            % end
+
+
+            %% TEST CASE : If we know the real distance between host and target
+            delta_X = target_vehicle.state(1) - host_pos_X;  % center-to-center distance
+
+            if delta_X >= 0
+                % Host is behind target → rear-to-bumper (e.g., vehicle 1 to 4)
+                host_distance_measurement = delta_X + vehicle_length;
+            else
+                % Host is in front of target → bumper-to-rear (e.g., vehicle 4 to 1)
+                host_distance_measurement = abs(delta_X) - vehicle_length;
+            end
 
 
             %% TODO : need to get real distance between host and target
@@ -394,24 +435,35 @@ classdef TriPTrustModel < handle
                 target_pos_X = target_state(1);
                 target_pos_Y = target_state(2);
 
-                target_reported_distance = (host_id - target_id)*(target_pos_X - host_pos_X) - half_lenght_vehicle;
+                % if is_nearby
+                %     target_reported_distance = (host_id - target_id)*(target_pos_X - host_pos_X) - vehicle_length;
+                % else
+                %     % For distant vehicles, use the host distance measurement
+                %     target_reported_distance = target_pos_X - host_pos_X - vehicle_length;
+                % end
+
+                % vehicle_length = 2 * half_length;  % total length of a vehicle
+                delta_X = target_pos_X - host_pos_X;  % center-to-center distance
+
+                if delta_X >= 0
+                    % Host is behind target → rear-to-bumper (e.g., vehicle 1 to 4)
+                    target_reported_distance = delta_X + vehicle_length;
+                else
+                    % Host is in front of target → bumper-to-rear (e.g., vehicle 4 to 1)
+                    target_reported_distance = abs(delta_X) - vehicle_length;
+                end
+
                 target_reported_velocity = target_state(4);
                 % target_reported_acceleration = target_input(1);
                 target_reported_acceleration = target_state(5);
-
-                % reported_distance = (host_id - target_id)*(target_pos_X - host_pos_X) - half_lenght_vehicle;             % position host - pos neighbors
-                % reported_velocity = target_vehicle.observer.est_local_state_current(4);
-                % reported_acceleration = target_vehicle.input(1);
 
 
                 % Trust evaluation
 
                 v_score = self.evaluate_velocity( host_id , target_id , host_velocity , target_reported_velocity, leader_velocity, leader_acceleration, leader_beacon_interval,0.1);
-
-                d_score = 0;
-                if (is_nearby)
-                    d_score = self.evaluate_distance(target_reported_distance, host_distance_measurement);
-                end
+                % Evaluate distance
+                d_score = self.evaluate_distance(target_reported_distance, host_distance_measurement,is_nearby);
+                % Evaluate acceleration
                 a_score = self.evaluate_acceleration(target_reported_acceleration, host_acceleration, [host_distance_measurement, self.last_d], host_vehicle.dt);
                 self.last_d = host_distance_measurement;
 
@@ -485,7 +537,7 @@ classdef TriPTrustModel < handle
             end
 
             %% importance
-            if (local_trust_sample <0.5 )
+            if (local_trust_sample < 0.5 )
                 self.flag_local_est_check = true;
             end
 
@@ -721,19 +773,37 @@ classdef TriPTrustModel < handle
         function plot_trust_log(self,nb_host_car , nb_target_car)
             figure("Name", num2str(nb_host_car) +  " Trust for " + num2str(nb_target_car), "NumberTitle", "off");
 
-            hold on;
+            
 
-            plot(self.trust_sample_log, 'DisplayName', 'Trust Sample', 'LineWidth', 1);
-            hold on;
+            % hold on;
+            
+            subplot(3,1,1);   
+            
             plot(self.gamma_cross_log, 'DisplayName', 'Gamma Cross', 'LineWidth', 1);
-            plot(self.gamma_local_log, 'DisplayName', 'Gamma Local', 'LineWidth', 1);
+            hold on;
+            plot(self.gamma_local_log, 'DisplayName', 'Gamma Local','LineWidth', 1);
+            grid on;
+            legend show;
+            
+            %% Not use
             % plot(self.gamma_expected_log, 'DisplayName', 'Gamma expect', 'LineWidth', 1);
+            
+            
+            subplot(3,1,2);
             plot(self.a_score_log, 'DisplayName', 'A Score', 'LineWidth', 1);
+            hold on;
             plot(self.v_score_log, 'DisplayName', 'V Score', 'LineWidth', 1);
             plot(self.d_score_log, 'DisplayName', 'D Score', 'LineWidth', 1);
+            plot(self.trust_sample_log, 'DisplayName', 'Trust Sample', 'LineWidth', 1.2);
+            grid on;
+
+            legend show;
+
+            
+            subplot(3,1,3);
             plot(self.final_score_log, 'DisplayName', 'Final Score' , 'LineWidth', 1.5);
 
-            % plot(self.a_score_log, 'DisplayName', 'A Score');
+            
             % plot(self.beacon_score_log, 'DisplayName', 'Beacon Score');
 
             xlabel('Time Step');
