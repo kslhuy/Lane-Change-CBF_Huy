@@ -36,9 +36,13 @@ classdef ParamOptEgo
         %% CACC
 
         % Control GAin
-        k_s = 1.2;
-        k_v = 2.5;
-        k_a = 0.1;
+        % k_s = 2.0;
+        % k_v = 2.0;
+        % k_a = 1;
+
+        k_s = 2.0;
+        k_v = 2.0;
+        k_a = 2.0;
         K;
 
 

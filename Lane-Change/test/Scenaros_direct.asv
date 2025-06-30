@@ -23,7 +23,7 @@ lead_senario = "constant"; % "constant" , "Acceleration" , "Deceleration" , "Lan
 
 % Observer related
 use_predict_observer = false; % Will override distributed observer with a prediction model
-predict_controller_type = "predict_other"; % "self" , "true_other" , "predict_other"
+predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other"
 Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
 set_Is_noise_mesurement = false; % if the measurement is noisy
 use_local_data_from_other = true; % if the local data from other vehicles is used (true = ourpaper , false = another paper)
@@ -35,8 +35,6 @@ control_use_accel = true; % if using acceleration control
 
 gamma_type = "min"; % type gamma for switching control = " min" , " max " , " mean " , "self_belief"
 controller_type = "local"; % type of controller for the ego vehicle: "local" , "coop" , "mix" 
-CACC_bidirectional = false; % If true, the CACC controller will consider both leading and following vehicles in the control law
-
 data_type_for_u2 = "est"; % "est" , "true" using the estimated or true data for u2 (CACC)
 
 % trust related
@@ -66,14 +64,14 @@ Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 
 % Log and Debug related
 IsShowAnimation = false;
-debug_mode = true;
+debug_mode = false;
 if (debug_mode )
-    dbstop if error;
+    % dbstop if error;
     % dbstop in Observer at 134 if instant_index>=999;
     % dbstop in TriPTrustModel at 425 if instant_idx>=700;
     % dbstop in TriPTrustModel at 489 if instant_idx>=1101;
 
-    % dbstop in TriPTrustModel at 571 if instant_idx>=1100;
+    dbstop in TriPTrustModel at 571 if instant_idx>=1100;
 
 end
 
@@ -96,7 +94,6 @@ Scenarios_config.set_using_weight_trust(using_weight_trust); % if using weight t
 Scenarios_config.set_Test_better_trust(is_know_data_not_nearby);
 
 Scenarios_config.set_usecontrol_accel(control_use_accel);
-Scenarios_config.set_CACC_bidirectional(false); 
 
 % Define driving Senarios lanes
 % Create a straight lane with specified width and length
@@ -116,9 +113,9 @@ attack_module = Attack_module(Scenarios_config.dt);
 
 t_star = 10;
 t_end = 15;
-attacker_vehicle_id = 2;
+attacker_vehicle_id = 1;
 victim_id = -1; % -1 mean every vehicle
-case_nb_attack = 2;
+case_nb_attack = 1;
 data_type_attack = "local"; % "local" , "global", "none"
 attack_type = "ACC"; % "DoS"  , "Collusion" ,"Bogus", "None" , "POS" , "VEL" , "ACC"
 
@@ -150,7 +147,7 @@ car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26; 0], initial_la
 
 platton_vehicles = [car1; car2; car3; car4];
 
-car1.assign_neighbor_vehicle(platton_vehicles, [],"None", center_communication, graph);
+car1.assign_neighbor_vehicle(platton_vehicles, [],"None", center_communication , graph);
 car2.assign_neighbor_vehicle(platton_vehicles, [],"CACC", center_communication,  graph);
 car3.assign_neighbor_vehicle(platton_vehicles, [],"CACC", center_communication, graph );
 car4.assign_neighbor_vehicle(platton_vehicles, [],"CACC", center_communication, graph);
@@ -175,10 +172,10 @@ car2.observer.plot_global_state_log()
 car3.observer.plot_global_state_log()
 car4.observer.plot_global_state_log()
 
-% car1.observer.plot_error_local_estimated()
-% car2.observer.plot_error_local_estimated()
-% car3.observer.plot_error_local_estimated()
-% car4.observer.plot_error_local_estimated()
+car1.observer.plot_error_local_estimated()
+car2.observer.plot_error_local_estimated()
+car3.observer.plot_error_local_estimated()
+car4.observer.plot_error_local_estimated()
 
 
 simulator0.plot_error_global_state_log(car1, car2);
@@ -229,15 +226,6 @@ car3.trip_models{4}.plot_trust_log(3,4)
 % car4.trip_models{1}.plot_trust_log(4,1)
 % car4.trip_models{2}.plot_trust_log(4,2)
 car4.trip_models{3}.plot_trust_log(4,3)
-
-%% Details Acc_score
-car3.trip_models{4}.plot_details_acc_score(3,4)
-car4.trip_models{3}.plot_details_acc_score(4,3)
-
-car3.trip_models{4}.plot_diff_acc_score(3,4)
-car4.trip_models{3}.plot_diff_acc_score(4,3)
-
-
 
 
 attack_module.plotAttackValues('data_plot' , 'local');

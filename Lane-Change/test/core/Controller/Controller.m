@@ -79,83 +79,78 @@ classdef Controller < handle
 
         end
 
-        % Method to get the surrounding vehicles
-        function [ car_fc,car_fss, car_bt, car_ft] = get_surrounding_vehicles(self , x, current_lane_id, direction_flag , host_vehicle_id)
 
-            % Get the host vehicle's ID or unique identifier
-            % host_vehicle_id = self.vehicle.vehicle_number; % Assuming vehicle_number is the unique identifier
+        function [car_fc, car_fss, car_bt, car_ft, car_bss] = get_surrounding_vehicles(self, x, current_lane_id, direction_flag, host_vehicle_id)
 
-            car_fss = []; % No matter the lane , just all the vehicles in front of the ego vehicle
- 
+            % Initialisation
+            car_fc = [];    % First vehicle ahead in current lane
+            car_fss = [];   % All vehicles ahead (any lane)
+            car_bss = [];   % All vehicles behind (any lane)
+            car_bt = [];    % Closest vehicle behind in target lane
+            car_ft = [];    % Closest vehicle ahead in target lane
 
-            current_lane_vehicles = [];
+            current_lane_vehicles_ahead = [];
             target_lane_vehicles = [];
-            num_veh = length(self.vehicle.other_vehicles);
 
+            % Paramètre de portée
+            range_check = 100;
+            carfc_range = x + range_check;
+            carbt_range = x - range_check;
+            carft_range = x + range_check;
 
+            % Parcourir tous les véhicules
+            for i = 1:length(self.vehicle.other_vehicles)
+                veh = self.vehicle.other_vehicles(i);
 
-            % sort surrounding vehilces according to the lane id information
-            for i = 1:num_veh
-                if (self.vehicle.other_vehicles(i).vehicle_number ~= host_vehicle_id && self.vehicle.other_vehicles(i).state(1) >= x)
-                % if (self.vehicle.other_vehicles(i).vehicle_number < host_vehicle_id )
-                    car_fss = [car_fss, self.vehicle.other_vehicles(i)];
-                end
-                
-                % Skip the host vehicle
-                if self.vehicle.other_vehicles(i).vehicle_number == host_vehicle_id
+                % Ignorer le véhicule hôte
+                if veh.vehicle_number == host_vehicle_id
                     continue;
                 end
 
-                if (self.vehicle.other_vehicles(i).lane_id == current_lane_id | self.vehicle.other_vehicles(i).lane_id == current_lane_id - direction_flag * 0.5)
-                    % the vehicle is in the current lane
-                    if self.vehicle.other_vehicles(i).state(1) >= x
-                        % collect the vehicle in the current lane before the
-                        % ego vehicle
-                        current_lane_vehicles = [current_lane_vehicles, self.vehicle.other_vehicles(i)];
+                % Récupérer position et voie
+                veh_x = veh.state(1);
+                veh_lane = veh.lane_id;
+
+                % Véhicules devant (toutes voies)
+                if veh_x >= x
+                    car_fss = [car_fss, veh];
+                end
+
+                % Véhicules derrière (toutes voies)
+                if veh_x < x
+                    car_bss = [car_bss, veh];
+                end
+
+                % Identifier si le véhicule est dans la même voie ou une voie cible
+                in_current_lane = (veh_lane == current_lane_id || ...
+                    veh_lane == current_lane_id - 0.5 * direction_flag);
+
+                in_target_lane = (veh_lane == current_lane_id + direction_flag || ...
+                    veh_lane == current_lane_id + 0.5 * direction_flag || ...
+                    veh_lane == current_lane_id + 1.5 * direction_flag);
+
+                % Traitement des véhicules dans la même voie
+                if in_current_lane
+                    if veh_x >= x && veh_x < carfc_range
+                        car_fc = veh; % Le plus proche devant
+                        carfc_range = veh_x;
                     end
-                elseif self.vehicle.other_vehicles(i).lane_id == current_lane_id + direction_flag * 0.5
-                    % the vehicle is accross the dividing line
-                    if self.vehicle.other_vehicles(i).state(1) >= x
-                        current_lane_vehicles = [current_lane_vehicles, self.vehicle.other_vehicles(i)];
+                end
+
+                % Traitement des véhicules dans la voie cible
+                if in_target_lane
+                    target_lane_vehicles = [target_lane_vehicles, veh];
+
+                    if veh_x >= x && veh_x < carft_range
+                        car_ft = veh;
+                        carft_range = veh_x;
+                    elseif veh_x < x && veh_x > carbt_range
+                        car_bt = veh;
+                        carbt_range = veh_x;
                     end
-                    % Collect the vehicle in the target lane
-                    target_lane_vehicles = [target_lane_vehicles, self.vehicle.other_vehicles(i)];
-
-                    % Check if the vehicle is in the target lane
-                elseif (self.vehicle.other_vehicles(i).lane_id == current_lane_id + direction_flag)
-                    target_lane_vehicles = [target_lane_vehicles, self.vehicle.other_vehicles(i)];
-                    % Check if the vehicle is in the target lane offset by 1.5 times the direction flag
-                elseif self.vehicle.other_vehicles(i).lane_id == current_lane_id + 1.5 * direction_flag
-                    target_lane_vehicles = [target_lane_vehicles, self.vehicle.other_vehicles(i)];
-                end
-            end
-
-            range_check = 100;
-
-            car_fc = []; % car_fc is the closest leading vehicle in the current lane (vehicle fc)
-            carfc_range = x + range_check;
-            for j = 1:length(current_lane_vehicles)
-                if current_lane_vehicles(j).state(1) <= carfc_range
-                    car_fc = current_lane_vehicles(j);
-                    carfc_range = current_lane_vehicles(j).state(1);
-                end
-            end
-
-            car_bt = [];% car_bt is the closeset vehicle in the target lane that is behind ego vehicle (vehicle bt)
-            car_bt_range = x - range_check;
-            car_ft = [];% car_ft is the closet leading vehicle in the target lane (vehicle ft)
-            carft_range = x + range_check;
-
-            for i = 1:length(target_lane_vehicles)
-                if target_lane_vehicles(i).state(1) <= x && target_lane_vehicles(i).state(1) >= car_bt_range
-                    car_bt = target_lane_vehicles(i);
-                    car_bt_range = target_lane_vehicles(i).state(1);
-                end
-                if target_lane_vehicles(i).state(1) >= x && target_lane_vehicles(i).state(1) <= carft_range
-                    car_ft = target_lane_vehicles(i);
-                    carft_range = target_lane_vehicles(i).state(1);
                 end
             end
         end
+
     end
 end

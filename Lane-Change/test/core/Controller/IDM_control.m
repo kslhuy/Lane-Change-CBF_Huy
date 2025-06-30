@@ -45,30 +45,29 @@ classdef IDM_control < handle % Extended Look-Ahead Controller for Lane-Changing
             [x, y, theta, v] = self.unpack_state(state);
 
             % Get leading vehicle information
+            % why use self.controller.vehicle.state(1) , Because we want to get the true host car position (not the estimated one)
+            [car_fc,car_fss, ~, ~] = self.controller.get_surrounding_vehicles(self.controller.vehicle.state(1), lane_id, direction_flag , host_vehicle_id);
 
-            [~,car_fss, ~, ~] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag , host_vehicle_id);
-            car_font = car_fss(end);
-
-            if isempty(car_font)
-                disp('No car ahead'  );
-                disp(self.vehicle_number);
+            if isempty(car_fc)
+                % car_fss
+                disp("IDM No car preceding vehicle "+ num2str(host_car_id))
                 s = 200; % Assume large gap if no car ahead
                 delta_v = 0;
             else
                 if (type_state == "true")
-                    s = car_font.state(1) - x;
-                    delta_v = v - car_font.state(4);
+                    s = car_fc.state(1) - x;
+                    delta_v = v - car_fc.state(4);
                 else %estimated
                     %since this we use that like local , so use mesurement instead of estimated
                     % mesurement mean true state
-                    s = car_font.state(1) - x;
-                    delta_v = v - car_font.state(4);
+                    s = car_fc.state(1) - x;
+                    delta_v = v - car_fc.state(4);
                     % if (self.controller.vehicle.noise_flag)
-                    %     s = car_font.state(1) - x + randn(1) ;
-                    %     delta_v = v - car_font.state(4) + randn(1)*0.1;
+                    %     s = car_fc.state(1) - x + randn(1) ;
+                    %     delta_v = v - car_fc.state(4) + randn(1)*0.1;
                     % end
 
-                    % est_car_fc = self.controller.vehicle.observer.est_global_state_current(:,car_font.vehicle_number) ;
+                    % est_car_fc = self.controller.vehicle.observer.est_global_state_current(:,car_fc.vehicle_number) ;
                     % s = est_car_fc(1) - x;
                     % delta_v = v - est_car_fc(4);
                 end

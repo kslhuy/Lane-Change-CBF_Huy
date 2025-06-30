@@ -1,3 +1,9 @@
+
+%%%%%%%%%
+%%%%%%%%%
+%%%%%%%%%
+%%%%%%%%%
+%% Here plot mean for different attacker vehicle in platoon. 
 clc
 close all
 clear
@@ -29,6 +35,9 @@ use_predict_observer = true;
 predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other"
 Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
 set_Is_noise_mesurement = false; % if the measurement is noisy
+attacker_update_locally = false; % if the attacker does update observer by only using the local data   
+use_local_data_from_other = true; % if the local data from other vehicles is used (true = ourpaper , false = another paper)
+
 
 % controller related
 gamma_type = "min"; % type gamma for switching control = " min" , " max " , " mean "
@@ -39,6 +48,8 @@ data_type_for_u2 = "est"; % "est" , "true"
 opinion_type = "both"; % opinion type " distance" , " trust" , " both"
 Dichiret_type = "Dual" ; % "Single" , "Dual"
 monitor_sudden_change = false; % if the sudden change is monitored
+is_know_data_not_nearby = true ; % just for test purpose, Use that we have better Trust score , meaning that we know the data all of the other vehicles
+
 % model related
 model_vehicle_type = "normal"; % "delay_v" , "delay_a" , "normal"
 
@@ -69,8 +80,15 @@ Scenarios_config.set_Use_predict_observer(use_predict_observer);
 Scenarios_config.set_Local_observer_type(Local_observer_type);
 Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
 
+Scenarios_config.set_Use_local_data_from_other( use_local_data_from_other)
+Scenarios_config.Is_attacker_not_update(attacker_update_locally);
+
+
 Scenarios_config.set_Trip_Dichiret(Dichiret_type); % "Single" , "Dual"
 Scenarios_config.set_monitor_sudden_change(monitor_sudden_change); % if the sudden change is monitored
+
+Scenarios_config.set_Test_better_trust(is_know_data_not_nearby);
+
 
 % Define driving Senarios lanes
 % Create a straight lane with specified width and length
@@ -128,15 +146,16 @@ for case_nb_attack = 2:total_num_attack_cases
 
 
 
-    car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 23], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weight_Trust_module);
-
+    car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 23 ; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+    
     % car2 , car3 is in the middle lane, lane middle
-    car2 = Vehicle(2, "IDM", param_sys, [60; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weight_Trust_module);
-
-    car3 = Vehicle(3, "IDM", param_sys, [40; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weight_Trust_module);
-
+    car2 = Vehicle(2, "IDM", param_sys, [60; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+    
+    car3 = Vehicle(3, "IDM", param_sys, [40; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+    
     % car4 is in the lane highest
-    car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, weight_Trust_module);
+    car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+
 
 
 
@@ -164,24 +183,25 @@ for case_nb_attack = 2:total_num_attack_cases
     all_global_dist_errors = [];
     all_global_theta_errors = [];
     all_global_vel_errors = [];
+    all_global_acc_errors = [];
 
     for k = 1:length(vehicles_to_evaluate)
         v = vehicles_to_evaluate(k);
-        [dist_err, theta_err, vel_err] = v.observer.calculate_global_errors();  % Call global error calculation
+        [dist_err, theta_err, vel_err,global_acc_err] = v.observer.calculate_global_errors();  % Call global error calculation
         all_global_dist_errors = [all_global_dist_errors, dist_err];
         all_global_theta_errors = [all_global_theta_errors, theta_err];
         all_global_vel_errors = [all_global_vel_errors, vel_err];
+        all_global_acc_errors = [all_global_acc_errors, global_acc_err];
     end
 
-    % Calculate overall mean errors for all vehicles in this scenario
+    % Calculate overall mean of global errors for all vehicles in this scenario
     mean_dist = mean(all_global_dist_errors,2);
     mean_theta = mean(all_global_theta_errors,2);
     mean_vel = mean(all_global_vel_errors,2);
-
-
+    mean_acc = mean(all_global_acc_errors,2);
 
     % Store the errors for plotting
-    mean_errors(:, :, case_nb_attack) = [mean_dist, mean_theta, mean_vel];
+    mean_errors(:, :, case_nb_attack) = [mean_dist, mean_theta, mean_vel,mean_acc];
 end
 
 % Plotting results

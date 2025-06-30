@@ -33,7 +33,9 @@ classdef Vehicle < handle
         u1_log;
         u2_log;
         u_target_log;
+        gamma;
         gamma_log;
+        Param_opt; % Optimization parameters for the vehicle
 
     end
     methods
@@ -95,19 +97,18 @@ classdef Vehicle < handle
 
             connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
 
+            self.Param_opt = ParamOptEgo(self.dt);
             if self.typeController == "None"
                 self.controller = [];
             else
-                param_opt = ParamOptEgo(self.dt);
-                self.controller = Controller(self,controller_goal , self.typeController, param_opt, self.param, self.lanes,connected_vehicles_idx); % Create a controller for the vehicle
+                self.controller = Controller(self,controller_goal , self.typeController, self.Param_opt, self.param, self.lanes,connected_vehicles_idx); % Create a controller for the vehicle
             end
 
 
             if typeController_2 == "None"
                 self.controller2 = [];
             else
-                param_opt = ParamOptEgo(self.dt);
-                self.controller2 = Controller(self,controller_goal , typeController_2, param_opt, self.param, self.lanes,connected_vehicles_idx); % Create a controller for the vehicle
+                self.controller2 = Controller(self,controller_goal , typeController_2, self.Param_opt, self.param, self.lanes,connected_vehicles_idx); % Create a controller for the vehicle
             end
 
             self.num_vehicles = length(self.other_vehicles);
@@ -134,7 +135,7 @@ classdef Vehicle < handle
             calculateTrustAndOpinion3(self, instant_index, connected_vehicles_idx );
 
             %% Weigth trust update
-            if (instant_index*self.dt >= 3)
+            if (self.scenarios_config.using_weight_trust && instant_index*self.dt >= 3)
                 weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :) , "equal");
             else
                 weights_Dis = self.weight_module.calculate_weights_Defaut(self.vehicle_number );
@@ -158,10 +159,10 @@ classdef Vehicle < handle
 
 
         function normal_car_update(self,instant_index , weights)
+            self.get_lane_id(self.state);
 
             if self.typeController ~= "None"
                 % disp('Controller is not empty');
-                self.get_lane_id(self.state);
 
                 %% Controller
                 [~, u_1, e_1] = self.controller.get_optimal_input(self.vehicle_number, self.observer.est_local_state_current, self.input, self.lane_id, self.input_log, self.initial_lane_id, self.direction_flag,"true", 0);
@@ -169,13 +170,17 @@ classdef Vehicle < handle
 
 
                 if (self.scenarios_config.gamma_type == "max")
-                    gamma = max(self.trust_log(1, instant_index, :));
+                    trust_log_excluded = self.trust_log(1, instant_index, :);
+                    trust_log_excluded(self.vehicle_number) = []; % Remove the element at vehicle_number
+                    self.gamma = max(trust_log_excluded);
                 elseif (self.scenarios_config.gamma_type == "min")
-                    gamma = min(self.trust_log(1, instant_index, :));
+                    self.gamma = min(self.trust_log(1, instant_index, :));
                 elseif (self.scenarios_config.gamma_type == "mean") %% = mean
-                    gamma = mean(self.trust_log(1, instant_index, :));
+                    trust_log_excluded = self.trust_log(1, instant_index, :);
+                    trust_log_excluded(self.vehicle_number) = []; % Remove the element at vehicle_number
+                    self.gamma = mean(trust_log_excluded);
                 else %% self_belief
-                    gamma = self.observer.self_belief;
+                    self.gamma = self.observer.self_belief;
                 end
 
                 %% calculate the optimal input of the vehicle
@@ -187,10 +192,9 @@ classdef Vehicle < handle
                 elseif (self.scenarios_config.controller_type == "coop")
                     U_final = u_2 ;
                 else % "mix" case
-                    tau_filter = 0.02;
-                    U_target(1) = (1 - gamma)*u_1(1) + gamma*u_2(1);
+                    U_target(1) = (1 - self.gamma)*u_1(1) + self.gamma*u_2(1);
                     U_final = u_1;
-                    U_final(1) = self.input(1) + tau_filter*(U_target(1) - self.input(1)) ; % self.input is last input
+                    U_final(1) = self.input(1) + self.Param_opt.tau_filter*(U_target(1) - self.input(1)) ; % self.input is last input
                 end
 
                 %% Update new state
@@ -213,35 +217,51 @@ classdef Vehicle < handle
             else
                 %% NO Controller = vehicle 1 (lead)
 
-
-                % disp('Controller is empty');
-                self.get_lane_id(self.state);
-                % speed = self.state(4);
-
-                acceleration = self.scenarios_config.get_LeadInput(instant_index); % acceleration is the input of the lead vehicle
-                self.state(5) = acceleration; % State 5 is also acceleration 
-
-                self.state(4) = self.state(4) + acceleration * self.dt; % new speed
-                % speed limit according to different scenarios
-                [ulim, llim] = self.scenarios_config.getLimitSpeed();
-
-                if self.state(4) >= ulim
-                    self.state(4) = ulim;
-                elseif self.state(4) <= llim
-                    self.state(4) = llim;
-                end
-                dx = self.state(4) * self.dt + 0.5 * acceleration * self.dt^2; %dx=v*dt+0.5*a*dt^2
-                self.state = [self.state(1) + dx; self.state(2); self.state(3); self.state(4) ; self.state(5)]; % new state of normal cars
-                %  no need update input , beacuse the input is constant
-                self.input = [acceleration;0]; % update the input
-
                 u_1 = 0;
                 u_2 = 0;
-                gamma = 0;
-                U_target = 0;
-
+                self.gamma = 0;
+                
                 e_1 = 0;
                 e_2 = 0;
+
+                %% We have direct input from the lead vehicle
+                acceleration = self.scenarios_config.get_LeadInput(instant_index); % acceleration is the input of the lead vehicle
+                U_target = [acceleration;0];
+                self.input = U_target ; % update the input
+
+                %% Update new state
+                if (self.scenarios_config.model_vehicle_type == "delay_v")
+                    self.Bicycle_delay_v(self.state, U_target);
+                elseif (self.scenarios_config.model_vehicle_type == "delay_a")
+                    self.Bicycle_delay_a(self.state, U_target);
+                elseif (self.scenarios_config.model_vehicle_type == "normal")
+                    self.Bicycle(self.state, U_target);
+                else
+                    self.Bicycle_no_theta(self.state, U_target); % calculate dX through normal model
+                end
+
+                % %% ---------UPDATE STATE OLD
+                % self.state(5) = acceleration; % State 5 is also acceleration 
+
+                % self.state(4) = self.state(4) + acceleration * self.dt; % new speed
+                % % speed limit according to different scenarios
+                % [ulim, llim] = self.scenarios_config.getLimitSpeed();
+
+                % if self.state(4) >= ulim
+                %     self.state(4) = ulim;
+                % elseif self.state(4) <= llim
+                %     self.state(4) = llim;
+                % end
+                % dx = self.state(4) * self.dt + 0.5 * acceleration * self.dt^2; %dx=v*dt+0.5*a*dt^2
+                % self.state = [self.state(1) + dx; self.state(2); self.state(3); self.state(4) ; self.state(5)]; % new state of normal cars
+                % %  no need update input , beacuse the input is constant
+                % self.input = [acceleration;0]; % update the input
+
+                % %% ---------UPDATE STATE OLD
+
+
+
+
 
                 %% Observer
                 self.observer.Local_observer(self.state,instant_index);
@@ -252,7 +272,7 @@ classdef Vehicle < handle
             self.u1_log = [self.u1_log, u_1];
             self.u2_log = [self.u2_log, u_2];
             self.u_target_log = [self.u_target_log, U_target];
-            self.gamma_log = [self.gamma_log, gamma];
+            self.gamma_log = [self.gamma_log, self.gamma];
 
             %% Save the state and input
             self.state_log = [self.state_log, self.state]; % update the state history
@@ -262,6 +282,8 @@ classdef Vehicle < handle
 
 
         end
+
+
 
         %% Bicycle model
 
@@ -293,15 +315,15 @@ classdef Vehicle < handle
 
             [x, y, phi , v] = self.unpack_state_v2(state);
             [a, delta_f] = self.unpack_input(input); % input is V beacause its aldready convert in calling fucntion
-            v_dot =  (1/self.param.tau)*a - (1/self.param.tau)*v;
+            v_dot =  (1/self.param.tau_v)*a - (1/self.param.tau_v)*v;
 
             xdot = v * cos(phi); % velocity in x direction
             ydot = v * sin(phi); % velocity in y direction
             phidot = v * tan(delta_f) / l_r; % yaw rate
             dX = [xdot; ydot; phidot ; v_dot ; 0];
+            self.state = self.state + self.dt .* dX;
 
             self.input = input; % update the input
-            self.state = self.state + self.dt .* dX;
             self.state(5) = a; % just put the acceleration in the state
 
         end
@@ -489,10 +511,16 @@ classdef Vehicle < handle
                         elseif (self.scenarios_config.opinion_type == "distance_based")
                             opinion_distance = distance_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
                             self.trust_log(1, instant_index, vehicle_id) = 0.6*(self.trust_log(1, instant_index, vehicle_id)) + 0.4*opinion_distance;
-                        else
+                        elseif (self.scenarios_config.opinion_type == "both")
                             opinion_neigbor = neighbor_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
                             opinion_distance = distance_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
-                            self.trust_log(1, instant_index, vehicle_id) = 0.5*(self.trust_log(1, instant_index, vehicle_id)) + 0.25*opinion_neigbor + 0.25*opinion_distance ;
+                            self.trust_log(1, instant_index, vehicle_id) =  0.5*opinion_neigbor + 0.5*opinion_distance ;
+                            % self.trust_log(1, instant_index, vehicle_id) = (opinion_neigbor + opinion_distance )/ 2;
+                        else
+                            %% mix non_nearby trust
+                            opinion_neigbor = neighbor_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
+                            opinion_distance = distance_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
+                            self.trust_log(1, instant_index, vehicle_id) = 0.4*(self.trust_log(1, instant_index, vehicle_id)) + 0.3*opinion_neigbor + 0.3*opinion_distance ;
                             % self.trust_log(1, instant_index, vehicle_id) = (opinion_neigbor + opinion_distance )/ 2;
                         end
 

@@ -38,8 +38,8 @@ classdef ACC < handle
 
             if num_vehicles == 0
                 % No preceding vehicles, use IDM model
-                disp('No car ahead');
-                disp(self.vehicle_number);
+                disp("No car preceding vehicle "+ num2str(host_car_id))
+
                 s = 200; % Assume large gap
                 delta_v = 0;
                 acc = alpha * (1 - (v / v0)^delta); % IDM acceleration

@@ -33,6 +33,79 @@ switch attack_type
                 disp("Invalid Bogus case number"); return;
         end
 
+
+        %% Scenario I: Bogus Messages Position
+    case "POS"
+        switch case_num
+            case 1
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -20, data_type, {'X'});
+            case 2
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 50, data_type, {'X'});
+            case 3
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'linear', -0.5, data_type, {'X'});
+            case 4
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'linear', 0.5, data_type, {'X'});
+            case 5
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',-5,'frequency',0.5), data_type, {'X'});
+            case 6
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',5,'frequency',0.5), data_type, {'X'});
+            case 7
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 5, data_type, {'X'});
+            otherwise
+                disp("Invalid Bogus case number"); return;
+        end
+
+        %% Scenario I: Bogus Messages Velocity
+    case "VEL"
+        switch case_num
+            case 1
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -2, data_type, {'velocity'});
+            case 2
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 2, data_type, {'velocity'});
+            case 3
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'linear', -0.1, data_type, {'velocity'});
+            case 4
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'linear', 0.1, data_type, {'velocity'});
+            case 5
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',-2.5,'frequency',0.5), data_type, {'velocity'});
+            case 6
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',2.5,'frequency',0.5), data_type, {'velocity'});
+            case 7
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 2, data_type, {'velocity'});
+            case 8
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'scaling', -0.5, data_type, {'velocity'});
+            case 9
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'scaling', 0.5, data_type, {'velocity'});
+            otherwise
+                disp("Invalid Bogus case number"); return;
+        end
+
+        %% Scenario I: Bogus Messages Acceleration
+    case "ACC"
+        switch case_num
+            case 1
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -5, data_type, {'acceleration'});
+            case 2
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 5, data_type, {'acceleration'});
+            case 3
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'linear', -0.5, data_type, {'acceleration'});
+            case 4
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'linear', 0.5, data_type, {'acceleration'});
+            case 5
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',-1,'frequency',0.5), data_type, {'acceleration'});
+            case 6
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',1,'frequency',0.5), data_type, {'acceleration'});
+            case 7
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 1, data_type, {'acceleration'});
+            case 8
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'scaling', -0.5, data_type, {'acceleration'});
+            case 9
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'scaling', 0.5, data_type, {'acceleration'});
+            otherwise
+                disp("Invalid Bogus case number"); return;
+        end
+
+
         %% Scenario II: Replay/Delay Attacks
     case "Replay/Delay"
         switch case_num
@@ -84,14 +157,14 @@ attack_module.setScenario('time_based', scenario);
 end
 
 function scenario = makeScenario(attacker_id, victim_id, start_time, end_time, attack_type, fault_intensity, data_type, attack_row)
-    scenario = struct('attacker_id', attacker_id, ...
-        'victim_id', victim_id, ...
-        'start_time', start_time, ...
-        'end_time', end_time, ...
-        'attack_type', attack_type, ...
-        'fault_intensity', fault_intensity, ...
-        'data_type', data_type, ...
-        'attack_row', attack_row);
+scenario = struct('attacker_id', attacker_id, ...
+    'victim_id', victim_id, ...
+    'start_time', start_time, ...
+    'end_time', end_time, ...
+    'attack_type', attack_type, ...
+    'fault_intensity', fault_intensity, ...
+    'data_type', data_type, ...
+    'attack_row', attack_row);
 end
 
 

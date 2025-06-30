@@ -7,20 +7,22 @@ classdef TriPTrustModel < handle
     %}
 
     properties
-        wv = 1.0;  % Weight for velocity
-        wd = 0.5;  % Weight for distance
-        wa = 0.5;  % Weight for acceleration
-        wj = 0.5;  % Weight for jerkiness
-        wh = 0.5;  % Weight for heading
+        wv = 12;  % Weight for velocity
+        wd = 2;  % Weight for distance
+        wa = 0.3;  % Weight for acceleration
+        wj = 1.0;  % Weight for jerkiness
+        wh = 1.0;  % Weight for heading
 
 
-        wv_nearby = 2.0;  % Weight for velocity
-        wd_nearby = 1.0;  % Weight for distance
-        wa_nearby = 1.0;  % Weight for acceleration
+        wv_nearby = 12;  % Weight for velocity
+        wd_nearby = 8;  % Weight for distance
+        wa_nearby = 0.3;  % Weight for acceleration
         wj_nearby = 1.0;  % Weight for jerkiness
         wh_nearby = 1.0;  % Weight for heading
 
         wt = 0.5; % Trust decay weight
+        wt_global = 0.5; % Trust decay weight
+
 
         C = 0.2;   % Regularization constant
         tacc = 1.2;% Trust-based acceleration scaling factor
@@ -32,6 +34,11 @@ classdef TriPTrustModel < handle
         sigma2 = 1; % Sensitivity parameter for cross-validation trust factor
         tau2 = 0.5;   % Sensitivity parameter for local consistency trust factor
         last_d;
+        last_time_d = 0; % Last time step when distance was updated
+        Period_a_score_distane = 10; % Time step for the simulation
+        buffer_size = 50; % Number of time steps for moving average (e.g., n=5)
+        distance_buffer ; % Initialize buffer
+
         trust_sample_log;
         gamma_cross_log;
         gamma_local_log;
@@ -66,6 +73,25 @@ classdef TriPTrustModel < handle
         reduce_factor = 0.5;  % Trust reduction factor
 
         previous_state;
+        tau2_matrix_gamma_local = []; % Diagonal matrix for local consistency factor
+        sigma2_matrix_gamma_cross = []; % Diagonal matrix for cross-host trust factor
+
+        v_rel_log = []; % Log for relative velocity
+        d_add_log = []; % Log for additional distance
+        acc_rel_log = []; % Log for relative acceleration
+        delta_acc_expected_log = []; % Log for expected acceleration difference
+        distance_log = []; % Log for distance measurements
+
+        scale_d_expected_log = []; % Scale factor for expected distance
+        delta_d_log = []; % Log for delta distance (measured - epxected )
+
+        a_score_expected_diff_acc_log = []; % Log for expected acceleration score
+        a_score_diff_acc_log = []; % Log for acceleration difference score
+        a_score_vrel_dis_log = []; % Log for relative velocity and distance score
+        a_score_defaut_log = []; % Log for default acceleration score
+
+
+
     end
 
     methods
@@ -84,7 +110,12 @@ classdef TriPTrustModel < handle
 
 
             self.last_d = 20;
+            self.last_time_d = 0; % Last time step when distance was updated
 
+            self.buffer_size = 5; % Number of time steps for moving average (e.g., n=5)
+            self.distance_buffer = zeros(1, self.buffer_size); % Initialize buffer
+
+            % Initialize logs for trust samples and scores
             self.trust_sample_log = [];
             self.gamma_cross_log = [];
             self.gamma_local_log = [];
@@ -97,14 +128,29 @@ classdef TriPTrustModel < handle
             self.lead_state_lastest = zeros(4,1);
             self.previous_state = zeros(4,1);
 
+            tau2_diag_element = [1.5 , 0.5];
+            self.tau2_matrix_gamma_local = diag(tau2_diag_element);
+
+            % Compute covariance matrix (adaptive variance)
+            sigma2_diag_element = [1.5, 1 ,0.01, 0.5 , 0.1];
+            self.sigma2_matrix_gamma_cross = diag(sigma2_diag_element);
+
+
+            self.v_rel_log = [];
+            self.acc_rel_log = [];
+            self.d_add_log = [];
+            self.delta_acc_expected_log = [];
+
+
+
             % % Parameters for anomaly detection
             % self.w = 10;  % Sliding window size
             % self.Threshold_anomalie  = 3;   % Threshold for cumulative anomalies
             % self.reduce_factor = 0.5;  % Trust reduction factor
         end
 
-        function v_score_final = evaluate_velocity(~,host_id , target_id, v_y,v_host, v_leader, a_leader, b_leader , tolerance)
-            if nargin < 8
+        function v_score_final_with_exp = evaluate_velocity(self,host_id , target_id, v_y, v_host, v_leader, a_leader, b_leader , is_nearby ,tolerance)
+            if nargin < 9
                 tolerance = 0.1; % Default tolerance if not provided
             end
 
@@ -127,13 +173,11 @@ classdef TriPTrustModel < handle
 
             Explain in https://discord.com/channels/1123389035713400902/1326223031667789885/1327291670911254528
             %}
-            if (host_id - target_id) > 0
-                alpha = 0.9;
+            if (host_id - target_id) > 0 % Target is ahead host
+                alpha = 0.8;
             else
-                alpha = 0.1;
+                alpha = 0.2; % Target is follwing host
             end
-
-
 
             % Meaning that leader is move back (brake) or stop
             if v_ref == 0 || v_leader == 0 || sign(v_ref*v_leader) < 0 || sign(v_ref*v_host) < 0
@@ -147,7 +191,7 @@ classdef TriPTrustModel < handle
             end
             % Calculate absolute deviation as a fraction of reference velocity
             % meaning report vehicle is faster or slower than reference velocity
-            deviation_ref = abs(v_y - v_ref) / v_ref;
+            deviation_ref = (abs(v_y - v_ref) + 1) / v_ref;
             deviation_host = abs(v_y - v_host) / v_host;
 
             if deviation_ref <= tolerance
@@ -162,34 +206,189 @@ classdef TriPTrustModel < handle
             v_score_host = max(1 - deviation_host, 0);
 
             v_score_final = (1-alpha)*v_score_ref +  (alpha)* v_score_host ;
-
+            if (is_nearby)
+                v_score_final_with_exp = v_score_final^self.wv_nearby ;
+            else
+                v_score_final_with_exp = v_score_final^self.wv ;
+            end
 
         end
 
-        function d_score = evaluate_distance(~, d_y, d_measured , is_nearby)
+        function d_score = evaluate_distance(self, d_y, d_measured , is_nearby)
             if is_nearby
                 % For nearby vehicles, use a stricter distance evaluation
-                d_score = max(1 - abs((d_y - d_measured)/d_measured), 0);
+                d_score = (max(1 - abs((d_y - d_measured)/d_measured), 0))^self.wd_nearby;
             else
                 % For distant vehicles, allow more tolerance
                 % TODO : need to change the distance measure for the far away vehicle
                 % d_y is the reported distance , d_measured is the measured distance
                 % so if the reported distance is close to the measured distance, then score is high
                 % d_score = 0;
-                d_score = max(1 - abs((d_y - d_measured)/d_measured), 0);
-
+                d_score = max(1 - abs((d_y - d_measured)/d_measured), 0)^self.wd;
             end
         end
 
-        function a_score = evaluate_acceleration(~, a_y, a_host, d, ts)
-            %% TODO : the d now is the diff between host and target (i think it still work)
-            %% Maybe need to change to the diff between the measured distance of the host in one time step
-            v_rel = diff(d) / ts;
-            
-            a_diff = a_y - a_host;
-            % a_score = max(1 - abs(v_rel / ts * a_diff), 0);
-            a_score = max(1 - abs(v_rel / d(1) * a_diff), 0);
-        
+        function a_score = evaluate_acceleration(self,host_vehicle, host_id,target_id,a_y, a_host, d, ts, is_nearby)
+            % Update distance buffer
+            self.distance_buffer = [d(1), self.distance_buffer(1:end-1)]; % Shift and add new distance
+
+
+
+            % Compute relative velocity using distance difference over n time steps
+            %% Relative acceleration calculation
+            if all(self.distance_buffer ~= 0) % Ensure buffer is filled
+                v_rel = (self.distance_buffer(end-1) - self.distance_buffer(1)) / ((self.buffer_size-1) * ts);
+                v_rel_m1 = (self.distance_buffer(end) - self.distance_buffer(2)) / ((self.buffer_size-1) * ts);
+                expected_a_relative_diff  = (v_rel - v_rel_m1)/(ts);
+            else
+                % v_rel = 0; % Default if buffer not yet filled
+                v_rel = diff(d) / ts;
+                expected_a_relative_diff = 0;
+            end
+            d_norm = 19; % Normalization factor for distance
+
+            %% Calculate the relative acceleration difference
+            a_relative_diff = a_y - a_host;
+
+            diff_rel_acc = expected_a_relative_diff - a_relative_diff;
+
+            %% Test another writing
+            a_y_expected = a_host + expected_a_relative_diff; % Expected acceleration difference
+            delta_acc = a_y_expected - a_y;
+            %%%
+
+
+            constance_regulation = 1; % depending on the sign of the acceleration difference , and position index
+
+
+            if  ~is_nearby
+                d_add = d_norm*abs(target_id-host_id)  / (d(1));
+            else
+                % id_diff = host_id - target_id;
+                % 0.9*(target_id-1)
+                if target_id > 1
+                    % Calculate sign mismatch
+                    Signe_mismatch_relative = (sign(a_host) ~= sign(a_relative_diff));
+                    % Update constance regulation based on sign mismatch
+                    if (Signe_mismatch_relative == 0)
+                        % Sign consistent
+                        constance_regulation = 0.7;
+                    else
+                        % Sign inconsistent
+                        constance_regulation = 0.8;
+                    end
+
+                    % Calculate additional distance based on target and host IDs
+                    d_add = d_norm*constance_regulation / (d(1));
+                    % if (target_id > host_id)
+                    %     d_add = d_norm*constance_regulation / (d(1));
+                    % else
+                    %     d_add = d_norm / (d(1));
+                    % end
+                else
+                    % special case : target_id <= 1 and host_id = 2
+                    d_add = d_norm*constance_regulation / (d(1));
+                end
+
+
+                % d_add = 1; % Default value for distant vehicles
+            end
+
+
+            %%% Calculate distance expected depending  Host ID , gamma mix distance
+            hi = host_vehicle.Param_opt.hi ; %% Time gap ( T )
+            ri = host_vehicle.Param_opt.ri; % Minimum gap distance ( s0 )
+            v_local_host = host_vehicle.observer.est_local_state_current(4);
+            v_0 = host_vehicle.Param_opt.v0; % Desired velocity in free flow
+            delta = host_vehicle.Param_opt.delta;
+            if host_vehicle.scenarios_config.controller_type == "mix"
+                s_CACC_expected = ri + hi * v_local_host/(host_id-1); % Expected spacing based on CACC model
+                s_IDM_expected  = ri + hi * v_local_host / (sqrt(1 - (v_local_host/v_0)^delta));
+                gamma_control = host_vehicle.gamma; % Control parameter for Mix controller
+                d_expected = (1 - gamma_control)*s_CACC_expected + (gamma_control) * s_IDM_expected;
+
+            elseif host_vehicle.scenarios_config.controller_type == "local"
+                d_expected = (ri + hi*v_local_host) /(sqrt(1 - (v_local_host/v_0)^delta ));
+
+            else %"coop"
+                d_expected = ri + hi * v_local_host/(host_id-1); % Expected spacing based on CACC model
+            end
+
+            % Compute expected spacing using the mixing formula:
+
+            scale_d_expected = d(1) /d_expected; % Normalize expected distance by current distance
+
+            %%% NEW: Adjust d_add based on scenario flags
+
+
+
+            delta_d = d(1) - d_expected;
+
+            % Define scenario flags
+            target_decelerating = a_y < 0;
+            host_decelerating = a_host < 0;
+            both_accelerating = a_y > 0 && a_host > 0;
+            both_decelerating = a_y < 0 && a_host < 0;
+            target_acc_host_dec = a_y > 0 && a_host < 0;
+
+            % Initialize d_add_scale
+            d_add_scale = 1;
+
+            % Apply scenario-based adjustments to d_add_scale
+            if target_decelerating
+                d_add_scale = d_add_scale * 0.8; % Penalize when target is decelerating
+            end
+            if both_decelerating && delta_d < 0
+                d_add_scale = d_add_scale * 0.7; % Stronger penalty when both are decelerating and distance is too small
+            end
+            if target_acc_host_dec && delta_d < 0
+                d_add_scale = d_add_scale * 0.8; % Penalize when target is accelerating, host is decelerating, and distance is too small
+            end
+            if (both_accelerating || both_decelerating) && abs(delta_d) > 0.2 * d_expected
+                d_add_scale = d_add_scale * 0.9; % Mild penalty for significant distance deviation
+            end
+
+            % Compute adjusted d_add
+            d_add_adjusted = d_add * d_add_scale;
+
+
+            %%% Calculate the acceleration score
+
+            %% Using the relative acceleration difference
+            % a_score = max(1 - abs( d_add * diff_rel_acc), 0);
+
+            %% Using the expected acceleration difference
+            a_score_expected_diff_acc = max(1 - abs( d_add_adjusted * delta_acc), 0);
+
+            %% Using the acceleration difference
+            a_score_diff_acc =  max(1 - abs(v_rel /d_add_adjusted * a_relative_diff), 0);
+            a_score_vrel_dis = max(1 - abs(v_rel / d(1) * a_relative_diff), 0);
+            a_score_defaut = max(1 - abs(v_rel / ((self.buffer_size - 1)  * ts) * a_relative_diff), 0);
+
+
+            a_score = a_score_diff_acc;
+
+            % Apply weighting based on proximity
+            if is_nearby
+                a_score = a_score^self.wa_nearby; % Tune wa_nearby
+            else
+                a_score = a_score^self.wa; % Tune wa
+            end
+
+
+            %log
+            self.v_rel_log = [self.v_rel_log, v_rel]; % Log relative velocity
+            self.distance_log = [self.distance_log, d(1)]; % Log distance
+            self.d_add_log = [self.d_add_log, d_add_adjusted]; % Log additional distance
+            self.acc_rel_log = [self.acc_rel_log, a_relative_diff]; % Log relative acceleration
+            self.delta_acc_expected_log = [self.delta_acc_expected_log, delta_acc]; % Log expected acceleration difference
+            self.scale_d_expected_log = [self.scale_d_expected_log, scale_d_expected]; % Log scale factor for expected distance
+            self.delta_d_log = [self.delta_d_log, delta_d]; % Log delta distance (measured - expected)
+
+            self.a_score_expected_diff_acc_log = [self.a_score_expected_diff_acc_log, a_score_expected_diff_acc];
+            self.a_score_diff_acc_log = [self.a_score_diff_acc_log, a_score_diff_acc];
+            self.a_score_vrel_dis_log = [self.a_score_vrel_dis_log, a_score_vrel_dis];
+            self.a_score_defaut_log = [self.a_score_defaut_log, a_score_defaut];
         end
 
         function j_score = evaluate_jerkiness(~, j_y, j_thresh)
@@ -260,12 +459,9 @@ classdef TriPTrustModel < handle
 
         %%% Trust sample calculation %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
         function trust_sample = calculate_trust_sample_wo_Acc(self, v_score, d_score, a_score, beacon_score,h_score,is_nearby)
-            if (is_nearby)
-                trust_sample = beacon_score * (v_score^self.wv_nearby) * (d_score^self.wd_nearby) * h_score^self.wh_nearby;
-            else
-                trust_sample = beacon_score * (v_score^self.wv) ;
-            end
+            trust_sample = beacon_score * (v_score) * (d_score) ;
         end
+
         function trust_sample = calculate_trust_sample_w_Jek(self, v_score, d_score, a_score, j_score, beacon_score)
             trust_sample = beacon_score * (v_score^self.wv) * (d_score^self.wd) * (a_score^self.wa) * (j_score^self.wj);
         end
@@ -279,14 +475,8 @@ classdef TriPTrustModel < handle
         end
 
         function trust_sample = calculate_trust_sample(self, v_score, d_score, a_score, beacon_score,h_score,is_nearby)
-            if (is_nearby)
-                trust_sample = beacon_score * (v_score^self.wv_nearby) * (d_score^self.wd_nearby) * (a_score^self.wa_nearby) ;
-            else
-                %% TEST CODE : assume known all the scores
-                trust_sample = beacon_score * (v_score^self.wv_nearby) * (d_score^self.wd_nearby) * (a_score^self.wa_nearby) ;
-
-                % trust_sample = beacon_score * (v_score^self.wv)* (a_score^self.wa) ;
-            end            
+            % Calculate trust sample based on the provided scores and beacon status
+            trust_sample = beacon_score * (v_score) * (d_score) * (a_score) ;
         end
 
         %%% Trust rating vector update %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
@@ -302,12 +492,13 @@ classdef TriPTrustModel < handle
 
             if (type == "local")
                 current_trust_score = self.calculate_trust_score( self.rating_vector);
+                lambda_y = current_trust_score * self.wt;
             else
                 current_trust_score = self.calculate_trust_score(self.rating_vector_global);
+                lambda_y = current_trust_score * self.wt_global;
             end
 
             % Define lambda_y as per equation (9): lambda_y = sigma_y * w_t
-            lambda_y = current_trust_score * self.wt;
 
             % Update the rating vector (R_y) using the aging factor lambda_y
             if type == "local"
@@ -336,7 +527,7 @@ classdef TriPTrustModel < handle
             trust_score = sum(weights .* S_y);
         end
 
-        
+
 
         %%% Main %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
         function [final_score,local_trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, is_nearby, instant_idx)
@@ -360,7 +551,8 @@ classdef TriPTrustModel < handle
             vehicle_length = target_vehicle.param.l_r + target_vehicle.param.l_f ; % total length of a vehicle
 
             % leader_velocity = leader_vehicle.observer.est_local_state_current(4);
-            leader_state = host_vehicle.center_communication.get_local_state(leader_vehicle.vehicle_number , host_id);
+            % leader_state = host_vehicle.center_communication.get_local_state(leader_vehicle.vehicle_number , host_id);
+            leader_state = host_vehicle.other_vehicles(1).state; % Get the leader state from the log
             if ( isnan(leader_state))
                 % Use the lastest state of leader vehicle
                 leader_state = self.lead_state_lastest ;
@@ -388,34 +580,50 @@ classdef TriPTrustModel < handle
 
             % Why target_vehicle.state(1) : because is the host_distance_measurement , its in the point view of Host
             % So need to be acurate , not disturb by attack like "target_pos_X" (below )
-            
-            % if is_nearby
-            %     delta_X = target_vehicle.state(1) - host_pos_X;  % center-to-center distance
 
-            %     if delta_X >= 0
-            %         % Host is behind target → rear-to-bumper (e.g., vehicle 1 to 4)
-            %         host_distance_measurement = delta_X + vehicle_length;
-            %     else
-            %         % Host is in front of target → bumper-to-rear (e.g., vehicle 4 to 1)
-            %         host_distance_measurement = abs(delta_X) - vehicle_length;
-            %     end
-            %     % host_distance_measurement = (host_id - target_id)*(target_vehicle.state(1) - host_pos_X) - vehicle_length;
-            % else
-            %     % For distant vehicles, use the host distance measurement
-            %     host_distance_measurement = target_vehicle.state(1) - host_pos_X - vehicle_length;
-            % end
+            if is_nearby
+                delta_X = target_vehicle.state(1) - host_pos_X;  % center-to-center distance
 
-
-            %% TEST CASE : If we know the real distance between host and target
-            delta_X = target_vehicle.state(1) - host_pos_X;  % center-to-center distance
-
-            if delta_X >= 0
-                % Host is behind target → rear-to-bumper (e.g., vehicle 1 to 4)
-                host_distance_measurement = delta_X + vehicle_length;
+                if delta_X >= 0
+                    % Host is behind target → rear-to-bumper (e.g., vehicle 1 to 4)
+                    host_distance_measurement = delta_X + vehicle_length;
+                    % host_distance_measurement = abs(delta_X);
+                else
+                    % Host is in front of target → bumper-to-rear (e.g., vehicle 4 to 1)
+                    host_distance_measurement = abs(delta_X) - vehicle_length;
+                    % host_distance_measurement = abs(delta_X);
+                end
+                % host_distance_measurement = (host_id - target_id)*(target_vehicle.state(1) - host_pos_X) - vehicle_length;
             else
-                % Host is in front of target → bumper-to-rear (e.g., vehicle 4 to 1)
-                host_distance_measurement = abs(delta_X) - vehicle_length;
+                %% So why we in test case , we know the real distance between host and target (even its not nearby)
+                if host_vehicle.scenarios_config.is_know_data_not_nearby == true
+                    delta_X = target_vehicle.state(1) - host_pos_X;  % center-to-center distance
+
+                    if delta_X >= 0
+                        % Host is behind target → rear-to-bumper (e.g., vehicle 1 to 4)
+                        host_distance_measurement = delta_X + vehicle_length;
+                        % host_distance_measurement = abs(delta_X);
+                    else
+                        % Host is in front of target → bumper-to-rear (e.g., vehicle 4 to 1)
+                        host_distance_measurement = abs(delta_X) - vehicle_length;
+                        % host_distance_measurement = abs(delta_X);
+                    end
+                else
+                    %% TODO : If we don't know the distance between host and target (dont have the real measurement)
+                    % Use the estimated distance based on the host's position and target's position
+
+                    nb_space = abs(host_id - target_id); % sign of the host and target id
+                    T = host_vehicle.Param_opt.hi ; %% Time gap , time headway (s)
+                    s0 = host_vehicle.Param_opt.ri; % Minimum gap distance
+                    s_acc_expected = nb_space*(s0 + T*host_velocity); % h_base = T
+
+                    host_distance_measurement = s_acc_expected - vehicle_length;
+                end
             end
+
+
+
+
 
 
             %% TODO : need to get real distance between host and target
@@ -435,36 +643,33 @@ classdef TriPTrustModel < handle
                 target_pos_X = target_state(1);
                 target_pos_Y = target_state(2);
 
-                % if is_nearby
-                %     target_reported_distance = (host_id - target_id)*(target_pos_X - host_pos_X) - vehicle_length;
-                % else
-                %     % For distant vehicles, use the host distance measurement
-                %     target_reported_distance = target_pos_X - host_pos_X - vehicle_length;
-                % end
-
-                % vehicle_length = 2 * half_length;  % total length of a vehicle
+                %% distance reporting
                 delta_X = target_pos_X - host_pos_X;  % center-to-center distance
 
                 if delta_X >= 0
                     % Host is behind target → rear-to-bumper (e.g., vehicle 1 to 4)
                     target_reported_distance = delta_X + vehicle_length;
+                    % target_reported_distance = abs(delta_X) ;
                 else
                     % Host is in front of target → bumper-to-rear (e.g., vehicle 4 to 1)
                     target_reported_distance = abs(delta_X) - vehicle_length;
+                    % target_reported_distance = abs(delta_X);
                 end
 
                 target_reported_velocity = target_state(4);
-                % target_reported_acceleration = target_input(1);
                 target_reported_acceleration = target_state(5);
 
 
                 % Trust evaluation
 
-                v_score = self.evaluate_velocity( host_id , target_id , host_velocity , target_reported_velocity, leader_velocity, leader_acceleration, leader_beacon_interval,0.1);
+                v_score = self.evaluate_velocity( host_id , target_id , target_reported_velocity, host_velocity  , leader_velocity, leader_acceleration, leader_beacon_interval,is_nearby,0.1);
                 % Evaluate distance
                 d_score = self.evaluate_distance(target_reported_distance, host_distance_measurement,is_nearby);
                 % Evaluate acceleration
-                a_score = self.evaluate_acceleration(target_reported_acceleration, host_acceleration, [host_distance_measurement, self.last_d], host_vehicle.dt);
+                a_score = self.evaluate_acceleration(host_vehicle, host_id, target_id, target_reported_acceleration, host_acceleration, [host_distance_measurement, self.last_d], host_vehicle.dt, is_nearby);
+                % if instant_idx - self.last_time_d == self.Period_a_score_distane
+                %     self.last_time_d = instant_idx;
+                % end
                 self.last_d = host_distance_measurement;
 
 
@@ -488,7 +693,7 @@ classdef TriPTrustModel < handle
                 global_trust_sample = 0;
             else
                 % Compute global estimate trust factors
-                [gamma_cross, D_pos, D_vel] = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
+                [gamma_cross, D_pos, D_vel, D_acc] = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
                 gamma_local = self.compute_local_consistency_factor(host_vehicle, target_vehicle, neighbors);
                 global_trust_sample = gamma_cross*gamma_local;
             end
@@ -501,10 +706,11 @@ classdef TriPTrustModel < handle
             % trust_sample_ext = 0.5*trust_sample  +  0.5*(gamma_cross * gamma_local);
 
             if (host_vehicle.scenarios_config.Monitor_sudden_change == true)
-                beta = self.monitor_sudden(gamma_cross , D_pos,D_vel);
+                beta = self.monitor_sudden(gamma_cross , D_pos,D_vel,D_acc);
             else
                 beta = 1; % Default value
             end
+
             %% Separate trust sample for local and global estimates
             if (host_vehicle.scenarios_config.Dichiret_type == "Single")
                 trust_sample_ext = local_trust_sample  * global_trust_sample ;
@@ -565,7 +771,7 @@ classdef TriPTrustModel < handle
 
         end
 
-        function beta = monitor_sudden(self,gamma_cross,D_pos,D_vel)
+        function beta = monitor_sudden(self,gamma_cross,D_pos,D_vel,D_acc)
             % --- New Code: Anomaly Detection and Trust Adjustment ---
 
             %% TODO in the case DOS ,so need to forget about the anomaly pos and velocity
@@ -584,6 +790,7 @@ classdef TriPTrustModel < handle
             % Log discrepancies
             self.D_pos_log = [self.D_pos_log, D_pos];
             self.D_vel_log = [self.D_vel_log, D_vel];
+            self.D_acc_log = [self.D_acc_log, D_acc];
 
             % Anomaly detection for position
             anomaly_pos = 0;
@@ -607,7 +814,26 @@ classdef TriPTrustModel < handle
                     anomaly_vel = 1;
                 end
             end
+            % Log the anomaly velocity
+
             self.anomaly_vel_log = [self.anomaly_vel_log, anomaly_vel];
+
+
+            % Anomaly detection for acceleration
+            anomaly_acc = 0;
+            if length(self.D_acc_log) >= self.w
+                window = self.D_acc_log(end-self.w+1:end);
+                mu_acc = mean(window);
+                sigma_acc = std(window);
+                if sigma_acc > 0 && abs(D_acc - mu_acc) > 2 * sigma_acc
+                    anomaly_acc = 1;
+                end
+            end
+            % Log the anomaly acceleration
+            self.anomaly_acc_log = [self.anomaly_acc_log, anomaly_acc];
+
+
+
             beta = 1; % Default value
             % Cumulative check for trust adjustment
             if length(self.anomaly_gamma_log) >= self.w
@@ -616,7 +842,8 @@ classdef TriPTrustModel < handle
                 anomaly_count_gamma = sum(self.anomaly_gamma_log(end-self.w+1:end));
                 anomaly_count_pos = sum(self.anomaly_pos_log(end-self.w+1:end));
                 anomaly_count_vel = sum(self.anomaly_vel_log(end-self.w+1:end));
-                min_anomali = min([anomaly_count_gamma, anomaly_count_pos, anomaly_count_vel, anomaly_drop_packet]);
+                anomaly_count_acc = sum(self.anomaly_acc_log(end-self.w+1:end));
+                min_anomali = min([anomaly_count_gamma, anomaly_count_pos, anomaly_count_vel, anomaly_count_acc, anomaly_drop_packet]);
                 if min_anomali > self.Threshold_anomalie
                     beta = (1-self.reduce_factor*min_anomali / self.w);
                 end
@@ -626,7 +853,7 @@ classdef TriPTrustModel < handle
 
 
         % Only compare with the directed neighbor (not all neighbors) , or more specific is the target vehicle
-        function [gamma_cross, D_pos, D_vel] = compute_cross_host_target_factor(self, host_id,host_vehicle, target_id,target_vehicle)
+        function [gamma_cross, D_pos, D_vel, D_acc] = compute_cross_host_target_factor(self, host_id,host_vehicle, target_id,target_vehicle)
             % Inputs:
             %   host_vehicle: The vehicle evaluating trust
             %   target_vehicle: The neighbor whose global estimate is being evaluated
@@ -638,34 +865,33 @@ classdef TriPTrustModel < handle
             host_global_estimate = host_vehicle.observer.est_global_state_current;
 
             % Get target vehicle's global estimate
-            target_global_estimate = target_vehicle.center_communication.get_global_state(target_id,host_id);
+            target_global_estimate = host_vehicle.center_communication.get_global_state(target_id,host_id);
 
-            % Compute covariance matrix (adaptive variance)
-            sigma2_diag_element = [2,1 ,0.01, 0.5 , 0.1];
-            sigma2_matrix = diag(sigma2_diag_element);
 
-            sigma2_pos = diag([2, 1]);    % Position (x, y)
-            sigma2_vel = diag([0.5]); % Velocity (vx, vy)
             % Compute total discrepancy D_i,l(k)
             D = 0;
             D_pos = 0;
             D_vel = 0;
-
+            D_acc = 0;
             num_vehicles = size(target_global_estimate,2);
             for j = 1:num_vehicles
 
                 % Position difference
                 pos_diff = target_global_estimate(1:2, j) - host_global_estimate(1:2, j);
-                D_pos = D_pos + pos_diff' * inv(sigma2_pos) * pos_diff;
+                D_pos = D_pos + pos_diff' * inv(self.sigma2_matrix_gamma_cross(1:2,1:2)) * pos_diff;
 
                 % Velocity difference
                 vel_diff = target_global_estimate(4, j) - host_global_estimate(4, j);
-                D_vel = D_vel + vel_diff' * inv(sigma2_vel) * vel_diff;
+                D_vel = D_vel + vel_diff' * inv(self.sigma2_matrix_gamma_cross(4,4)) * vel_diff;
+
+                % Acceleration difference
+                acc_diff = target_global_estimate(5, j) - host_global_estimate(5, j);
+                D_acc = D_acc + acc_diff' * inv(self.sigma2_matrix_gamma_cross(5,5)) * acc_diff;
 
 
-                % that is in the paper 
+                % that is in the paper
                 x_diff = target_global_estimate(:, j) - host_global_estimate(:, j);
-                D = D + x_diff' * inv(sigma2_matrix) * x_diff; % Mahalanobis distance
+                D = D + x_diff' * inv(self.sigma2_matrix_gamma_cross) * x_diff; % Mahalanobis distance
             end
 
             % Compute trust factor
@@ -693,12 +919,11 @@ classdef TriPTrustModel < handle
             predecessor = [];
             successor = [];
             host_id = host_vehicle.vehicle_number;
-            target_global_estimate = target_vehicle.center_communication.get_global_state(target_vehicle.vehicle_number , host_id);
+            target_global_estimate = host_vehicle.center_communication.get_global_state(target_vehicle.vehicle_number , host_id);
 
-            x_l_i = target_global_estimate([1,4], host_id); % In L car , get the estimate of the host vehicle (i is host)
+            x_l_i = target_global_estimate([1,4], host_id); % In L target vehicle , get the estimate of the host vehicle (i is host)
             % If position errors are around 2m and velocity errors around 1m/s
-            tau2_diag_element = [2 , 0.5] ;
-            tau2_matrix = diag(tau2_diag_element);
+
             E = 0; % Total error
 
             for m = 1:length(neighbors)
@@ -726,20 +951,20 @@ classdef TriPTrustModel < handle
                 % Get local measurement (e.g., relative position and velocity to predecessor)
                 % Assume local_measurements.predecessor is a vector [rel_pos; rel_vel]
                 host_distance_measurement = (predecessor.state(1) - host_vehicle.state(1)) - half_lenght_vehicle;
-                velocity_diff = abs(predecessor.state(4) - host_vehicle.state(4));
-                y_i_pred = [host_distance_measurement; velocity_diff];
+                velocity_diff_measurement = abs(predecessor.state(4) - host_vehicle.state(4));
+                y_i_predecessor = [host_distance_measurement; velocity_diff_measurement];
 
                 pred_id = predecessor.vehicle_number;
 
                 x_l_pred = target_global_estimate([1,4], pred_id); % In L car , get the estimate of the predceding of host vehicle (i + 1 is pred)
 
-                % Compute expected relative state from global estimate
+                % Compute  relative state from global estimate received
                 rel_state_est = abs(x_l_pred - x_l_i - [half_lenght_vehicle;0]);
 
                 % Compute consistency error e_i,l^(j)(k)
-                e = rel_state_est - y_i_pred;
+                e = rel_state_est - y_i_predecessor;
 
-                E =  e' * inv(tau2_matrix) * e + E;
+                E =  e' * inv(self.tau2_matrix_gamma_local) * e + E;
 
             end
 
@@ -747,8 +972,8 @@ classdef TriPTrustModel < handle
                 % Get local measurement (e.g., relative position and velocity to successor)
                 % Assume local_measurements.successor is a vector [rel_pos; rel_vel]
                 host_distance_measurement = (host_vehicle.state(1) - successor.state(1) ) - half_lenght_vehicle;
-                velocity_diff = abs(successor.state(4) - host_vehicle.state(4));
-                y_i_successor = [host_distance_measurement; velocity_diff]; % Host measurement
+                velocity_diff_measurement = abs(successor.state(4) - host_vehicle.state(4));
+                y_i_successor = [host_distance_measurement; velocity_diff_measurement]; % Host measurement
 
                 successor_id = successor.vehicle_number;
 
@@ -759,7 +984,7 @@ classdef TriPTrustModel < handle
 
                 % Compute consistency error e_i,l^(j)(k)
                 e = (rel_state_est - y_i_successor);
-                E = e' * inv(tau2_matrix) * e + E;
+                E = e' * inv(self.tau2_matrix_gamma_local) * e + E;
 
             end
 
@@ -769,41 +994,123 @@ classdef TriPTrustModel < handle
 
 
 
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % Plotting function %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+        function plot_details_acc_score(self, host_vehicle_number, target_vehicle_number)
+            % Plot acceleration score over time in a 3x3 grid layout
+            figure("Name", "Details Acc Score " + host_vehicle_number + "->" + target_vehicle_number);
+
+            tiledlayout(3, 3, 'TileSpacing', 'compact'); % use compact spacing
+
+            % Subplot 1: Relative Velocity
+            nexttile;
+            plot(self.v_rel_log, 'DisplayName', 'Relative Velocity', 'LineWidth', 1.5);
+            title('$v_{rel}$', 'Interpreter', 'latex');
+            ylim([-2 2]);
+            grid on;
+
+            % Subplot 2: Additional Distance
+            nexttile;
+            plot(self.d_add_log, 'DisplayName', 'Additional Distance', 'LineWidth', 1.5);
+            title('$d_{add}$', 'Interpreter', 'latex');
+            grid on;
+
+            % Subplot 3: Relative Acceleration
+            nexttile;
+            plot(self.acc_rel_log, 'DisplayName', 'Relative Acceleration', 'LineWidth', 1.5);
+            title('$acc_{rel}$', 'Interpreter', 'latex');
+            grid on;
+
+            % Subplot 4: Delta Acc Expected
+            nexttile;
+            plot(self.delta_acc_expected_log, 'DisplayName', 'Expected Acceleration Difference', 'LineWidth', 1.5);
+            title('$\Delta acc_{expec}$', 'Interpreter', 'latex');
+            grid on;
+
+            % Subplot 5: Distance
+            nexttile;
+            plot(self.distance_log, 'DisplayName', 'Distance Log', 'LineWidth', 1.5, 'Color', 'magenta');
+            title('Distance');
+            ylabel('Meters');
+            grid on;
+
+            % Subplot 6: Scale d Expected
+            nexttile;
+            plot(self.scale_d_expected_log, 'DisplayName', 'Scaled Expected Distance', 'LineWidth', 1.5);
+            xlabel('Time Step');
+            title(['Scale $$d_{expected}$$ ' num2str(host_vehicle_number) ' -> ' num2str(target_vehicle_number)], 'Interpreter', 'latex');
+            grid on;
+
+            % Subplot 7: Delta d
+            nexttile;
+            plot(self.delta_d_log, 'DisplayName', 'Delta Distance', 'LineWidth', 1.5);
+            title('$\Delta d$', 'Interpreter', 'latex');
+            ylabel('Meters');
+            grid on;
+
+            % If you want, you can leave the last two tiles blank or use them for legends, summary text, etc.
+        end
+
+
+        function plot_diff_acc_score(self , host_vehicle_number, target_vehicle_number)
+
+            figure("Name", "Diff Acc Score"+ host_vehicle_number + "->" + target_vehicle_number);
+            subplot(4,1,1);
+            plot(self.a_score_defaut_log, 'DisplayName', 'Default Acc Score', 'LineWidth', 1.5);
+            title('Default Acc Score $\frac{v_{rel}}{T_s}$', 'Interpreter', 'latex');
+            grid on;
+            subplot(4,1,2);
+            plot(self.a_score_diff_acc_log , 'DisplayName', 'Diff Acc Score', 'LineWidth', 1.5);
+            title('Diff Acc Score');
+            grid on;
+            subplot(4,1,3);
+            plot(self.a_score_expected_diff_acc_log, 'DisplayName', 'Expected Acceleration', 'LineWidth', 1.5);
+            title('Expected Diff Acceleration $\Delta acc_{expec}$', 'Interpreter', 'latex');
+            grid on;
+            subplot(4,1,4);
+            plot(self.a_score_vrel_dis_log, 'DisplayName', 'Vrel Dist', 'LineWidth', 1.5);
+            title('Vrel Dist $\frac{v_{rel}}{d(1)}$', 'Interpreter', 'latex');
+
+
+        end
+
 
         function plot_trust_log(self,nb_host_car , nb_target_car)
             figure("Name", num2str(nb_host_car) +  " Trust for " + num2str(nb_target_car), "NumberTitle", "off");
 
-            
+
 
             % hold on;
-            
-            subplot(3,1,1);   
-            
+            global_trust = self.gamma_local_log.*self.gamma_cross_log;
+            subplot(3,1,1);
+
             plot(self.gamma_cross_log, 'DisplayName', 'Gamma Cross', 'LineWidth', 1);
             hold on;
             plot(self.gamma_local_log, 'DisplayName', 'Gamma Local','LineWidth', 1);
+            plot(global_trust, 'DisplayName', 'Global Trust','LineWidth', 1.5);
             grid on;
             legend show;
-            
+
             %% Not use
             % plot(self.gamma_expected_log, 'DisplayName', 'Gamma expect', 'LineWidth', 1);
-            
-            
+
+
             subplot(3,1,2);
             plot(self.a_score_log, 'DisplayName', 'A Score', 'LineWidth', 1);
             hold on;
             plot(self.v_score_log, 'DisplayName', 'V Score', 'LineWidth', 1);
             plot(self.d_score_log, 'DisplayName', 'D Score', 'LineWidth', 1);
-            plot(self.trust_sample_log, 'DisplayName', 'Trust Sample', 'LineWidth', 1.2);
+            plot(self.trust_sample_log, 'DisplayName', 'Local Trust', 'LineWidth', 1.5);
             grid on;
 
             legend show;
 
-            
+
             subplot(3,1,3);
             plot(self.final_score_log, 'DisplayName', 'Final Score' , 'LineWidth', 1.5);
 
-            
             % plot(self.beacon_score_log, 'DisplayName', 'Beacon Score');
 
             xlabel('Time Step');

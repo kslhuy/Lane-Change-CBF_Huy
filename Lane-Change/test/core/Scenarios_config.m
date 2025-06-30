@@ -22,6 +22,13 @@ classdef Scenarios_config < handle
         use_local_data_from_other = false; % if the local data from other vehicles is used
 
         attacker_update_locally = true; % if the attacker is not updated from the others , only use local data
+
+        using_weight_trust = true; % if using weight trust
+
+        is_know_data_not_nearby = true ; % just for test purpose, Use that we have better Trust score , meaning that we know the data all of the other vehicles 
+        
+        control_use_accel = false; % Will override distributed observer with a prediction model
+        CACC_bidirectional = false; % If true, the CACC controller will consider both leading and following vehicles in the control law
     end
     methods
         function self = Scenarios_config(dt , simulation_time , scenario_where , controller_type ,data_type_for_u2, gamma_type , opinion_type, model_vehicle_type, debug_mode )
@@ -63,6 +70,9 @@ classdef Scenarios_config < handle
             end
         end
 
+        function set_usecontrol_accel(self, control_use_accel)
+            self.control_use_accel = control_use_accel;
+        end
 
         function set_Trip_Dichiret(self, dichiret_type)
             self.Dichiret_type = dichiret_type;
@@ -110,9 +120,18 @@ classdef Scenarios_config < handle
         % end
         end
 
+        function set_CACC_bidirectional(self, CACC_bidirectional)
+            self.CACC_bidirectional = CACC_bidirectional;
+        end
+
+        function set_using_weight_trust(self, using_weight_trust)
+            self.using_weight_trust = using_weight_trust;
+        end
 
 
-
+        function set_Test_better_trust(self , is_know_data_not_nearby)
+            self.is_know_data_not_nearby = is_know_data_not_nearby;
+        end
 
 
         function set_Use_local_data_from_other(self , use_local_data_from_other)

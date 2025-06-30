@@ -66,7 +66,7 @@ classdef Weight_Trust_module < handle
 
 
             N_i_t = trusted_neighbors_set; % Trusted neighbors (indices 1 to n)
-            n_w_i = max(self.kappa, length(N_i_t) + 1 + 1); % +1 for self
+            n_w_i = max(self.kappa, length(N_i_t) + 1 + 1); % +1 for self virtual node 
             weight = 1 / n_w_i;
 
             % Set self-weight: W(i+1, i+1)

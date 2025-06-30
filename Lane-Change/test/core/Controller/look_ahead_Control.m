@@ -41,8 +41,8 @@ classdef look_ahead_Control < handle % Extended Look-Ahead Controller for Lane-C
             [car_fc, ~, ~] = self.controller.get_surrounding_vehicles(x, lane_id, direction_flag,host_car_id);
 
             if isempty(car_fc)
-                disp("No car preceding")
-                disp(self.vehicle_number)
+                disp("No car preceding vehicle 4"+ num2str(host_car_id))
+                % disp()
                 acc = 0;
                 omega = 0;
                 input = [acc; omega];

@@ -26,6 +26,7 @@ classdef Observer < handle
         P_pred_dist; % Predicted error covariance for distributed observer
         S_log_dist; % Innovation covariance log for distributed observer
         self_belief_log; % Log for self-belief
+        u_j_last_predict = [0; 0]; % Last predicted control input for vehicle j
     end
     methods
         function self = Observer( vehicle , veh_param, inital_global_state, inital_local_state)
@@ -53,29 +54,30 @@ classdef Observer < handle
             self.reputation_scores = ones(num_vehicles, 1); % Initial reputation = 1
             self.P_pred_dist = eye(self.num_states); % Initial covariance
             self.S_log_dist = zeros(self.num_states, self.num_states, Nt); % Log innovation covariance
-            
+
 
             if (self.vehicle.scenarios_config.Local_observer_type == "kalman")
                 % Kalman Filter Parameters
 
                 self.P = eye(self.num_states);              % initial error covariance
 
-                if self.vehicle.scenarios_config.Is_noise_mesurement == true % if the measurement is noisy
-                    %% Noise Covariances
-                    % These are example values; adjust based on your system/sensor characteristics.
-                    % Measurement noise covariance R (variances on sensor measurements)
-                    self.R = diag([0.01, 0.01, 0.0003, 0.01 ,0.001 ]);  % variance for [x, y, theta, v]
-
-                    % Process noise covariance Q (model uncertainties)
-                    self.Q = diag([0.005, 0.005, 0.001, 0.01,0.001]);
-                else
-                    self.Q = 1e-6 * eye(self.num_states); % Small process noise covariance (no model error)
-                    self.R = 1e-10 * eye(self.num_states); % Very small measurement noise covariance (perfect measurements)
-                end
             elseif  (self.vehicle.scenarios_config.Local_observer_type == "observer")
                 % Observer Gain
                 desired_poles = [-1 -2 -3 -4 -5]; % Desired poles for the observer
                 self.L_gain = place(A', C', desired_poles)';
+            end
+
+            if self.vehicle.scenarios_config.Is_noise_mesurement == true % if the measurement is noisy
+                %% Noise Covariances
+                % These are example values; adjust based on your system/sensor characteristics.
+                % Measurement noise covariance R (variances on sensor measurements)
+                self.R = diag([0.1, 0.01, 0.0003, 0.01 ,0.0001 ]);  % variance for [x, y, theta, v]
+
+                % Process noise covariance Q (model uncertainties)
+                self.Q = diag([0.005, 0.005, 0.001, 0.01,0.001]);
+            else
+                self.Q = 1e-6 * eye(self.num_states); % Small process noise covariance (no model error)
+                self.R = 1e-10 * eye(self.num_states); % Very small measurement noise covariance (perfect measurements)
             end
         end
 
@@ -92,17 +94,39 @@ classdef Observer < handle
 
             % j is the vehicle we want to estimate
             for j = 1:num_vehicles
-                %% TODO : need change the weight out side (and make it Like in the paper Shenya)
+                %%%%%%%%% TODO : need change the weight out side (and make it Like Shengya told Huy to do)
                 %% if j is not host vehicle
                 % And local data of j is flag_local_est_check (not good)
                 % OR the final score of j is less than 0.5
                 % So we need to set the weight of local state to 0
-                if( (host_id ~= j )  && (self.vehicle.trip_models{j}.flag_local_est_check  ) )
+
+                if( abs(host_id - j )==1  && (self.vehicle.trip_models{j}.flag_local_est_check  ) )
                     weights_new  = weights;
                     weights_new(1) = 0;
                 else
                     weights_new  = weights;
                 end
+
+                % %%%----------------------- NOT use that below (its dont have Preserving recoverability , since it cut the local data)
+                % if( (host_id ~= j ))
+                %     if abs(host_id - j) == 1 && (self.vehicle.trip_models{j}.flag_local_est_check) % If we are the next vehicle in the chain
+                %         % If we are the next vehicle in the chain, we can use the local state of j
+                %         weights_new = weights;
+                %         weights_new(1) = 0; % Set the weight of local state to 0
+                %     else
+                %         if (self.vehicle.trust_log(1, instant_index, j) < 0.5) % If the final score of j is less than 0.5
+                %             % If the final score of j is less than 0.5, we cannot use the local state of j
+                %             weights_new = weights;
+                %             weights_new(1) = 0; % Set the weight of local state to 0
+                %         else
+                %             % If we are not the next vehicle in the chain, we can use the local state of j
+                %             weights_new = weights;
+                %         end
+                %     end
+                % else
+                %     weights_new  = weights;
+                % end
+                % %%%---------------------- NOT use that above
 
                 %%-----  Get local of j vehicle
                 x_bar_j = self.vehicle.center_communication.get_local_state(j,host_id);
@@ -120,7 +144,7 @@ classdef Observer < handle
                     x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k,self.vehicle.vehicle_number);
                     if ( isnan(x_hat_i_j_full))% Case DOS attack or no global state is received
                         x_hat_i_j_full = zeros(size(self.est_global_state_current)); % If we don't have local state of j vehicle
-                        weights_new(k+1) = 0; 
+                        weights_new(k+1) = 0;
                     end
                     x_hat_i_j(:,k) =  x_hat_i_j_full(:,j);
                 end
@@ -129,14 +153,12 @@ classdef Observer < handle
                 %% CONTROLLER
                 u_j =  Get_controller(self,j); % Get the control input of vehicle j
 
-                %% Just let the attacker update with its local state 
-                if (self.vehicle.scenarios_config.attacker_update_locally && ~isempty(self.vehicle.center_communication.attack_module.scenario))
-                    if host_id == self.vehicle.center_communication.attack_module.scenario(1).attacker_id
+                %% Just let the attacker update with its local state
+                if (self.vehicle.scenarios_config.attacker_update_locally )
+                    if (~isempty(self.vehicle.center_communication.attack_module.scenario ) && host_id == self.vehicle.center_communication.attack_module.scenario(1).attacker_id ) || (self.vehicle.scenarios_config.lead_senario ~= "constant" )
                         % If the host vehicle is the attacker, set all weights to 0
                         weights_new = zeros(size(weights));
                         weights_new(1) = weights(1); % Keep the local state weight
-                    else
-                        weights_new = weights; % Use the provided weights
                     end
                 end
 
@@ -154,7 +176,7 @@ classdef Observer < handle
                 else
                     % We need to wait for 3 seconds to check if the output is similar
                     % Because the observer need time to converge (to have a good estimation)
-                    
+
                     output_2 = distributed_Observer_each( self , self.vehicle.vehicle_number, j , x_bar_j , x_hat_i_j, u_j, weights_new , use_local_data_from_other , true);
                     % Check if 2 ouput is similar , in a range
                     [is_ok, log_elem, confidence] = check_elementwise_similarity(self, output, output_2, instant_index, j);
@@ -210,7 +232,7 @@ classdef Observer < handle
 
             if predict_only %% Just use the last state and predict the next state , maybe use also the last control
                 if (host_id == j)
-                    x_hat_i_j(: , host_id)  =  x_hat_i_j(: , host_id) + w_i0 * (x_bar_j - x_hat_i_j(: , host_id))  ; 
+                    x_hat_i_j(: , host_id)  =  x_hat_i_j(: , host_id) + w_i0 * (x_bar_j - x_hat_i_j(: , host_id))  ;
                 end
                 [output, ~, S] = self.predict_kalman_dist(host_id, j, x_hat_i_j(:, host_id), u_j);
                 self.S_log_dist(:, :, host_id) = S; % Store for check_elementwise_similarity
@@ -263,20 +285,41 @@ classdef Observer < handle
                 u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
 
             else % "predict_other"
-                % Calculate the control input for each vehicle locally by the estimated state of other vehicle
 
-                if (self.vehicle.vehicle_number ~= 1) % not lead vehicle
+
+                if (self.vehicle.vehicle_number ~= 1) % we are not lead vehicle
                     if (j==1) % if we are estimating the lead vehicle controller
                         u_j = [0;0]; % keep the lead vehicle's control input as zero
                     elseif j == self.vehicle.vehicle_number % if we are estimating our own vehicle
                         u_j = self.vehicle.input; % Control input of the current vehicle
-                    else % if we are estimating another vehicle
-                        est_local_j =  self.est_global_state_current(:,j); % get est_local_j in our host vehicle
-                        [~, u_j ,~] = self.vehicle.controller2.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
+                    else % if we are estimating another vehicle (Depending on the controller type)
+                        % Calculate the control input for each vehicle locally by the estimated state of other vehicle
+                        if(self.vehicle.scenarios_config.controller_type == "coop")
+                            % If we are using cooperative control, we need to use the estimated state of the vehicle
+                            est_local_j =  self.est_global_state_current(:,j); % get est_local_j in our host vehicle
+                            [~, u_j ,~] = self.vehicle.controller2.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
+                        elseif (self.vehicle.scenarios_config.controller_type == "local")
+                            est_local_j =  self.est_global_state_current(:,j); % get est_local_j in our host vehicle
+                            [~, u_j ,~] = self.vehicle.controller.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
+                        else %"mix" 
+                            est_local_j =  self.est_global_state_current(:,j); % get est_local_j in our host vehicle
+                            [~, u_1_predict ,~] = self.vehicle.controller1.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
+                            [~, u_2_predict ,~] = self.vehicle.controller2.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
+                            U_target = [0,0];
+
+                            U_target(1) = (1 - self.gamma)*u_1_predict(1) + self.gamma*u_2_predict(1);
+                            u_j = u_1_predict;
+                            u_j(1) = self.u_j_last_predict(1) + self.vehicle.Param_opt.tau_filter*(U_target(1) - self.u_j_last_predict(1)) ; 
+                            % update the last predicted input ()
+                            % TODO : First impression , look not good , beacause they delay not change quickly
+                            self.u_j_last_predict = u_j;
+                        end
                     end
-                else % Is lead vehicle
+                else % If we are lead vehicle, we are estimating our own vehicle , So use directly the input
                     u_j = self.vehicle.input;
                 end
+
+
             end
         end
 
@@ -285,8 +328,8 @@ classdef Observer < handle
             [A , B]  = self.matrix();
 
             if self.vehicle.scenarios_config.Is_noise_mesurement == true
-                % process_noise = mvnrnd(zeros(4,1), Q)';  % sample process noise
-                measurement_noise = mvnrnd(zeros(4,1), self.R)';  % sample measurement noise
+                % process_noise = mvnrnd(zeros(self.num_states,1), Q)';  % sample process noise
+                measurement_noise = mvnrnd(zeros(self.num_states,1), self.R)';  % sample measurement noise
                 mesure_state = mesure_state + measurement_noise; % Add noise to the measurement
             end
 
@@ -478,7 +521,7 @@ classdef Observer < handle
             end
         end
 
-        function [global_dist_err, global_theta_err, global_vel_err] = calculate_global_errors(self)
+        function [global_dist_err, global_theta_err, global_vel_err,global_acc_err] = calculate_global_errors(self)
             % Extract actual and estimated states for error calculation
             estimated_states = self.est_global_state_log; % size: [num_states, num_time_steps, num_vehicles]
             % actual_states = self.vehicle.state_log;      % size: [num_states, num_time_steps]
@@ -496,6 +539,8 @@ classdef Observer < handle
             dist_err = zeros(num_vehicles, num_time_steps);
             theta_err = zeros(num_vehicles, num_time_steps);
             vel_err = zeros(num_vehicles, num_time_steps);
+            acc_err = zeros(num_vehicles, num_time_steps);
+
 
             % Calculate errors for each vehicle at each time step
             for v = 1:num_vehicles
@@ -511,6 +556,8 @@ classdef Observer < handle
 
                     % Velocity error
                     vel_err(v, t) = abs(est(4) - act(4));
+
+                    acc_err(v, t) = abs(est(5) - act(5));
                 end
             end
 
@@ -518,6 +565,8 @@ classdef Observer < handle
             global_dist_err = mean(dist_err, 2);  % [num_vehicles, 1]
             global_theta_err = mean(theta_err, 2); % [num_vehicles, 1]
             global_vel_err = mean(vel_err, 2);    % [num_vehicles, 1]
+            global_acc_err = mean(acc_err, 2);    % [num_vehicles, 1]
+
         end
 
 

@@ -226,6 +226,9 @@ classdef Attack_module < handle
                         case 'scaling'
                             perturbation(attack_rows) = x_bar_j(attack_rows) * fault_intensity;
                             x_bar_j(attack_rows) = x_bar_j(attack_rows) * (1 + fault_intensity);
+                        case 'linear'
+                            perturbation(attack_rows) = fault_intensity * (timestamp - self.scenario(i).start_time);
+                            x_bar_j(attack_rows) = x_bar_j(attack_rows) + perturbation(attack_rows);
                         case 'sinusoidal'
                             amplitude = fault_intensity.amplitude;
                             frequency = fault_intensity.frequency;
