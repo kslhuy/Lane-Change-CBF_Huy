@@ -29,9 +29,14 @@ classdef Scenarios_config < handle
         
         control_use_accel = false; % Will override distributed observer with a prediction model
         CACC_bidirectional = false; % If true, the CACC controller will consider both leading and following vehicles in the control law
+    
+        MAX_PREDICT_ONLY_TIME = 5; % seconds
+        N_good = 3; % Number of consecutive good steps to exit predict_only
+        blend_thresh = 10; % You can tune this threshold
+
     end
     methods
-        function self = Scenarios_config(dt , simulation_time , scenario_where , controller_type ,data_type_for_u2, gamma_type , opinion_type, model_vehicle_type, debug_mode )
+        function self = Scenarios_config(dt , simulation_time , scenario_where , controller_type ,data_type_for_u2, gamma_type , opinion_type, model_vehicle_type )
             self.dt = dt;
             self.simulation_time = simulation_time;
             self.where = scenario_where;
@@ -47,7 +52,7 @@ classdef Scenarios_config < handle
 
             self.model_vehicle_type = model_vehicle_type; % "delay_v" , "delay_a" , "normal"
 
-            self.debug_mode = debug_mode;
+            % self.debug_mode = debug_mode;
             % self.Dichiret_type = "constant"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
         end
 
@@ -89,6 +94,10 @@ classdef Scenarios_config < handle
         function lead_input = get_LeadInput(self , instant_index)
             if self.lead_senario == "constant"
                 lead_input = 0;
+
+                % time = self.dt * instant_index;
+                % lead_input = 1*sin(4 * pi * time / 10) ; % Example sinusoidal input for testing
+
             else
                 time = self.dt * instant_index;
                 if time >= 10 && time < 15
@@ -101,6 +110,7 @@ classdef Scenarios_config < handle
                     end
                 else
                     lead_input = 0;
+                    lead_input = 2*sin(2 * pi * time / 10) ; % Example sinusoidal input for testing
                 end
             end
 
@@ -155,6 +165,13 @@ classdef Scenarios_config < handle
 
         function set_monitor_sudden_change(self, monitor_sudden_change)
             self.Monitor_sudden_change = monitor_sudden_change;
+        end
+
+        function set_parmeter_prediction_switch_observer(self, MAX_PREDICT_ONLY_TIME, N_good , blend_thresh)
+            % Set parameters for prediction in observer
+            self.MAX_PREDICT_ONLY_TIME = MAX_PREDICT_ONLY_TIME; % seconds
+            self.N_good = N_good; % Number of consecutive good steps to exit predict_only
+            self.blend_thresh = blend_thresh; % Blending threshold
         end
     end
 end

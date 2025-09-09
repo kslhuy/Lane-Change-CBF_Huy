@@ -1,35 +1,22 @@
 classdef Vehicle < handle
     properties
+        % Vehicle identity and configuration
         vehicle_number;
-
         typeController;
         initial_lane_id; % initial lane id of the vehicle
-        lane_id; % curren lane id of the vehicle
+        lane_id; % current lane id of the vehicle
         param; % Parameters of the vehicle
-        state; % current state of the vehicle (   X , Y , phi , velocity, acceleration        )
-        state_log; % history of states
-        input; % current input of the vehicle
-        input_log; % history of inputs (= to U_final)
-
-        controller;
-        controller2;
-
-        dt; % time gap for simulation
-        total_time_step; % total time steps for simulation
         lanes;
-        direction_flag; % 1 stands for changing to the left adjacent lane, 0 stands for keeping the current lane, -1 stands for changing
-        % to the right adjacent lane
+        direction_flag; % 1 stands for changing to the left adjacent lane, 0 stands for keeping the current lane, -1 stands for changing to the right adjacent lane
         acc_flag;
         scenarios_config;
-        other_log;
-        observer;
-        other_vehicles;
         weight_module;
-        num_vehicles;
-        trip_models;
-        center_communication; % Add a reference to the CenterCommunication object
-        graph;
-        trust_log;
+
+        % State and control
+        state; % current state (X, Y, phi, velocity, acceleration)
+        state_log; % history of states
+        input; % current input
+        input_log; % history of inputs (= to U_final)
         u1_log;
         u2_log;
         u_target_log;
@@ -37,51 +24,65 @@ classdef Vehicle < handle
         gamma_log;
         Param_opt; % Optimization parameters for the vehicle
 
+        % Simulation
+        dt; % time gap for simulation
+        total_time_step; % total time steps for simulation
+
+        % Networking and trust
+        other_vehicles;
+        num_vehicles;
+        trip_models;
+        center_communication; % Reference to CenterCommunication object
+        graph;
+        trust_log;
+        other_log;
+
+        % Observer
+        observer;
+
+        % Controllers
+        controller;
+        controller2;
     end
     methods
-        function self = Vehicle(vehicle_number , typeController, veh_param, state_initial, initial_lane_id, lanes, direction_flag, acc_flag, scenarios_config,weight_module)
-
+        function self = Vehicle(vehicle_number, typeController, veh_param, state_initial, initial_lane_id, lanes, direction_flag, acc_flag, scenarios_config, weight_module)
+            % Constructor for Vehicle class
             self.scenarios_config = scenarios_config;
             self.dt = scenarios_config.dt;
-            self.total_time_step = scenarios_config.simulation_time/self.dt;
+            self.total_time_step = scenarios_config.simulation_time / self.dt;
 
-            self.vehicle_number = vehicle_number ;
-
-            self.state = state_initial;
-
+            self.vehicle_number = vehicle_number;
+            self.typeController = typeController;
             self.param = veh_param;
-
-            % at first time step, the current input is same as initial input
+            self.state = state_initial;
             self.state_log = state_initial;
-
-            % the first element of inputs' history
+            self.input = [0; 0]; % initial input
+            self.input_log = self.input;
             self.initial_lane_id = initial_lane_id;
             self.lane_id = initial_lane_id;
             self.lanes = lanes;
             self.direction_flag = direction_flag;
             self.acc_flag = acc_flag;
-
             self.other_log = [initial_lane_id; 1];
-
-            self.typeController = typeController;
-            % at first time step, the current state of the vehicle is same to initial state
-            self.input = [0;0]; % at first time step, the current input is same as initial input
-            % the first element of states' history
-            self.input_log = self.input;
             self.weight_module = weight_module;
+            self.gamma = 0.5; % initial gamma value
+            % Preallocate logs for efficiency (if sizes known)
+            self.u1_log = [];
+            self.u2_log = [];
+            self.u_target_log = [];
+            self.gamma_log = [];
         end
 
 
-        %% ----- Very important function -----
-        %% Assign the other vehicles to the ego vehicle , and many other things
-        function assign_neighbor_vehicle(self, other_vehicles, controller_goal ,typeController_2, center_communication, graph)
+
+        %% Assign the other vehicles to the ego vehicle, and initialize controllers, observer, trust, etc.
+        function assign_neighbor_vehicle(self, other_vehicles, controller_goal, typeController_2, center_communication, graph)
             self.graph = graph;
-            disp('Assigning other vehicles');
             self.other_vehicles = other_vehicles;
 
+            % Local and global state initialization
             state_initial = self.state;
-            % local state of the ego vehicle
-            inital_local_state = state_initial;
+            inital_local_state = zeros(length(state_initial), 1);
 
 
             %-------- To get global state
@@ -97,29 +98,30 @@ classdef Vehicle < handle
 
             connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
 
+            % Optimization parameters
             self.Param_opt = ParamOptEgo(self.dt);
+
+            % Controller 1
             if self.typeController == "None"
                 self.controller = [];
             else
-                self.controller = Controller(self,controller_goal , self.typeController, self.Param_opt, self.param, self.lanes,connected_vehicles_idx); % Create a controller for the vehicle
+                self.controller = Controller(self, controller_goal, self.typeController, self.Param_opt, self.param, self.lanes, connected_vehicles_idx); % Create a controller for the vehicle
             end
 
-
+            % Controller 2
             if typeController_2 == "None"
                 self.controller2 = [];
             else
-                self.controller2 = Controller(self,controller_goal , typeController_2, self.Param_opt, self.param, self.lanes,connected_vehicles_idx); % Create a controller for the vehicle
+                self.controller2 = Controller(self, controller_goal, typeController_2, self.Param_opt, self.param, self.lanes, connected_vehicles_idx); % Create a controller for the vehicle
             end
 
+            % Trust and communication setup
             self.num_vehicles = length(self.other_vehicles);
-            %% Create trust models for the vehicle
-            self.trip_models = arrayfun(@(x) TriPTrustModel(), 1:self.num_vehicles, 'UniformOutput', false);
-            self.trust_log = zeros(1, self.total_time_step, self.num_vehicles);
-            self.trust_log(1, 1, :) = 1; % Inital trust is 1 for all vehicle
+            self.trip_models = arrayfun(@(x) TriPTrustModel(), 1:self.num_vehicles, 'UniformOutput', false); % Trust models
+            self.trust_log = zeros(1, self.total_time_step, self.num_vehicles); % Trust log
+            self.trust_log(1, 1, :) = 1; % Initial trust is 1 for all vehicles
 
-
-
-            %% Update inital value for center_communcation
+            % Center communication
             self.center_communication = center_communication; % Initialize the CenterCommunication reference
             self.center_communication.register_vehicle(self); % Register the vehicle with the central communication hub
 
@@ -127,31 +129,30 @@ classdef Vehicle < handle
 
         function update(self,instant_index)
 
-
-            %% Identify vehicles is connected with the ego vehicle's
+            % Identify vehicles connected with the ego vehicle
             connected_vehicles_idx = find(self.graph(self.vehicle_number, :) == 1); % Get indices of connected vehicles
-            %% Calculate trust and opinion scores directly in self.trust_log
 
-            calculateTrustAndOpinion3(self, instant_index, connected_vehicles_idx );
+            % Calculate trust and opinion scores directly in self.trust_log
+            self.calculateTrustAndOpinion3(instant_index, connected_vehicles_idx);
 
-            %% Weigth trust update
-            if (self.scenarios_config.using_weight_trust && instant_index*self.dt >= 3)
-                weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number , self.trust_log(1, instant_index, :) , "equal");
+            % Weight trust update
+            if (self.scenarios_config.using_weight_trust && instant_index * self.dt >= 3)
+                weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number, self.trust_log(1, instant_index, :), "equal");
             else
-                weights_Dis = self.weight_module.calculate_weights_Defaut(self.vehicle_number );
+                weights_Dis = self.weight_module.calculate_weights_Defaut(self.vehicle_number);
             end
-            %% Update normal car dynamics , like controller and observer
-            normal_car_update(self,instant_index , weights_Dis);
-            % TODO : update the input log , currently it is updated in the SIMULATOR class
-            % send_data(self,instant_index)
 
-
+            % Update normal car dynamics, like controller and observer
+            self.normal_car_update(instant_index, weights_Dis);
+            % TODO: update the input log, currently it is updated in the SIMULATOR class
+            % self.send_data(instant_index)
         end
 
         function send_data(self,instant_index)
+
             %% Send to center communication
-            self.center_communication.update_local_state(self.vehicle_number, self.observer.est_local_state_current , instant_index);
-            self.center_communication.update_global_state(self.vehicle_number, self.observer.est_global_state_current , instant_index);
+            self.center_communication.update_local_state(self.vehicle_number, self.observer.est_local_state_current, instant_index);
+            self.center_communication.update_global_state(self.vehicle_number, self.observer.est_global_state_current, instant_index);
             self.center_communication.update_trust(self.vehicle_number, self.trust_log(1, instant_index, :));
             self.center_communication.update_input(self.vehicle_number, self.input);
 
@@ -520,7 +521,7 @@ classdef Vehicle < handle
                             %% mix non_nearby trust
                             opinion_neigbor = neighbor_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
                             opinion_distance = distance_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
-                            self.trust_log(1, instant_index, vehicle_id) = 0.4*(self.trust_log(1, instant_index, vehicle_id)) + 0.3*opinion_neigbor + 0.3*opinion_distance ;
+                            self.trust_log(1, instant_index, vehicle_id) = 0.6*(self.trust_log(1, instant_index, vehicle_id)) + 0.2*opinion_neigbor + 0.2*opinion_distance ;
                             % self.trust_log(1, instant_index, vehicle_id) = (opinion_neigbor + opinion_distance )/ 2;
                         end
 
@@ -635,6 +636,7 @@ classdef Vehicle < handle
                     % plot(vehicles(v).state_log(state_idx, 1:end-1), 'DisplayName', ['Vehicle ', num2str(v)]);
                     hold on;
                     % plot(self.observer.est_global_state_log(state_idx, 1:end, v), 'DisplayName', ['Vehicle ', num2str(v)]);
+                    ylim([-1, 1]); % Set y-axis limits for better visibility
                 end
                 title(state_labels{state_idx});
                 % xlabel('Time (s)');

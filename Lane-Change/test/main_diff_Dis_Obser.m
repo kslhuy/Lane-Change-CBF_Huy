@@ -73,7 +73,7 @@ if (debug_mode )
     % dbstop in Observer at 75 if instant_index>=1000;
 end
 
-Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type,debug_mode );
+Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type );
 % Observer related
 Scenarios_config.set_predict_controller_type(predict_controller_type);
 Scenarios_config.set_Local_observer_type(Local_observer_type);
@@ -167,7 +167,7 @@ for case_idx = 1:length(array_use_local_data_from_other)
 
     %% define a simulator and start simulation
     simulator0 = Simulator(straightLanes, [] , platton_vehicles, Scenarios_config.dt , IsShowAnimation );
-    [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time);
+    [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time,t_star, t_end, attacker_vehicle_id);
 
 
 

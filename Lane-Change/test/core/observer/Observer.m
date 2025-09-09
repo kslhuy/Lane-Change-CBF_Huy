@@ -27,6 +27,9 @@ classdef Observer < handle
         S_log_dist; % Innovation covariance log for distributed observer
         self_belief_log; % Log for self-belief
         u_j_last_predict = [0; 0]; % Last predicted control input for vehicle j
+
+        predict_only_counter = []; % Counter for consecutive good steps in prediction-only mode
+        predict_only_timer =   []; % Timer for prediction-only mode
     end
     methods
         function self = Observer( vehicle , veh_param, inital_global_state, inital_local_state)
@@ -47,8 +50,12 @@ classdef Observer < handle
             self.est_local_state_log = zeros(self.num_states, Nt);
             self.est_local_state_log(:,1) = inital_local_state;
 
-            self.tolerances = [5, 2, deg2rad(8), 2 , 1]; % Tolerances for each state [X, Y, theta, V, A]
+            self.tolerances = [4, 2, deg2rad(8), 2 , 1]; % Tolerances for each state [X, Y, theta, V, A]
 
+
+
+            self.predict_only_counter = zeros(num_vehicles, 1);
+            self.predict_only_timer = zeros(num_vehicles, 1);
             % NEW : for calculate the self belief = gamma in the controller
             self.self_belief = 1; % Initial self-belief
             self.reputation_scores = ones(num_vehicles, 1); % Initial reputation = 1
@@ -89,110 +96,25 @@ classdef Observer < handle
             host_id = self.vehicle.vehicle_number; % The vehicle that is estimating the state of other vehicles
             confidence_scores = zeros(num_vehicles, 1); % Store per-vehicle confidence
 
-
-
-
             % j is the vehicle we want to estimate
             for j = 1:num_vehicles
-                %%%%%%%%% TODO : need change the weight out side (and make it Like Shengya told Huy to do)
-                %% if j is not host vehicle
-                % And local data of j is flag_local_est_check (not good)
-                % OR the final score of j is less than 0.5
-                % So we need to set the weight of local state to 0
-
-                if( abs(host_id - j )==1  && (self.vehicle.trip_models{j}.flag_local_est_check  ) )
-                    weights_new  = weights;
-                    weights_new(1) = 0;
-                else
-                    weights_new  = weights;
-                end
-
-                % %%%----------------------- NOT use that below (its dont have Preserving recoverability , since it cut the local data)
-                % if( (host_id ~= j ))
-                %     if abs(host_id - j) == 1 && (self.vehicle.trip_models{j}.flag_local_est_check) % If we are the next vehicle in the chain
-                %         % If we are the next vehicle in the chain, we can use the local state of j
-                %         weights_new = weights;
-                %         weights_new(1) = 0; % Set the weight of local state to 0
-                %     else
-                %         if (self.vehicle.trust_log(1, instant_index, j) < 0.5) % If the final score of j is less than 0.5
-                %             % If the final score of j is less than 0.5, we cannot use the local state of j
-                %             weights_new = weights;
-                %             weights_new(1) = 0; % Set the weight of local state to 0
-                %         else
-                %             % If we are not the next vehicle in the chain, we can use the local state of j
-                %             weights_new = weights;
-                %         end
-                %     end
-                % else
-                %     weights_new  = weights;
-                % end
-                % %%%---------------------- NOT use that above
-
-                %%-----  Get local of j vehicle
-                x_bar_j = self.vehicle.center_communication.get_local_state(j,host_id);
-                if ( isnan(x_bar_j)) % Case DOS attack or no local state is received
-                    x_bar_j = zeros(size(self.est_local_state_current)); % If we don't have local state of j vehicle
-                    weights_new(1) = 0;
-                end
-
-                % ------- Get global state of other vehicles
-                % Go through all the other vehicles , start from the second vehicle
-                x_hat_i_j = zeros(self.num_states, num_vehicles); % Initialize the variable to store the global state of other vehicles
-
-                for k = 1:num_vehicles
-                    % Go in car number "k" , Get car "j" in global estimat of "k"
-                    x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k,self.vehicle.vehicle_number);
-                    if ( isnan(x_hat_i_j_full))% Case DOS attack or no global state is received
-                        x_hat_i_j_full = zeros(size(self.est_global_state_current)); % If we don't have local state of j vehicle
-                        weights_new(k+1) = 0;
-                    end
-                    x_hat_i_j(:,k) =  x_hat_i_j_full(:,j);
-                end
-
-
-                %% CONTROLLER
-                u_j =  Get_controller(self,j); % Get the control input of vehicle j
-
-                %% Just let the attacker update with its local state
-                if (self.vehicle.scenarios_config.attacker_update_locally )
-                    if (~isempty(self.vehicle.center_communication.attack_module.scenario ) && host_id == self.vehicle.center_communication.attack_module.scenario(1).attacker_id ) || (self.vehicle.scenarios_config.lead_senario ~= "constant" )
-                        % If the host vehicle is the attacker, set all weights to 0
-                        weights_new = zeros(size(weights));
-                        weights_new(1) = weights(1); % Keep the local state weight
-                    end
-                end
-
+                weights_new = self.get_weights_for_vehicle(j, host_id, weights, instant_index);
+                x_bar_j = self.get_local_state_for_vehicle(j, host_id, weights_new);
+                x_hat_i_j = self.get_global_states_for_vehicle(j, num_vehicles, host_id, weights_new);
+                u_j = self.Get_controller(j);
+                weights_new = self.adjust_weights_for_attacker(j, host_id, weights_new);
                 use_local_data_from_other = self.vehicle.scenarios_config.use_local_data_from_other;
-                %% Estimate the state of vehicle j using the distributed observer
-                output = distributed_Observer_each( self , self.vehicle.vehicle_number, j , x_bar_j , x_hat_i_j, u_j, weights_new ,use_local_data_from_other , false);
-
-
+                output = self.distributed_Observer_each(self.vehicle.vehicle_number, j, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, false);
                 self.update_reputation(j, output, x_bar_j);
-
-                % Check if we want to use the estimated state of vehicle j or not
                 if instant_index*self.param_sys.dt < 3
-                    Big_X_hat_1_tempo(:,j) = output; % Append the result
-                    self.Is_ok_log = [self.Is_ok_log ,true];
+                    Big_X_hat_1_tempo(:,j) = output;
+                    self.Is_ok_log = [self.Is_ok_log, true];
                 else
-                    % We need to wait for 3 seconds to check if the output is similar
-                    % Because the observer need time to converge (to have a good estimation)
-
-                    output_2 = distributed_Observer_each( self , self.vehicle.vehicle_number, j , x_bar_j , x_hat_i_j, u_j, weights_new , use_local_data_from_other , true);
-                    % Check if 2 ouput is similar , in a range
-                    [is_ok, log_elem, confidence] = check_elementwise_similarity(self, output, output_2, instant_index, j);
-                    confidence_scores(j) = confidence;
-                    self.Is_ok_log = [self.Is_ok_log ,is_ok];
-                    if ~is_ok && self.vehicle.scenarios_config.Use_predict_observer
-                        self.log_element = [self.log_element, log_elem]; % Append the first element
-                        Big_X_hat_1_tempo(:,j) = output_2; % Append the result
-                    else
-                        Big_X_hat_1_tempo(:,j) = output; % Append the result
-                    end
-
+                    [Big_X_hat_1_tempo(:,j), temp_confidence_scores] = self.handle_predict_only_switch(j, num_vehicles, output, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, instant_index, confidence_scores);
+                    confidence_scores = temp_confidence_scores;
                 end
-
-
             end
+
             self.self_belief = 1; % Reset self-belief for next iteration
             % Compute self_belief as average of confidence scores
             if instant_index * self.param_sys.dt > 3
@@ -205,6 +127,135 @@ classdef Observer < handle
             %% Save the global state estmate to log
             self.est_global_state_current = Big_X_hat_1_tempo;
             self.est_global_state_log(:, instant_index, :) = Big_X_hat_1_tempo;
+        end
+
+        function weights_new = get_weights_for_vehicle(self, j, host_id, weights, instant_index)
+            % Determine weights for a given vehicle based on local data/trust
+            if abs(host_id - j) == 1 && (self.vehicle.trip_models{j}.flag_local_est_check)
+                weights_new = weights;
+                weights_new(1) = 0;
+            else
+                weights_new = weights;
+            end
+        end
+
+        function x_bar_j = get_local_state_for_vehicle(self, j, host_id, weights_new)
+            % Get local state for vehicle j, handle missing data
+            x_bar_j = self.vehicle.center_communication.get_local_state(j, host_id);
+            if isnan(x_bar_j)
+                x_bar_j = zeros(size(self.est_local_state_current));
+                weights_new(1) = 0;
+            end
+        end
+
+        function x_hat_i_j = get_global_states_for_vehicle(self, j, num_vehicles, host_id, weights_new)
+            % Get global state estimates for all vehicles
+            x_hat_i_j = zeros(self.num_states, num_vehicles);
+            for k = 1:num_vehicles
+                x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k, self.vehicle.vehicle_number);
+                if isnan(x_hat_i_j_full)
+                    x_hat_i_j_full = zeros(size(self.est_global_state_current));
+                    weights_new(k+1) = 0;
+                end
+                x_hat_i_j(:, k) = x_hat_i_j_full(:, j);
+            end
+        end
+
+        function weights_new = adjust_weights_for_attacker(self, j, host_id, weights_new)
+            % Adjust weights if host is attacker
+            if self.vehicle.scenarios_config.attacker_update_locally
+                if (~isempty(self.vehicle.center_communication.attack_module.scenario) && host_id == self.vehicle.center_communication.attack_module.scenario(1).attacker_id) || (self.vehicle.scenarios_config.lead_senario ~= "constant")
+                    weights_new = zeros(size(weights_new));
+                    weights_new(1) = 1; % Keep the local state weight
+                end
+            end
+        end
+
+        function [output_final, confidence_scores] = handle_predict_only_switch(self, j, num_vehicles, output, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, instant_index, confidence_scores)
+            % Improved: add time limit and blending for prediction-only mode
+            
+            MAX_PREDICT_ONLY_TIME = self.vehicle.scenarios_config.MAX_PREDICT_ONLY_TIME; % seconds
+            N_good = self.vehicle.scenarios_config.N_good; % Number of consecutive good steps to exit predict_only
+            dt = self.param_sys.dt;
+            if isempty(self.predict_only_counter)
+                self.predict_only_counter = zeros(num_vehicles, 1);
+            end
+            if isempty(self.predict_only_timer)
+                self.predict_only_timer = zeros(num_vehicles, 1);
+            end
+
+            output_2 = self.distributed_Observer_each(self.vehicle.vehicle_number, j, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, true);
+            [is_ok, log_elem, confidence] = self.check_elementwise_similarity(output, output_2, instant_index, j);
+            confidence_scores(j) = confidence;
+            self.Is_ok_log = [self.Is_ok_log, is_ok];
+
+            % % Logging: similarity check result
+            % fprintf('[Observer] t=%.2f, Vehicle %d: Similarity check: is_ok=%d, confidence=%.3f\n', instant_index*dt, j, is_ok, confidence);
+
+            % prev_mode = 'normal';
+            % if self.predict_only_counter(j) < N_good
+            %     prev_mode = 'prediction-only';
+            % end
+
+            if is_ok
+                self.predict_only_counter(j) = self.predict_only_counter(j) + 1;
+                if self.predict_only_counter(j) == N_good
+                    % Logging: switching back to normal mode
+                    % fprintf('[Observer] t=%.2f, Vehicle %d: Switching from prediction-only to NORMAL mode (N_good reached)\n', instant_index*dt, j);
+                end
+            else
+                if self.predict_only_counter(j) >= N_good
+                    % Logging: switching to prediction-only mode
+                    % fprintf('[Observer] t=%.2f, Vehicle %d: Switching from NORMAL to prediction-only mode (bad data detected)\n', instant_index*dt, j);
+                end
+                self.predict_only_counter(j) = 0;
+            end
+
+            % If in prediction-only mode, increment timer
+            if self.predict_only_counter(j) < N_good && (~is_ok && self.vehicle.scenarios_config.Use_predict_observer)
+                self.predict_only_timer(j) = self.predict_only_timer(j) + dt;
+                % Logging: prediction-only timer increment
+                % fprintf('[Observer] t=%.2f, Vehicle %d: In prediction-only mode, timer=%.2f/%.2f\n', instant_index*dt, j, self.predict_only_timer(j), MAX_PREDICT_ONLY_TIME);
+            else
+                if self.predict_only_timer(j) > 0
+                    % Logging: prediction-only timer reset
+                    % fprintf('[Observer] t=%.2f, Vehicle %d: Exiting prediction-only mode, timer reset.\n', instant_index*dt, j);
+                end
+                self.predict_only_timer(j) = 0;
+            end
+
+            % If prediction-only mode has lasted too long, force switch back
+            if self.predict_only_timer(j) >= MAX_PREDICT_ONLY_TIME
+                % fprintf('[Observer] t=%.2f, Vehicle %d: Prediction-only mode exceeded max time (%.2fs). Forcing switch to NORMAL mode.\n', instant_index*dt, j, MAX_PREDICT_ONLY_TIME);
+                output_final = output; % Force trust new data
+                self.predict_only_counter(j) = N_good; % Reset counter to allow normal mode
+                self.predict_only_timer(j) = 0;
+                return;
+            end
+
+            % Blending: if drift is large but data is likely good, blend outputs
+            if self.predict_only_counter(j) < N_good && is_ok == false && self.vehicle.scenarios_config.Use_predict_observer
+                % Weighted norm: scale each state by its tolerance
+                weights = 1 ./ self.tolerances(:); % column vector
+                diff_vec = (output - output_2) .* weights;
+                diff_norm = norm(diff_vec);
+                blend_thresh = self.vehicle.scenarios_config.blend_thresh; % You can tune this threshold
+                if diff_norm < blend_thresh
+                    alpha = min(0.5, diff_norm / blend_thresh); % Blend factor
+                    output_final = (1-alpha)*output + alpha*output_2;
+                    % Logging: blending outputs
+                    % fprintf('[Observer] t=%.2f, Vehicle %d: Blending outputs (diff_norm=%.3f < thresh=%.3f, alpha=%.3f)\n', instant_index*dt, j, diff_norm, blend_thresh, alpha);
+                else
+                    self.log_element = [self.log_element, log_elem];
+                    output_final = output_2;
+                    % Logging: using prediction-only output (large drift)
+                    % fprintf('[Observer] t=%.2f, Vehicle %d: Using prediction-only output (diff_norm=%.3f >= thresh=%.3f)\n', instant_index*dt, j, diff_norm, blend_thresh);
+                end
+            elseif self.predict_only_counter(j) >= N_good
+                output_final = output;
+            else
+                output_final = output_2;
+            end
         end
 
         function output = distributed_Observer_each( self , host_id , j, x_bar_j , x_hat_i_j, u_j ,weights,use_local, predict_only )
@@ -259,7 +310,7 @@ classdef Observer < handle
             confidence = 1; % Default confidence
 
             S = self.S_log_dist(:, :, vehicle_id);
-            dynamic_tolerances = self.tolerances * (1 + trace(S) / self.num_states);
+            dynamic_tolerances = self.tolerances .* (1 + sqrt(diag(S))');
 
             % Compute per-vehicle confidence
             innovation = output1 - output2;
@@ -301,15 +352,15 @@ classdef Observer < handle
                         elseif (self.vehicle.scenarios_config.controller_type == "local")
                             est_local_j =  self.est_global_state_current(:,j); % get est_local_j in our host vehicle
                             [~, u_j ,~] = self.vehicle.controller.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
-                        else %"mix" 
+                        else %"mix"
                             est_local_j =  self.est_global_state_current(:,j); % get est_local_j in our host vehicle
                             [~, u_1_predict ,~] = self.vehicle.controller1.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
                             [~, u_2_predict ,~] = self.vehicle.controller2.get_optimal_input(j, est_local_j, [0;0], self.vehicle.other_vehicles(j).lane_id, 0, self.vehicle.initial_lane_id, self.vehicle.other_vehicles(j).direction_flag, "est", 0);
                             U_target = [0,0];
 
-                            U_target(1) = (1 - self.gamma)*u_1_predict(1) + self.gamma*u_2_predict(1);
+                            U_target(1) = (1 - self.vehicle.gamma)*u_1_predict(1) + self.vehicle.gamma*u_2_predict(1);
                             u_j = u_1_predict;
-                            u_j(1) = self.u_j_last_predict(1) + self.vehicle.Param_opt.tau_filter*(U_target(1) - self.u_j_last_predict(1)) ; 
+                            u_j(1) = self.u_j_last_predict(1) + self.vehicle.Param_opt.tau_filter*(U_target(1) - self.u_j_last_predict(1)) ;
                             % update the last predicted input ()
                             % TODO : First impression , look not good , beacause they delay not change quickly
                             self.u_j_last_predict = u_j;
@@ -420,10 +471,6 @@ classdef Observer < handle
                     0 Ts;
                     0 0;
                     Ts/tau 0];
-
-
-
-
             else %" Model In the paper"
                 Ai_conti = [0 0 0 1 0;
                     0 0 0 0 0;
@@ -490,6 +537,25 @@ classdef Observer < handle
                 hold on;
                 for v = 1:num_vehicles
                     plot(squeeze(self.est_global_state_log(state_idx, 1:end-1, v)), 'DisplayName', ['Vehicle ', num2str(v)]);
+                end
+                % Add vertical lines for observer mode switches (prediction-only <-> normal)
+                if ~isempty(self.Is_ok_log)
+                    % Assume Is_ok_log is a vector of booleans for each vehicle and time step
+                    % Try to reshape to [num_vehicles, time_steps] if possible
+                    total_steps = size(self.est_global_state_log, 2)-1;
+                    try
+                        is_ok_mat = reshape(self.Is_ok_log, [num_vehicles, total_steps]);
+                    catch
+                        is_ok_mat = [];
+                    end
+                    for v = 1:num_vehicles
+                        if ~isempty(is_ok_mat)
+                            mode_switches = find(diff(is_ok_mat(v,:)) ~= 0) + 1; % indices where mode changes
+                            for ms = mode_switches
+                                xline(ms, '--r', 'LineWidth', 1.2, 'Alpha', 0.5);
+                            end
+                        end
+                    end
                 end
                 title(state_labels{state_idx});
                 % xlabel('Time (s)');

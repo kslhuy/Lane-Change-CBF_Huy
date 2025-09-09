@@ -55,7 +55,7 @@ if debug_mode
     dbstop if error;
 end
 
-Scenarios_config = Scenarios_config(dt, simulation_time, Road_type, controller_type, data_type_for_u2, gamma_type, opinion_type, model_vehicle_type, debug_mode);
+Scenarios_config = Scenarios_config(dt, simulation_time, Road_type, controller_type, data_type_for_u2, gamma_type, opinion_type, model_vehicle_type);
 Scenarios_config.set_Lead_Senarios(lead_senario); % For different scenarios
 % Observer related
 Scenarios_config.set_predict_controller_type(predict_controller_type);

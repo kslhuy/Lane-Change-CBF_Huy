@@ -65,15 +65,9 @@ Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 
 
 
-% Log and Debug related
-IsShowAnimation = false;
-debug_mode = false;
-if (debug_mode )
-    dbstop if error;
-    % dbstop in Observer at 75 if instant_index>=1000;
-end
 
-Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type,debug_mode );
+
+Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type );
 % Observer related
 Scenarios_config.set_predict_controller_type(predict_controller_type);
 Scenarios_config.set_Use_predict_observer(use_predict_observer);
@@ -99,6 +93,15 @@ max_length = 750; % maximum length of the lanes
 straightLanes = StraightLane(num_lanes, lane_width, max_length);
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Log and Debug related
+IsShowAnimation = false;
+debug_mode = false;
+if (debug_mode )
+    dbstop if error;
+    % dbstop in Observer at 75 if instant_index>=1000;
+end
 
 %% Set Attack senario
 attack_module = Attack_module(Scenarios_config.dt);

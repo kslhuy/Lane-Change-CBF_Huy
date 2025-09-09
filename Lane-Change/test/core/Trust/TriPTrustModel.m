@@ -20,7 +20,7 @@ classdef TriPTrustModel < handle
         wj_nearby = 1.0;  % Weight for jerkiness
         wh_nearby = 1.0;  % Weight for heading
 
-        wt = 0.5; % Trust decay weight
+        wt = 0.1; % Trust decay weight
         wt_global = 0.5; % Trust decay weight
 
 
@@ -29,6 +29,9 @@ classdef TriPTrustModel < handle
         k = 5;     % Number of trust levels
         rating_vector; % Trust rating vector
         rating_vector_global;
+
+        %% Score components
+        alpha_v_score = 0.7; % Weight for velocity score
 
         % New properties for global estimate checks
         sigma2 = 1; % Sensitivity parameter for cross-validation trust factor
@@ -174,9 +177,9 @@ classdef TriPTrustModel < handle
             Explain in https://discord.com/channels/1123389035713400902/1326223031667789885/1327291670911254528
             %}
             if (host_id - target_id) > 0 % Target is ahead host
-                alpha = 0.8;
+                alpha = self.alpha_v_score;
             else
-                alpha = 0.2; % Target is follwing host
+                alpha = 1- self.alpha_v_score; % Target is follwing host
             end
 
             % Meaning that leader is move back (brake) or stop
@@ -366,7 +369,7 @@ classdef TriPTrustModel < handle
             a_score_defaut = max(1 - abs(v_rel / ((self.buffer_size - 1)  * ts) * a_relative_diff), 0);
 
 
-            a_score = a_score_diff_acc;
+            a_score = a_score_expected_diff_acc;
 
             % Apply weighting based on proximity
             if is_nearby
@@ -1040,7 +1043,7 @@ classdef TriPTrustModel < handle
             nexttile;
             plot(self.scale_d_expected_log, 'DisplayName', 'Scaled Expected Distance', 'LineWidth', 1.5);
             xlabel('Time Step');
-            title(['Scale $$d_{expected}$$ ' num2str(host_vehicle_number) ' -> ' num2str(target_vehicle_number)], 'Interpreter', 'latex');
+            title(['Scale $$d_{expected}$$ ' num2str(host_vehicle_number) ' $->$ ' num2str(target_vehicle_number)], 'Interpreter', 'latex');
             grid on;
 
             % Subplot 7: Delta d

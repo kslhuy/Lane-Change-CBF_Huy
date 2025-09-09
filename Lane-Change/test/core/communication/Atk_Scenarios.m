@@ -38,9 +38,9 @@ switch attack_type
     case "POS"
         switch case_num
             case 1
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -20, data_type, {'X'});
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -5, data_type, {'X'});
             case 2
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 50, data_type, {'X'});
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 5, data_type, {'X'});
             case 3
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'linear', -0.5, data_type, {'X'});
             case 4

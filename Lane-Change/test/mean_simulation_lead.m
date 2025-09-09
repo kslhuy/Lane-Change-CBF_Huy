@@ -56,7 +56,7 @@ function [global_dist_err, global_theta_err, global_vel_err] = mean_simulation_l
         % dbstop in Observer at 75 if instant_index>=1000;
     end
 
-    Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type,debug_mode );
+    Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type );
     Scenarios_config.set_Lead_Senarios(lead_senario); % For different senarios
     % Observer related
     Scenarios_config.set_predict_controller_type(predict_controller_type);

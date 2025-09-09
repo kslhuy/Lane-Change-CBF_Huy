@@ -17,7 +17,7 @@ classdef Simulator
         end
 
         % Method to start the simulation
-        function [state_log, input_log] = startSimulation(self, simulation_time)
+        function [state_log, input_log] = startSimulation(self, simulation_time,t_star, t_end, attacker_vehicle_id)
             num = simulation_time / self.dt; % Calculate number of simulation steps
             plot_interval = 5; % Plot every 20 iterations
 
@@ -38,6 +38,13 @@ classdef Simulator
             tic;
             % Update other vehicles' positions
             num_car = size(self.other_vehicles, 1);
+            % Define attack start and end times (in seconds)
+            attack_start_time = t_star; % Example: attack starts at 10s
+            attack_end_time = t_end;   % Example: attack ends at 15s
+            attacker_id = attacker_vehicle_id;        % Example: vehicle 2 is the attacker (indexing starts at 1)
+
+            attacker_x = self.other_vehicles(attacker_id).state(1); % X position of attacker
+
             for i = 1:num
 
                 if num_car >= 1
@@ -75,15 +82,12 @@ classdef Simulator
                             self.ego_vehicle.plot_vehicle; % Plot ego vehicle
                         end
 
-
                         % Set the x and y axis limits
                         % xlim([0, 500]); % Set x-axis limits
                         % % Adjust xlim dynamically to follow the ego vehicle
 
-
                         offset_x = (self.other_vehicles(4).state(1) + self.other_vehicles(3).state(1))/2 + 5; % Assuming state(1) is the X position
                         xlim([offset_x  - 100, offset_x + 200]); % Keep the ego vehicle in the center
-
 
                         ylim([-30, 30]); % Adjusted for better visibility
 
@@ -91,6 +95,39 @@ classdef Simulator
                         % Add grid and labels for better visualization
                         xlabel('X Position (m)', 'FontSize', 14);
                         ylabel('Y Position (m)', 'FontSize', 14);
+
+                        % Add time elapsed as a text annotation in the figure
+                        elapsed_sim_time = (i-1) * self.dt;
+                        time_str = sprintf('Time Elapsed: %.2f s', elapsed_sim_time);
+                        % Place the text in the top right corner of the axes
+                        ax = gca;
+                        x_limits = ax.XLim;
+                        y_limits = ax.YLim;
+
+
+                        % Draw vertical red lines at attack start and end at the attacker's position
+                        if num_car >= attacker_id
+                            % Draw line at attack start time only during attack period
+                            if elapsed_sim_time >= attack_start_time && elapsed_sim_time <= attack_end_time && attacker_x >= x_limits(1) && attacker_x <= x_limits(2)
+                                plot([attacker_x attacker_x], y_limits, 'r-', 'LineWidth', 2);
+                                % Optionally, add a label
+                                text(attacker_x, y_limits(2), sprintf('Attack Start (V%d)', attacker_id), 'Color', 'r', 'FontWeight', 'bold', 'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'center');
+                            end
+                            % Draw line at attack end time only at the moment attack ends
+                            if abs(elapsed_sim_time - attack_end_time) < self.dt/2 && attacker_x >= x_limits(1) && attacker_x <= x_limits(2)
+                                plot([attacker_x attacker_x], y_limits, 'r--', 'LineWidth', 2);
+                                text(attacker_x, y_limits(1), sprintf('Attack End (V%d)', attacker_id), 'Color', 'r', 'FontWeight', 'bold', 'VerticalAlignment', 'top', 'HorizontalAlignment', 'center');
+                            end
+                        end
+
+                        % Change time string color to red during attack
+                        if elapsed_sim_time >= attack_start_time && elapsed_sim_time <= attack_end_time
+                            time_color = 'r';
+                        else
+                            time_color = 'k';
+                        end
+                        text(x_limits(2) - 0.05*diff(x_limits), y_limits(2) - 0.05*diff(y_limits), time_str, ...
+                            'FontSize', 14, 'FontWeight', 'bold', 'HorizontalAlignment', 'right', 'VerticalAlignment', 'top', 'BackgroundColor', 'w', 'EdgeColor', 'k', 'Color', time_color);
 
                         % Update the plot
                         drawnow; % Ensures smooth rendering of the animation

@@ -4,72 +4,7 @@
 %%%%%%%%%
 %% Here plot mean for all scenarios with the cyberattack ( Bogus type ).
 
-clc
-close all
-clear
-
-
-addpath ../test/core/
-
-addpath('Function');
-addpath('core/observer');
-addpath('core/Controller');
-addpath('core/Trust');
-addpath('core/communication');
-
-
-
-
-%% Params affect the simulation
-param_sys = ParamVeh();
-
-%% Simulation and Senarios related
-dt = 0.01; % time step
-simulation_time = 25; % simulation time
-Road_type = "Highway"; % "Highway" , "Urban"
-% is_lead_input_change = false; % if the lead input is changing (for different senarios)
-lead_senario = "constant"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
-
-% Observer related
-use_predict_observer = false; % Will override distributed observer with a prediction model
-predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other"
-Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
-set_Is_noise_mesurement = false; % if the measurement is noisy
-use_local_data_from_other = true; % if the local data from other vehicles is used (true = ourpaper , false = another paper)
-
-attacker_update_locally = true; % if the attacker does update observer by only using the local data
-
-% controller related
-control_use_accel = true; % if using acceleration control
-
-gamma_type = "min"; % type gamma for switching control = " min" , " max " , " mean " , "self_belief"
-controller_type = "coop"; % type of controller for the ego vehicle: "local" , "coop" , "mix"
-data_type_for_u2 = "est"; % "est" , "true" using the estimated or true data for u2 (CACC)
-
-% trust related
-
-using_weight_trust = true; % if using weight trust
-
-opinion_type = "both"; % opinion type " distance" , " trust" , " both" , "mix_non_nearby"
-Dichiret_type = "Single" ; % "Single" , "Dual"
-monitor_sudden_change = false; % if the sudden change is monitored
-
-is_know_data_not_nearby = true ; % just for test purpose, Use that we have better Trust score , meaning that we know the data all of the other vehicles
-
-% model related
-model_vehicle_type = "delay_a"; % "delay_v" , "delay_a" , "normal","paper"
-
-%% Graph related
-graph = [0 1 1 1;  % Adjacency matrix
-    1 0 1 1;
-    1 1 0 1;
-    1 1 1 0];
-
-trust_threshold = 0.5; % for cut the communication in the graph
-kappa = 1; % parameter in the design weigts matrix
-Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
-
-
+Config
 
 % Log and Debug related
 IsShowAnimation = false;
@@ -78,36 +13,6 @@ if (debug_mode )
     dbstop if error;
     % dbstop in Observer at 75 if instant_index>=1000;
 end
-
-Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type,debug_mode );
-Scenarios_config.set_Lead_Senarios(lead_senario); % For different senarios
-% Observer related
-Scenarios_config.set_predict_controller_type(predict_controller_type);
-Scenarios_config.set_Use_predict_observer(use_predict_observer);
-Scenarios_config.set_Local_observer_type(Local_observer_type);
-Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
-
-Scenarios_config.set_Use_local_data_from_other( use_local_data_from_other)
-Scenarios_config.Is_attacker_not_update(attacker_update_locally);
-
-Scenarios_config.set_Trip_Dichiret(Dichiret_type); % "Single" , "Dual"
-Scenarios_config.set_monitor_sudden_change(monitor_sudden_change); % if the sudden change is monitored
-
-Scenarios_config.set_using_weight_trust(using_weight_trust); % if using weight trust
-
-Scenarios_config.set_Test_better_trust(is_know_data_not_nearby);
-
-Scenarios_config.set_usecontrol_accel(control_use_accel);
-
-
-% Define driving Senarios lanes
-% Create a straight lane with specified width and length
-lane_width = Scenarios_config.getLaneWidth();% width of each single lane
-
-num_lanes = 3; % number of the lanes
-max_length = 750; % maximum length of the lanes
-straightLanes = StraightLane(num_lanes, lane_width, max_length);
-
 
 
 %% Set Attack senario
@@ -122,7 +27,7 @@ t_end = 15;
 attacker_vehicle_id = 2;
 victim_id = -1;
 data_type_attack = "local"; % "local" , "global",
-attack_type = "POS"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus" , "POS" , "VEL" , "ACC"
+attack_type = "ACC"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus" , "POS" , "VEL" , "ACC"
 
 
 % ──────────────────────────────────────────────────────────────────────────────
@@ -203,7 +108,7 @@ for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
 
     %% define a simulator and start simulation
     simulator0 = Simulator(straightLanes, [] , platton_vehicles, Scenarios_config.dt , IsShowAnimation );
-    [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time);
+    [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time,t_star, t_end, attacker_vehicle_id);
 
     % plot
     if (is_plot_each_case)
@@ -262,7 +167,7 @@ for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
     mean_acc = mean(all_global_acc_errors,2);
 
     % write one row per evaluating vehicle
-    for vi = non_attacker_ids
+    for vi = 1:length(non_attacker_ids)
         row_data = {
             attack_type, ...
             sprintf('V%d', attacker_vehicle_id), ...

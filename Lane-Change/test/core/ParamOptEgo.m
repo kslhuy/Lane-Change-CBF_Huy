@@ -47,7 +47,7 @@ classdef ParamOptEgo
 
 
         % low pass filter
-        tau_filter = 0.02;
+        tau_filter = 0.1;
         
     end
     methods

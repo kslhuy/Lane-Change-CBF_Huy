@@ -75,7 +75,7 @@ if (debug_mode )
     % dbstop in Observer at 75 if instant_index>=1000;
 end
 
-Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type,debug_mode );
+Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type );
 % Observer related
 Scenarios_config.set_predict_controller_type(predict_controller_type);
 Scenarios_config.set_Use_predict_observer(use_predict_observer);
@@ -113,7 +113,7 @@ t_end = 15;
 attacker_vehicle_id = 1;
 victim_id = -1;
 data_type_attack = "local"; % "local" , "global",
-attack_type = "Bogus"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus"
+attack_type = "POS"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus" , "POS" , "VEL" , "ACC"
 
 
 
