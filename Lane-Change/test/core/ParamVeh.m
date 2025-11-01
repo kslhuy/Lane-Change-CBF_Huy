@@ -11,5 +11,13 @@ classdef ParamVeh
         C1 = 46333; % Cornering stiffness front wheel
         C2 = 34252; %  Cornering stiffness rear wheel N/rad
         mass = 708; % kg
+        
+        % Acceleration limits
+        max_acceleration = 3.0; % Maximum acceleration (m/s^2)
+        min_acceleration = -8.0; % Maximum deceleration (m/s^2)
+        
+        % Steering angle limits
+        max_steering_angle = 0.5236; % Maximum steering angle (30 degrees in radians)
+        min_steering_angle = -0.5236; % Minimum steering angle (-30 degrees in radians)
     end
 end

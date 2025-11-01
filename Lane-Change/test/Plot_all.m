@@ -55,19 +55,26 @@ car1.trip_models{2}.plot_trust_log(1 , 2)
 
 car2.trip_models{1}.plot_trust_log(2,1)
 car2.trip_models{3}.plot_trust_log(2,3)
-% car2.trip_models{4}.plot_trust_log(2,4)
+car2.trip_models{4}.plot_trust_log(2,4)
 
 
-% car3.trip_models{1}.plot_trust_log(3,1)
+car3.trip_models{1}.plot_trust_log(3,1)
 
 car3.trip_models{2}.plot_trust_log(3,2)
 car3.trip_models{4}.plot_trust_log(3,4)
 
-% car4.trip_models{1}.plot_trust_log(4,1)
-% car4.trip_models{2}.plot_trust_log(4,2)
+car4.trip_models{1}.plot_trust_log(4,1)
+car4.trip_models{2}.plot_trust_log(4,2)
 car4.trip_models{3}.plot_trust_log(4,3)
 
 %% Details Acc_score
+
+car1.trip_models{2}.plot_details_acc_score(1,2);
+car2.trip_models{1}.plot_details_acc_score(2,1);
+
+car1.trip_models{2}.plot_diff_acc_score(1,2);
+car2.trip_models{1}.plot_diff_acc_score(2,1);
+
 car2.trip_models{3}.plot_details_acc_score(2,3)
 car2.trip_models{3}.plot_diff_acc_score(2,3)
 

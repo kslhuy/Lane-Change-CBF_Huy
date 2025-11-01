@@ -1,4 +1,7 @@
 Config
+attack_module = Atk_Scenarios(attack_module , attack_type ,data_type_attack,case_nb_attack , t_star, t_end, attacker_vehicle_id,victim_id );
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Log and Debug related
 IsShowAnimation = false;
@@ -14,21 +17,6 @@ if (debug_mode )
 end
 
 
-%% Set Attack senario
-attack_module = Attack_module(Scenarios_config.dt);
-% Define a time-based attack scenario
-% Attack with 'bias' type between 5 and 10 seconds with intensity 0.5
-
-
-t_star = 10;
-t_end = 15;
-attacker_vehicle_id = 1;
-victim_id = -1; % -1 mean every vehicle
-case_nb_attack = 2;
-data_type_attack = "local"; % "local" , "global", "none"
-attack_type = "ACC"; % "DoS"  , "Collusion" ,"Bogus", "None" , "POS" , "VEL" , "ACC"
-
-attack_module = Atk_Scenarios(attack_module , attack_type ,data_type_attack,case_nb_attack , t_star, t_end, attacker_vehicle_id,victim_id );
 
 %% END Attack senario
 
@@ -66,5 +54,8 @@ simulator0 = Simulator(straightLanes, [] , platton_vehicles, Scenarios_config.dt
 [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time,t_star, t_end, attacker_vehicle_id);
 
 Plot_all
+
+%% Save configuration to CSV file
+% save_config_csv();
 
 

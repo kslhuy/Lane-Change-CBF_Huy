@@ -14,6 +14,7 @@ classdef TriPTrustModel < handle
         wh = 1.0;  % Weight for heading
 
 
+
         wv_nearby = 12;  % Weight for velocity
         wd_nearby = 8;  % Weight for distance
         wa_nearby = 0.3;  % Weight for acceleration
@@ -24,11 +25,18 @@ classdef TriPTrustModel < handle
         wt_global = 0.5; % Trust decay weight
 
 
+        % ---- New properties for weighted based trust sample calculation
+        w_lt_v = 0.35; % Weight for velocity in weighted trust sample
+        w_lt_d = 0.35; % Weight for distance in weighted trust sample
+        w_lt_a = 0.3; % Weight for acceleration in weighted trust sample
+
+        % ---- Parameters for trust evolution model 
         C = 0.2;   % Regularization constant
         tacc = 1.2;% Trust-based acceleration scaling factor
         k = 5;     % Number of trust levels
         rating_vector; % Trust rating vector
         rating_vector_global;
+
 
         %% Score components
         alpha_v_score = 0.7; % Weight for velocity score
@@ -39,12 +47,13 @@ classdef TriPTrustModel < handle
         last_d;
         last_time_d = 0; % Last time step when distance was updated
         Period_a_score_distane = 10; % Time step for the simulation
-        buffer_size = 50; % Number of time steps for moving average (e.g., n=5)
+        buffer_size = 5; % Number of time steps for moving average (e.g., n=5)
         distance_buffer ; % Initialize buffer
 
         trust_sample_log;
         gamma_cross_log;
         gamma_local_log;
+        gamma_local_our_self_log;
         gamma_expected_log;
         v_score_log;
         d_score_log;
@@ -89,9 +98,36 @@ classdef TriPTrustModel < handle
         delta_d_log = []; % Log for delta distance (measured - epxected )
 
         a_score_expected_diff_acc_log = []; % Log for expected acceleration score
-        a_score_diff_acc_log = []; % Log for acceleration difference score
+        a_score_vrel_dis_adjusted_log = []; % Log for acceleration difference score
         a_score_vrel_dis_log = []; % Log for relative velocity and distance score
         a_score_defaut_log = []; % Log for default acceleration score
+        a_score_mathematical_log = []; % Log for mathematical formula acceleration score
+        
+        % Missing properties for anomaly detection
+        D_acc_log = []; % Log for acceleration discrepancies
+        anomaly_acc_log = []; % Log for acceleration anomaly flags
+
+        % Trust decay parameters
+        lambda_h = 0.1; % Trust decay factor when no beacon received
+        previous_trust_scores; % Store previous trust scores per vehicle
+        
+        % Physical constraints parameters
+        MAX_ACCEL = 4.0; % Maximum acceleration (m/s²)
+        MAX_DECEL = -8.0; % Maximum deceleration (m/s²)
+        MAX_VELOCITY = 50.0; % Maximum velocity (m/s)
+        
+        % Temporal consistency tracking
+        previous_states_map; % Store previous states per vehicle
+        temporal_score_log = []; % Log for temporal consistency scores
+        physical_valid_log = []; % Log for physical constraints validation
+        
+        % Trust decay logging
+        local_trust_decayed_log = []; % Log for local trust after decay
+        global_trust_decayed_log = []; % Log for global trust after decay
+        
+        % Separate beacon score tracking
+        beacon_score_local_log = []; % Log for local channel beacon reception
+        beacon_score_global_log = []; % Log for global channel beacon reception
 
 
 
@@ -122,6 +158,7 @@ classdef TriPTrustModel < handle
             self.trust_sample_log = [];
             self.gamma_cross_log = [];
             self.gamma_local_log = [];
+            self.gamma_local_our_self_log = [];
             self.v_score_log = [];
             self.d_score_log = [];
             self.a_score_log = [];
@@ -150,6 +187,10 @@ classdef TriPTrustModel < handle
             % self.w = 10;  % Sliding window size
             % self.Threshold_anomalie  = 3;   % Threshold for cumulative anomalies
             % self.reduce_factor = 0.5;  % Trust reduction factor
+            
+            % Initialize separate arrays for local and global trust decay (much faster than maps)
+            self.previous_trust_scores = struct('local', [], 'global', []); % Separate arrays for local and global trust
+            self.previous_states_map = containers.Map('KeyType', 'int32', 'ValueType', 'any');
         end
 
         function v_score_final_with_exp = evaluate_velocity(self,host_id , target_id, v_y, v_host, v_leader, a_leader, b_leader , is_nearby ,tolerance)
@@ -188,8 +229,7 @@ classdef TriPTrustModel < handle
                 % TODO : why abs(v_y)
                 % Exemple v_y positive , try to run , so score is 0
                 % v_y negative , try to brake , so is ?????
-                v_score_final =  max(1 - abs(v_y), 0);
-
+                v_score_final_with_exp =  max(1 - abs(v_y), 0);
                 return;
             end
             % Calculate absolute deviation as a fraction of reference velocity
@@ -235,43 +275,56 @@ classdef TriPTrustModel < handle
             % Update distance buffer
             self.distance_buffer = [d(1), self.distance_buffer(1:end-1)]; % Shift and add new distance
 
-
+            % Mathematical formulation parameters
+            a_th = 1.0;      % Nominal acceleration tolerance  - increased for less sensitivity
+            d_norm = 25;     % Normalization constant for typical spacing - increased from 19
+            v_norm = 23;     % Normalization constant for typical speed (m/s) - new parameter
 
             % Compute relative velocity using distance difference over n time steps
-            %% Relative acceleration calculation
+            %% Relative acceleration calculation - implements v_rel from math formula
             if all(self.distance_buffer ~= 0) % Ensure buffer is filled
-                v_rel = (self.distance_buffer(end-1) - self.distance_buffer(1)) / ((self.buffer_size-1) * ts);
-                v_rel_m1 = (self.distance_buffer(end) - self.distance_buffer(2)) / ((self.buffer_size-1) * ts);
-                expected_a_relative_diff  = (v_rel - v_rel_m1)/(ts);
+                v_rel_current = (self.distance_buffer(end-1) - self.distance_buffer(1)) / ((self.buffer_size-1) * ts);
+                v_rel_previous = (self.distance_buffer(end) - self.distance_buffer(2)) / ((self.buffer_size-1) * ts);
+                % Expected relative acceleration: a_expect^rel = (v_rel(t) - v_rel(t-n))/n
+                expected_a_relative_diff  = (v_rel_current - v_rel_previous)/(ts);
+                v_rel = v_rel_current;
             else
                 % v_rel = 0; % Default if buffer not yet filled
                 v_rel = diff(d) / ts;
                 expected_a_relative_diff = 0;
             end
-            d_norm = 19; % Normalization factor for distance
 
-            %% Calculate the relative acceleration difference
-            a_relative_diff = a_y - a_host;
+            %% Calculate accelerations according to mathematical formula
+            % a_recv^rel = â₀^(l) - â₀^(i) (received relative acceleration)
+            a_recv_rel = a_y - a_host;
+            
+            % a_expect^rel = (v_rel(t) - v_rel(t-n))/n (expected relative acceleration)
+            a_expect_rel = expected_a_relative_diff;
+            
+            % Inter-vehicle distance
+            d_i_l = d(1);
+            
+            % Calculate mismatch with mathematical normalization
+            accel_mismatch = abs(a_recv_rel - a_expect_rel);
+            
+            % Mathematical normalization: a_th * (1 + d_i_l/d_norm) * (1 + |v_rel|/v_norm)
+            normalization_factor = a_th * (1 + d_i_l/d_norm) * (1 + abs(v_rel)/v_norm);
+            
+            % Calculate mathematical acceleration score
+            a_score_mathematical = max(1 - (accel_mismatch / normalization_factor), 0);
 
-            diff_rel_acc = expected_a_relative_diff - a_relative_diff;
 
-            %% Test another writing
-            a_y_expected = a_host + expected_a_relative_diff; % Expected acceleration difference
-            delta_acc = a_y_expected - a_y;
-            %%%
-
-
+            %% Keep your enhanced implementation as alternative (with reduced sensitivity)
             constance_regulation = 1; % depending on the sign of the acceleration difference , and position index
 
-
             if  ~is_nearby
-                d_add = d_norm*abs(target_id-host_id)  / (d(1));
+                d_add = d_norm*abs(target_id-host_id)  / (d(1)); % Added +10 to reduce sensitivity
             else
                 % id_diff = host_id - target_id;
                 % 0.9*(target_id-1)
                 if target_id > 1
                     % Calculate sign mismatch
-                    Signe_mismatch_relative = (sign(a_host) ~= sign(a_relative_diff));
+                    Signe_mismatch_relative = (sign(a_host) ~= sign(a_recv_rel));
                     % Update constance regulation based on sign mismatch
                     if (Signe_mismatch_relative == 0)
                         % Sign consistent
@@ -282,7 +335,7 @@ classdef TriPTrustModel < handle
                     end
 
                     % Calculate additional distance based on target and host IDs
-                    d_add = d_norm*constance_regulation / (d(1));
+                    d_add = d_norm*constance_regulation / (d(1) ); % Added +5 to reduce sensitivity
                     % if (target_id > host_id)
                     %     d_add = d_norm*constance_regulation / (d(1));
                     % else
@@ -290,9 +343,8 @@ classdef TriPTrustModel < handle
                     % end
                 else
                     % special case : target_id <= 1 and host_id = 2
-                    d_add = d_norm*constance_regulation / (d(1));
+                    d_add = d_norm*constance_regulation / (d(1) ); % Added +5 to reduce sensitivity
                 end
-
 
                 % d_add = 1; % Default value for distant vehicles
             end
@@ -357,19 +409,38 @@ classdef TriPTrustModel < handle
 
             %%% Calculate the acceleration score
 
-            %% Using the relative acceleration difference
-            % a_score = max(1 - abs( d_add * diff_rel_acc), 0);
-
-            %% Using the expected acceleration difference
+            %% Enhanced implementation (your original with reduced sensitivity)
+            delta_acc = a_host + expected_a_relative_diff - a_y; % Expected vs actual
             a_score_expected_diff_acc = max(1 - abs( d_add_adjusted * delta_acc), 0);
 
-            %% Using the acceleration difference
-            a_score_diff_acc =  max(1 - abs(v_rel /d_add_adjusted * a_relative_diff), 0);
-            a_score_vrel_dis = max(1 - abs(v_rel / d(1) * a_relative_diff), 0);
-            a_score_defaut = max(1 - abs(v_rel / ((self.buffer_size - 1)  * ts) * a_relative_diff), 0);
+            %% Alternative implementations
+            a_score_defaut = max(1 - abs(v_rel / ((self.buffer_size - 1)  * ts ) * a_recv_rel), 0); % Original Trip default score
 
+            a_score_vrel_dis_adjusted =  max(1 - abs(v_rel /d_add_adjusted * a_recv_rel), 0); % Using adjusted additional distance
 
-            a_score = a_score_expected_diff_acc;
+            a_score_vrel_dis_real = max(1 - abs(v_rel / (d(1) ) * a_recv_rel), 0);  % Using real distance without adjustment
+
+            % Choose which acceleration score to use based on method selector:
+            switch host_vehicle.scenarios_config.acceleration_trust_score_method
+                case 'mathematical'
+                    % Mathematical formula (most faithful to your equations)
+                    a_score = a_score_mathematical;
+                case 'enhanced'
+                    % Enhanced implementation (less sensitive)
+                    a_score = a_score_expected_diff_acc;
+                case 'hybrid'
+                    % Hybrid approach (combine both with weights)
+                    a_score = 0.6 * a_score_mathematical + 0.4 * a_score_expected_diff_acc;
+                case 'default'
+                    a_score = a_score_defaut;
+                case 'vrel_dis_adjusted'
+                    a_score = a_score_vrel_dis_adjusted;
+                case 'vrel_dis_real'
+                    a_score = a_score_vrel_dis_real;
+                otherwise
+                    a_score = a_score_defaut;
+                    % Default to enhanced
+            end
 
             % Apply weighting based on proximity
             if is_nearby
@@ -383,15 +454,18 @@ classdef TriPTrustModel < handle
             self.v_rel_log = [self.v_rel_log, v_rel]; % Log relative velocity
             self.distance_log = [self.distance_log, d(1)]; % Log distance
             self.d_add_log = [self.d_add_log, d_add_adjusted]; % Log additional distance
-            self.acc_rel_log = [self.acc_rel_log, a_relative_diff]; % Log relative acceleration
+            self.acc_rel_log = [self.acc_rel_log, a_recv_rel]; % Log relative acceleration
             self.delta_acc_expected_log = [self.delta_acc_expected_log, delta_acc]; % Log expected acceleration difference
             self.scale_d_expected_log = [self.scale_d_expected_log, scale_d_expected]; % Log scale factor for expected distance
             self.delta_d_log = [self.delta_d_log, delta_d]; % Log delta distance (measured - expected)
 
             self.a_score_expected_diff_acc_log = [self.a_score_expected_diff_acc_log, a_score_expected_diff_acc];
-            self.a_score_diff_acc_log = [self.a_score_diff_acc_log, a_score_diff_acc];
-            self.a_score_vrel_dis_log = [self.a_score_vrel_dis_log, a_score_vrel_dis];
+            self.a_score_vrel_dis_adjusted_log = [self.a_score_vrel_dis_adjusted_log, a_score_vrel_dis_adjusted];
+            self.a_score_vrel_dis_log = [self.a_score_vrel_dis_log, a_score_vrel_dis_real];
             self.a_score_defaut_log = [self.a_score_defaut_log, a_score_defaut];
+            
+            % Add logging for mathematical acceleration score
+            self.a_score_mathematical_log = [self.a_score_mathematical_log, a_score_mathematical];
         end
 
         function j_score = evaluate_jerkiness(~, j_y, j_thresh)
@@ -479,9 +553,161 @@ classdef TriPTrustModel < handle
 
         function trust_sample = calculate_trust_sample(self, v_score, d_score, a_score, beacon_score,h_score,is_nearby)
             % Calculate trust sample based on the provided scores and beacon status
-            trust_sample = beacon_score * (v_score) * (d_score) * (a_score) ;
+            trust_sample =  (v_score) * (d_score) * (a_score) ; 
         end
+        function trust_sample = calculate_trust_sample_weighted_based(self, v_score, d_score, a_score, beacon_score,h_score,is_nearby)
+            % Calculate trust sample based on the provided scores and beacon status
+            trust_sample =  self.w_lt_v*(v_score) + self.w_lt_d*(d_score) + self.w_lt_a*(a_score) ;
 
+            
+        end
+        
+        %%% Trust decay implementation (Separate Local and Global) %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
+        function trust_score = apply_trust_decay(self, target_id, current_trust, beacon_received, trust_type)
+            % Apply trust decay separately for local and global trust
+            % LT_local(t) = (1 - λ_h) * LT_local(t-1) when local beacon not received
+            % LT_global(t) = (1 - λ_h) * LT_global(t-1) when global beacon not received
+            % 
+            % Inputs:
+            %   target_id: ID of target vehicle
+            %   current_trust: Current trust score
+            %   beacon_received: Boolean indicating if beacon was received
+            %   trust_type: 'local' or 'global' (required)
+            % Output:
+            %   trust_score: Decayed trust score
+            
+            if nargin < 5
+                error('trust_type parameter is required: "local" or "global"');
+            end
+            
+            % Validate trust_type
+            if ~ismember(trust_type, {'local', 'global'})
+                error('trust_type must be "local" or "global"');
+            end
+            
+            if beacon_received
+                % Beacon received, use current trust score directly
+                trust_score = current_trust;
+            else
+                % No beacon received, apply decay to previous trust score
+                if trust_type == "local"
+                    previous_scores = self.previous_trust_scores.local;
+                else % global
+                    previous_scores = self.previous_trust_scores.global;
+                end
+                
+                if target_id <= length(previous_scores) && previous_scores(target_id) > 0
+                    previous_trust = previous_scores(target_id);
+                else
+                    previous_trust = 1.0; % Default high trust for new vehicles
+                end
+                
+                % Apply decay formula: trust_new = (1 - λ_h) * trust_old
+                trust_score = (1 - self.lambda_h) * previous_trust;
+            end
+            
+            % Store the trust score in the appropriate array
+            if trust_type == "local"
+                self.previous_trust_scores.local(target_id) = trust_score;
+            else % global
+                self.previous_trust_scores.global(target_id) = trust_score;
+            end
+        end
+        
+        %%% Physical constraints validation %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
+        function is_valid = check_physical_constraints(self, reported_state, previous_state, dt)
+            % Check if reported state violates physical constraints
+            % Inputs:
+            %   reported_state: [pos_x, pos_y, heading, velocity, acceleration]
+            %   previous_state: previous state vector
+            %   dt: time step
+            % Output:
+            %   is_valid: boolean indicating if constraints are satisfied
+            
+            is_valid = true;
+            
+            % Extract current values
+            current_velocity = reported_state(4);
+            current_acceleration = reported_state(5);
+            
+            % Check velocity limits
+            if abs(current_velocity) > self.MAX_VELOCITY
+                is_valid = false;
+                return;
+            end
+            
+            % Check acceleration limits
+            if current_acceleration > self.MAX_ACCEL || current_acceleration < self.MAX_DECEL
+                is_valid = false;
+                return;
+            end
+            
+            % Check for reasonable acceleration change (jerk limits)
+            if ~isempty(previous_state) && length(previous_state) >= 5
+                previous_acceleration = previous_state(5);
+                jerk = abs(current_acceleration - previous_acceleration) / dt;
+                MAX_JERK = 10.0; % m/s³ - reasonable jerk limit
+                if jerk > MAX_JERK
+                    is_valid = false;
+                    return;
+                end
+            end
+        end
+        
+        %%% Temporal consistency evaluation %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
+        function temporal_score = evaluate_temporal_consistency(self, target_id, current_state, dt)
+            % Evaluate temporal consistency of reported state with previous state
+            % Inputs:
+            %   target_id: ID of target vehicle
+            %   current_state: [pos_x, pos_y, heading, velocity, acceleration]
+            %   dt: time step
+            % Output:
+            %   temporal_score: consistency score (0 to 1)
+            
+            % Check if we have previous state for this vehicle
+            if ~isKey(self.previous_states_map, target_id)
+                % First time seeing this vehicle, store state and return max score
+                self.previous_states_map(target_id) = current_state;
+                temporal_score = 1.0;
+                return;
+            end
+            
+            % Get previous state
+            prev_state = self.previous_states_map(target_id);
+            
+            % Extract values
+            current_pos_x = current_state(1);
+            current_pos_y = current_state(2);
+            current_velocity = current_state(4);
+            
+            previous_pos_x = prev_state(1);
+            previous_pos_y = prev_state(2);
+            previous_velocity = prev_state(4);
+            previous_acceleration = prev_state(5);
+            
+            % Check position-velocity consistency
+            expected_pos_x = previous_pos_x + previous_velocity * cos(prev_state(3)) * dt;
+            expected_pos_y = previous_pos_y + previous_velocity * sin(prev_state(3)) * dt;
+            pos_error = sqrt((current_pos_x - expected_pos_x)^2 + (current_pos_y - expected_pos_y)^2);
+            
+            % Check velocity-acceleration consistency
+            expected_velocity = previous_velocity + previous_acceleration * dt;
+            vel_error = abs(current_velocity - expected_velocity);
+            
+            % Normalize errors and compute score
+            pos_tolerance = 2.0; % meters
+            vel_tolerance = 1.0; % m/s
+            
+            pos_score = max(1 - pos_error / pos_tolerance, 0);
+            vel_score = max(1 - vel_error / vel_tolerance, 0);
+            
+            % Combine scores (weighted average)
+            temporal_score = 0.6 * pos_score + 0.4 * vel_score;
+            
+            % Store current state for next iteration
+            self.previous_states_map(target_id) = current_state;
+        end
+        
         %%% Trust rating vector update %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
 
         function update_rating_vector(self, trust_sample , type)
@@ -533,8 +759,9 @@ classdef TriPTrustModel < handle
 
 
         %%% Main %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
-        function [final_score,local_trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, is_nearby, instant_idx)
+        function [final_score,local_trust_sample,gamma_cross, v_score ,d_score,a_score,beacon_score_local, beacon_score_global] = calculateTrust(self , host_vehicle, target_vehicle, leader_vehicle, neighbors, is_nearby, instant_idx)
             % calculateTrust - Computes trust scores for a specific vehicle
+            % Updated to include gamma_local_our_self for self-consistency evaluation
             %
             % Inputs:
             %   host_id       - ID of the current vehicle
@@ -548,6 +775,11 @@ classdef TriPTrustModel < handle
 
             host_id = host_vehicle.vehicle_number;
             target_id = target_vehicle.vehicle_number;
+            
+            % Initialize beacon scores
+            beacon_score_local = 0;
+            beacon_score_global = 0;
+            
             % Reported data for trust evaluation
 
             % half_lenght_vehicle = target_vehicle.param.l_r; % distance between vehicle's c.g. and rear axle
@@ -633,14 +865,14 @@ classdef TriPTrustModel < handle
 
             target_state = host_vehicle.center_communication.get_local_state(target_id,host_id);
             if ( isnan(target_state))
-                beacon_score = 0;
+                beacon_score_local = 0;  % Local channel beacon not received
                 v_score = 0;
                 d_score = 0;
                 a_score = 0;
                 h_score = 0;
                 local_trust_sample = 0;
             else
-                beacon_score = 1;
+                beacon_score_local = 1;  % Local channel beacon received
                 % target_input = host_vehicle.center_communication.get_input(target_id);
 
                 target_pos_X = target_state(1);
@@ -663,6 +895,7 @@ classdef TriPTrustModel < handle
                 target_reported_acceleration = target_state(5);
 
 
+
                 % Trust evaluation
 
                 v_score = self.evaluate_velocity( host_id , target_id , target_reported_velocity, host_velocity  , leader_velocity, leader_acceleration, leader_beacon_interval,is_nearby,0.1);
@@ -680,33 +913,99 @@ classdef TriPTrustModel < handle
                 target_reported_heading = target_state(3); % Reported heading (radians)
                 h_score = self.evaluate_heading( target_pos_X, target_pos_Y, target_reported_heading, instant_idx);
 
-                % Compute trust sample for local estimation
-                % local_trust_sample = self.calculate_trust_sample_wo_Acc(v_score, d_score, a_score, beacon_score , h_score , is_nearby);
-                local_trust_sample = self.calculate_trust_sample(v_score, d_score, a_score, beacon_score , h_score , is_nearby);
 
+
+                %% New validation checks (Option - Controlled by Scenarios_config)
+                if host_vehicle.scenarios_config.Use_physical_constraints_check
+                    % Physical constraints validation
+                    physical_valid = self.check_physical_constraints(target_state, [], host_vehicle.dt);
+                    self.physical_valid_log = [self.physical_valid_log, physical_valid];
+                    
+                    % Apply physical validation penalty to trust scores
+                    if ~physical_valid
+                        % Severely penalize physically impossible states
+                        v_score = v_score * 0.1;
+                        d_score = d_score * 0.1;
+                        a_score = a_score * 0.1;
+                    end
+                else
+                    % Log default valid state when check is disabled
+                    self.physical_valid_log = [self.physical_valid_log, true];
+                end
+                
+                if host_vehicle.scenarios_config.Use_temporal_consistency_check
+                    % Temporal consistency evaluation
+                    temporal_score = self.evaluate_temporal_consistency(target_id, target_state, host_vehicle.dt);
+                    self.temporal_score_log = [self.temporal_score_log, temporal_score];
+                    
+                    % Apply temporal consistency penalty
+                    temporal_penalty = temporal_score; % temporal_score is already 0-1
+                    v_score = v_score * temporal_penalty;
+                    d_score = d_score * temporal_penalty;
+                    a_score = a_score * temporal_penalty;
+                else
+                    % Log default perfect score when check is disabled
+                    self.temporal_score_log = [self.temporal_score_log, 1.0];
+                end
+
+                % Compute trust sample for local estimation using local beacon score
+                if (host_vehicle.scenarios_config.Use_weight_local_trust == true)
+                    local_trust_sample = self.calculate_trust_sample_weighted_based(v_score, d_score, a_score, beacon_score_local , h_score , is_nearby);
+                else
+                    local_trust_sample = self.calculate_trust_sample(v_score, d_score, a_score, beacon_score_local , h_score , is_nearby);
+                end 
+               
             end
 
-
+            % Evaluate self-consistency of distributed estimation first - how trustworthy is our own global state?
+            gamma_local_our_self = self.compute_self_consistency_factor(host_vehicle, neighbors);
+            
+            % Check if observer is in prediction-only mode for this target (using convenient method)
+            is_in_prediction_mode = false;
+            if host_vehicle.scenarios_config.Use_predict_observer
+                is_in_prediction_mode = host_vehicle.observer.is_vehicle_in_prediction_mode(target_id);
+            end
 
             if (isnan( target_vehicle.center_communication.get_global_state(target_id,host_id)))
-                % Drop packet , not available
-                beacon_score = 0;
+                % Global channel beacon not received
+                beacon_score_global = 0;
                 gamma_cross = 0;
                 gamma_local = 0;
                 global_trust_sample = 0;
             else
-                % Compute global estimate trust factors
+                % Global channel beacon received
+                beacon_score_global = 1;
+                % Compute trust factors using raw calculation
                 [gamma_cross, D_pos, D_vel, D_acc] = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
                 gamma_local = self.compute_local_consistency_factor(host_vehicle, target_vehicle, neighbors);
-                global_trust_sample = gamma_cross*gamma_local;
+                
+                if is_in_prediction_mode
+                    % SELF-AWARE PREDICTION-ONLY MODE ADJUSTMENT
+                    % Use gamma_local_our_self to determine if WE are the problem or OTHERS are the problem
+                    
+                    self_trust_threshold = 0.6; % Threshold for self-consistency
+                    
+                    if gamma_local_our_self >= self_trust_threshold
+                        % HIGH SELF-CONSISTENCY: Our distributed estimation is still good
+                        % → The problem is likely with external data (attack/corruption)
+                        % → Justifiably reduce trust in external estimates
+                        gamma_cross = gamma_cross * 0.4; % Penalize cross-validation (others might be bad)
+                        global_trust_sample = gamma_cross * gamma_local * 0.8; % Mild penalty
+                        
+                    else
+                        % LOW SELF-CONSISTENCY: Our distributed estimation has degraded in prediction-only mode
+                        % → The problem might be US, not others
+                        % → Don't heavily penalize external data, but acknowledge our uncertainty
+                        gamma_cross = gamma_cross * 0.8; % Light penalty on cross-validation
+                        gamma_local = gamma_local * gamma_local_our_self; % Scale local consistency by self-trust
+                        global_trust_sample = gamma_cross * gamma_local * 0.9; % Acknowledge our degraded state
+                    end
+                else
+                    % Normal mode: Full trust evaluation
+                    global_trust_sample = gamma_cross * gamma_local;
+                end
             end
 
-            %% not use
-            % gamma_expected = self.compute_cross_host_expected_2_factor(host_id,host_vehicle, target_id,target_vehicle);
-
-
-            % Compute extended trust sample
-            % trust_sample_ext = 0.5*trust_sample  +  0.5*(gamma_cross * gamma_local);
 
             if (host_vehicle.scenarios_config.Monitor_sudden_change == true)
                 beta = self.monitor_sudden(gamma_cross , D_pos,D_vel,D_acc);
@@ -714,35 +1013,72 @@ classdef TriPTrustModel < handle
                 beta = 1; % Default value
             end
 
+            % %% Apply self-consistency factor before trust calculation
+            % % If our own global state is not trustworthy, reduce confidence in global estimates
+            % self_trust_threshold = 0.7; % Threshold for considering our own state trustworthy
+            
+            % if gamma_local_our_self < self_trust_threshold
+            %     % If we don't trust our own global state, reduce reliance on global estimates
+            %     global_trust_sample = global_trust_sample * gamma_local_our_self;
+            %     % Also reduce cross-validation trust as it depends on our global estimate
+            %     gamma_cross = gamma_cross * gamma_local_our_self;
+            % end
+
+            %% Apply trust decay to local and global trust separately
+            % Implement equation: LT_{i,l}(t) = (1 - λ_h) * LT_{i,l}(t-1) when δ_{i,l}(t) = 0
+            beacon_received_local = (beacon_score_local == 1);
+            beacon_received_global = (beacon_score_global == 1);
+            
             %% Separate trust sample for local and global estimates
             if (host_vehicle.scenarios_config.Dichiret_type == "Single")
-                trust_sample_ext = local_trust_sample  * global_trust_sample ;
+                % Apply trust decay to the combined sample before rating vector update
+                local_trust_sample_decayed = self.apply_trust_decay(target_id, local_trust_sample, beacon_received_local, 'local');
+                global_trust_sample_decayed = self.apply_trust_decay(target_id, global_trust_sample, beacon_received_global, 'global');
+                
+                % Log decayed trust values
+                self.local_trust_decayed_log = [self.local_trust_decayed_log, local_trust_sample_decayed];
+                self.global_trust_decayed_log = [self.global_trust_decayed_log, global_trust_sample_decayed];
+                
+                trust_sample_ext = local_trust_sample_decayed * global_trust_sample_decayed;
                 self.update_rating_vector(trust_sample_ext , "local");
                 final_score = self.calculate_trust_score(self.rating_vector);
 
             else % "Dual"
-                self.update_rating_vector(local_trust_sample , "local");
+                % Apply trust decay to local trust
+                local_trust_sample_decayed = self.apply_trust_decay(target_id, local_trust_sample, beacon_received_local, 'local');
+                self.update_rating_vector(local_trust_sample_decayed , "local");
                 local_trust_sample = self.calculate_trust_score(self.rating_vector);
-
-                self.update_rating_vector(global_trust_sample , "global");
+                
+                % Apply trust decay to global trust
+                global_trust_sample_decayed = self.apply_trust_decay(target_id, global_trust_sample, beacon_received_global, 'global');
+                self.update_rating_vector(global_trust_sample_decayed , "global");
                 global_trust_sample = self.calculate_trust_score(self.rating_vector_global);
+
+                % Log decayed trust values
+                self.local_trust_decayed_log = [self.local_trust_decayed_log, local_trust_sample_decayed];
+                self.global_trust_decayed_log = [self.global_trust_decayed_log, global_trust_sample_decayed];
 
                 final_score = local_trust_sample * global_trust_sample;
             end
 
             final_score = final_score * beta;
 
-
-
-            %% Flag Check
+            %% Flag Check with self-consistency consideration
             self.flag_taget_attk = false;
             self.flag_glob_est_check = false;
             self.flag_local_est_check = false;
-            if (gamma_local > 0.5 && gamma_cross < 0.5)
-                self.flag_taget_attk = true;
-            end
-            if (gamma_local < 0.5 && gamma_cross > 0.5)
-                self.flag_glob_est_check = true;
+            
+            % Only trust attack detection if our own state is trustworthy
+            if (gamma_local_our_self > 0.6)
+                if (gamma_local > 0.5 && gamma_cross < 0.5)
+                    self.flag_taget_attk = true;
+                end
+                if (gamma_local < 0.5 && gamma_cross > 0.5)
+                    self.flag_glob_est_check = true;
+                end
+            else
+                % If our own global state is not trustworthy, flag it
+                self.flag_glob_est_check = true; % Our global estimate needs checking
             end
 
             %% importance
@@ -757,6 +1093,7 @@ classdef TriPTrustModel < handle
             self.trust_sample_log = [self.trust_sample_log, local_trust_sample];
             self.gamma_cross_log = [self.gamma_cross_log, gamma_cross];
             self.gamma_local_log = [self.gamma_local_log, gamma_local];
+            self.gamma_local_our_self_log = [self.gamma_local_our_self_log, gamma_local_our_self];
             % self.gamma_expected_log = [self.gamma_expected_log, gamma_expected];
 
             self.v_score_log = [self.v_score_log, v_score];
@@ -764,7 +1101,13 @@ classdef TriPTrustModel < handle
             self.a_score_log = [self.a_score_log, a_score];
             self.h_score_log = [self.h_score_log, h_score];
 
-            self.beacon_score_log = [self.beacon_score_log, beacon_score];
+            % Log separate beacon scores
+            self.beacon_score_local_log = [self.beacon_score_local_log, beacon_score_local];
+            self.beacon_score_global_log = [self.beacon_score_global_log, beacon_score_global];
+            
+            % Maintain compatibility - log combined beacon score (for existing code)
+            beacon_score_combined = beacon_score_local * beacon_score_global; % Both channels must work
+            self.beacon_score_log = [self.beacon_score_log, beacon_score_combined];
 
             self.final_score_log = [self.final_score_log, final_score];
 
@@ -995,6 +1338,91 @@ classdef TriPTrustModel < handle
             gamma_local = exp(-E);
         end
 
+        function gamma_local_our_self = compute_self_consistency_factor(self, host_vehicle, neighbors)
+            % Inputs:
+            %   host_vehicle: The vehicle evaluating its own trust
+            %   neighbors: Array of neighbor vehicle objects
+            %
+            % Output:
+            %   gamma_local_our_self: Self-consistency trust factor (0 to 1)
+            %
+            % This method evaluates how well the host vehicle's own global estimate
+            % is consistent with its local sensor measurements
+
+            half_lenght_vehicle = host_vehicle.param.l_r; % distance between vehicle's c.g. and rear axle
+            host_id = host_vehicle.vehicle_number;
+            
+            % Get host vehicle's own global estimate
+            host_global_estimate = host_vehicle.observer.est_global_state_current;
+            x_l_host_self = host_global_estimate([1,4], host_id); % Host's estimate of itself
+            
+            E = 0; % Total error
+            M_i = 0; % Count of neighbors used for comparison
+            
+            % Find predecessor and successor for consistency check
+            predecessor = [];
+            successor = [];
+            
+            for m = 1:length(neighbors)
+                car_idx = neighbors(m).vehicle_number;
+                if abs(car_idx - host_id) == 1
+                    if (car_idx > host_id)
+                        M_i = M_i + 1;
+                        successor = neighbors(m);
+                    end
+                    if (car_idx < host_id)
+                        M_i = M_i + 1;
+                        predecessor = neighbors(m); % Following vehicle
+                    end
+                end
+            end
+
+            % If no predecessor or successor is found, return maximum trust
+            if isempty(predecessor) && isempty(successor)
+                gamma_local_our_self = 1;
+                return;
+            end
+
+            % Check consistency with predecessor (if exists)
+            if (~isempty(predecessor))
+                % Get local measurement to predecessor
+                host_distance_measurement = (predecessor.state(1) - host_vehicle.state(1)) - half_lenght_vehicle;
+                velocity_diff_measurement = abs(predecessor.state(4) - host_vehicle.state(4));
+                y_i_predecessor = [host_distance_measurement; velocity_diff_measurement];
+
+                pred_id = predecessor.vehicle_number;
+                x_l_pred = host_global_estimate([1,4], pred_id); % Host's global estimate of predecessor
+
+                % Compute relative state from host's own global estimate
+                rel_state_est = abs(x_l_pred - x_l_host_self - [half_lenght_vehicle;0]);
+
+                % Compute consistency error
+                e = rel_state_est - y_i_predecessor;
+                E = e' * inv(self.tau2_matrix_gamma_local) * e + E;
+            end
+
+            % Check consistency with successor (if exists)
+            if (~isempty(successor))
+                % Get local measurement to successor
+                host_distance_measurement = (host_vehicle.state(1) - successor.state(1)) - half_lenght_vehicle;
+                velocity_diff_measurement = abs(successor.state(4) - host_vehicle.state(4));
+                y_i_successor = [host_distance_measurement; velocity_diff_measurement];
+
+                successor_id = successor.vehicle_number;
+                x_l_successor = host_global_estimate([1,4], successor_id); % Host's global estimate of successor
+
+                % Compute relative state from host's own global estimate
+                rel_state_est = abs(x_l_host_self - x_l_successor - [half_lenght_vehicle;0]);
+
+                % Compute consistency error
+                e = rel_state_est - y_i_successor;
+                E = e' * inv(self.tau2_matrix_gamma_local) * e + E;
+            end
+
+            % Compute self-consistency trust factor
+            gamma_local_our_self = exp(-E);
+        end
+
 
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1060,21 +1488,26 @@ classdef TriPTrustModel < handle
         function plot_diff_acc_score(self , host_vehicle_number, target_vehicle_number)
 
             figure("Name", "Diff Acc Score"+ host_vehicle_number + "->" + target_vehicle_number);
-            subplot(4,1,1);
+            subplot(5,1,1);
             plot(self.a_score_defaut_log, 'DisplayName', 'Default Acc Score', 'LineWidth', 1.5);
-            title('Default Acc Score $\frac{v_{rel}}{T_s}$', 'Interpreter', 'latex');
+            title('Default Acc Score TrIP $\frac{v_{rel}}{T_s}$', 'Interpreter', 'latex');
             grid on;
-            subplot(4,1,2);
-            plot(self.a_score_diff_acc_log , 'DisplayName', 'Diff Acc Score', 'LineWidth', 1.5);
-            title('Diff Acc Score');
+            subplot(5,1,2);
+            plot(self.a_score_vrel_dis_adjusted_log , 'DisplayName', 'Diff Acc Score', 'LineWidth', 1.5);
+            title('New Acc Score with d_add for smothing');
             grid on;
-            subplot(4,1,3);
+            subplot(5,1,3);
             plot(self.a_score_expected_diff_acc_log, 'DisplayName', 'Expected Acceleration', 'LineWidth', 1.5);
             title('Expected Diff Acceleration $\Delta acc_{expec}$', 'Interpreter', 'latex');
             grid on;
-            subplot(4,1,4);
+            subplot(5,1,4);
             plot(self.a_score_vrel_dis_log, 'DisplayName', 'Vrel Dist', 'LineWidth', 1.5);
-            title('Vrel Dist $\frac{v_{rel}}{d(1)}$', 'Interpreter', 'latex');
+            title('Acc use true host Dist $\frac{v_{rel}}{d(1)}$', 'Interpreter', 'latex');
+            subplot(5,1,5);
+            plot(self.a_score_mathematical_log, 'DisplayName', 'Vrel Dist', 'LineWidth', 1.5);
+            title('Paper now', 'Interpreter', 'latex');
+
+            
 
 
         end
@@ -1092,6 +1525,7 @@ classdef TriPTrustModel < handle
             plot(self.gamma_cross_log, 'DisplayName', 'Gamma Cross', 'LineWidth', 1);
             hold on;
             plot(self.gamma_local_log, 'DisplayName', 'Gamma Local','LineWidth', 1);
+            plot(self.gamma_local_our_self_log, 'DisplayName', 'Gamma Self','LineWidth', 1, 'LineStyle', '--');
             plot(global_trust, 'DisplayName', 'Global Trust','LineWidth', 1.5);
             grid on;
             legend show;
@@ -1123,6 +1557,86 @@ classdef TriPTrustModel < handle
             grid on;
 
             hold off;
+        end
+
+        function plot_validation_metrics(self, host_vehicle_number, target_vehicle_number)
+            % Plot the new validation metrics: physical constraints and temporal consistency
+            figure("Name", "Validation Metrics " + host_vehicle_number + "->" + target_vehicle_number);
+            
+            subplot(2,1,1);
+            plot(self.physical_valid_log, 'DisplayName', 'Physical Valid', 'LineWidth', 1.5, 'LineStyle', '-', 'Marker', 'o');
+            title('Physical Constraints Validation');
+            ylabel('Valid (1) / Invalid (0)');
+            ylim([-0.1, 1.1]);
+            grid on;
+            legend show;
+            
+            subplot(2,1,2);
+            plot(self.temporal_score_log, 'DisplayName', 'Temporal Consistency Score', 'LineWidth', 1.5, 'Color', 'red');
+            title('Temporal Consistency Score');
+            xlabel('Time Step');
+            ylabel('Consistency Score (0-1)');
+            ylim([0, 1]);
+            grid on;
+            legend show;
+        end
+
+        function plot_trust_decay_effects(self, host_vehicle_number, target_vehicle_number)
+            % Plot trust decay effects on local and global trust
+            figure("Name", "Trust Decay Effects " + host_vehicle_number + "->" + target_vehicle_number);
+            
+            % Check if we have decay data
+            if isempty(self.local_trust_decayed_log) || isempty(self.global_trust_decayed_log)
+                warning('No trust decay data available for plotting');
+                return;
+            end
+            
+            subplot(4,1,1);
+            % Compare original vs decayed local trust
+            plot(self.trust_sample_log, 'DisplayName', 'Original Local Trust', 'LineWidth', 1.5, 'LineStyle', '-');
+            hold on;
+            plot(self.local_trust_decayed_log, 'DisplayName', 'Decayed Local Trust', 'LineWidth', 1.5, 'LineStyle', '--');
+            title('Local Trust: Original vs Decayed');
+            ylabel('Trust Score');
+            ylim([0, 1]);
+            grid on;
+            legend show;
+            
+            subplot(4,1,2);
+            % Compare original vs decayed global trust (using gamma_cross * gamma_local as proxy for original)
+            if length(self.gamma_cross_log) == length(self.gamma_local_log) && ...
+               length(self.gamma_cross_log) == length(self.global_trust_decayed_log)
+                original_global = self.gamma_cross_log .* self.gamma_local_log;
+                plot(original_global, 'DisplayName', 'Original Global Trust', 'LineWidth', 1.5, 'LineStyle', '-');
+                hold on;
+                plot(self.global_trust_decayed_log, 'DisplayName', 'Decayed Global Trust', 'LineWidth', 1.5, 'LineStyle', '--');
+                title('Global Trust: Original vs Decayed');
+                ylabel('Trust Score');
+                ylim([0, 1]);
+                grid on;
+                legend show;
+            end
+            
+            subplot(4,1,3);
+            % Show separate beacon reception patterns
+            plot(self.beacon_score_local_log, 'DisplayName', 'Local Channel Beacon', 'LineWidth', 1.5, 'Marker', 'o', 'MarkerSize', 3);
+            hold on;
+            plot(self.beacon_score_global_log, 'DisplayName', 'Global Channel Beacon', 'LineWidth', 1.5, 'Marker', 's', 'MarkerSize', 3);
+            title('Separate Channel Beacon Reception (δ_{i,l}^{local}(t) & δ_{i,l}^{global}(t))');
+            ylabel('Beacon Received (1/0)');
+            ylim([-0.1, 1.1]);
+            grid on;
+            legend show;
+            
+            subplot(4,1,4);
+            % Show combined beacon pattern (both channels must work)
+            plot(self.beacon_score_log, 'DisplayName', 'Combined Beacon (Local & Global)', 'LineWidth', 1.5, 'Marker', 'd', 'MarkerSize', 3, 'Color', 'red');
+            title('Combined Beacon Reception (Both Channels Required)');
+            xlabel('Time Step');
+            ylabel('Both Beacons (1/0)');
+            ylim([-0.1, 1.1]);
+            grid on;
+            legend show;
         end
 
 

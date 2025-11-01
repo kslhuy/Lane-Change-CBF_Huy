@@ -104,8 +104,25 @@ classdef Attack_module < handle
                     perturbation = zeros(size(x_hat_i_j));
                     switch attack_type
                         case 'faulty'
-                            perturbation(attack_rows) = randn(size(attack_rows)) * fault_intensity;
-                            x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + perturbation(attack_rows);
+                            % Random faulty behavior - sometimes fault, sometimes normal
+                            if isstruct(fault_intensity)
+                                % New format: struct with 'intensity' and 'probability'
+                                fault_prob = fault_intensity.probability;
+                                fault_mag = fault_intensity.intensity;
+                            else
+                                % Backward compatibility: old format (simple number)
+                                fault_prob = 0.3; % Default 30% probability
+                                fault_mag = fault_intensity;
+                            end
+                            
+                            if rand < fault_prob
+                                % Apply random fault when probability triggers
+                                perturbation(attack_rows) = randn(size(attack_rows)) * fault_mag;
+                                x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + perturbation(attack_rows);
+                            else
+                                % No fault this time step - behave normally
+                                perturbation(attack_rows) = 0;
+                            end
                         case 'scaling'
                             perturbation(attack_rows) = x_hat_i_j(attack_rows) * fault_intensity; % Added value
                             x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) * (1 + fault_intensity);
@@ -218,8 +235,25 @@ classdef Attack_module < handle
                     perturbation = zeros(size(x_bar_j));
                     switch attack_type
                         case 'faulty'
-                            perturbation(attack_rows) = randn(size(attack_rows)) * fault_intensity;
-                            x_bar_j(attack_rows) = x_bar_j(attack_rows) + perturbation(attack_rows);
+                            % Random faulty behavior - sometimes fault, sometimes normal
+                            if isstruct(fault_intensity)
+                                % New format: struct with 'intensity' and 'probability'
+                                fault_prob = fault_intensity.probability;
+                                fault_mag = fault_intensity.intensity;
+                            else
+                                % Backward compatibility: old format (simple number)
+                                fault_prob = 0.3; % Default 30% probability
+                                fault_mag = fault_intensity;
+                            end
+                            
+                            if rand < fault_prob
+                                % Apply random fault when probability triggers
+                                perturbation(attack_rows) = randn(size(attack_rows)) * fault_mag;
+                                x_bar_j(attack_rows) = x_bar_j(attack_rows) + perturbation(attack_rows);
+                            else
+                                % No fault this time step - behave normally
+                                perturbation(attack_rows) = 0;
+                            end
                         case 'bias'
                             perturbation(attack_rows) = fault_intensity;
                             x_bar_j(attack_rows) = x_bar_j(attack_rows) + perturbation(attack_rows);

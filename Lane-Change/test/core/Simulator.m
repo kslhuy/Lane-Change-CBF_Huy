@@ -461,7 +461,7 @@ classdef Simulator
                     % Correct subplot indexing
                     subplot(num_states_show, nb_vehicles, (v_subplot_vertical-1)*nb_vehicles + v_subplot_horizontal);
                     for v_idx = 1:nb_vehicles
-                        plot( vehicles.observer.est_global_state_log(state_idx, 1:end, v_idx) - collected_car(v_idx).state_log(state_idx, 1:end-1), 'LineWidth', 1 , 'DisplayName', ['Vehicle ', num2str(v_idx)]);
+                        plot( vehicles.observer.est_global_state_log(state_idx, 1:end, v_idx) - collected_car(v_idx).state_log(state_idx, 2:end), 'LineWidth', 1 , 'DisplayName', ['Vehicle ', num2str(v_idx)]);
                         hold on;
                     end
                     ylabel(state_labels{v_subplot_vertical});

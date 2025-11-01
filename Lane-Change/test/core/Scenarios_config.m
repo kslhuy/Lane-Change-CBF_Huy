@@ -3,57 +3,73 @@ classdef Scenarios_config < handle
         dt ;
         simulation_time ;
         where ; % 1 indicates highway, 2 indicates urban road
-        gamma_type; % type gamma for switching control = " min" , " max " , " mean "
-        opinion_type; % opinion type " distance" , " trust" , " both"
-        controller_type; % "local" , "coop" , "mix"
         model_vehicle_type = "normal"; % "delay_v" , "delay_a" , "normal"
-        data_type_for_u2 = "est"; % "est" , "true"
 
-        lead_senario; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
-
+        lead_senario = "constant"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
+        
         lead_input = 0; % lead input
         debug_mode = false; % debug mode
-        Use_predict_observer = false; % if use predict observer
-        predict_controller_type = "self"; % "self" , "true_other" , "predict_other"
-        Local_observer_type = "mesurement"; % "mesurement" , "kalman" , "observer"
+
+        %%%% Observer related
+
+        Use_predict_observer = true; % if use predict observer
+        predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other"
+        Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
         Is_noise_mesurement = false; % if the noise is in the mesurement
+        noise_probability = 0.3; % Probability of adding measurement noise
+        Use_smooth_filter = true; % if using smooth filtering for noise mesurement 
+        Use_smooth_filter_in_local_observer = true; % if using smooth filtering in local observer
+
         Dichiret_type = "Single"; % "Single" , "Dual"
         Monitor_sudden_change = false; % if the sudden change is monitored
-        use_local_data_from_other = false; % if the local data from other vehicles is used
+        use_local_data_from_other = true; % if the local data from other vehicles is used
+
+        %%%% Attack related
 
         attacker_update_locally = true; % if the attacker is not updated from the others , only use local data
 
-        using_weight_trust = true; % if using weight trust
 
-        is_know_data_not_nearby = true ; % just for test purpose, Use that we have better Trust score , meaning that we know the data all of the other vehicles 
+        %% ------------- Trust related
+        using_weight_trust_observer = true; % if using weight trust
+        Use_weight_local_trust = true; % if using weight trust for local data
+        Use_weight_global_trust = true; % if using weight trust for global data
         
+        is_know_data_not_nearby = true ; % just for test purpose, Use that we have better Trust score , meaning that we know the data all of the other vehicles
+        
+        % New validation controls
+        Use_physical_constraints_check = false; % Enable/disable physical constraints validation
+        Use_temporal_consistency_check = false; % Enable/disable temporal consistency evaluation 
+        
+
+        acceleration_trust_score_method = "vrel_dis_adjusted"; % 'mathematical' - Use exact mathematical formula from paper
+                                        % 'enhanced' - Use enhanced implementation with reduced sensitivity
+                                        % 'default' - Use default implementation
+                                        % vrel_dis_adjusted - Use adjusted relative distance
+                                        % 'vrel_dis_real' - Use real relative distance
+                                        % 'hybrid' - Combine both methods
+        opinion_type = "trust"; % opinion type " distance" , " trust" , " both"
+
+        %%% Controller related
+        gamma_type = "min"; % type gamma for switching control = " min" , " max " , " mean "
+        controller_type = "local"; % "local" , "coop" , "mix"
+        data_type_for_u2 = "true"; % "est" , "true"
+
         control_use_accel = false; % Will override distributed observer with a prediction model
         CACC_bidirectional = false; % If true, the CACC controller will consider both leading and following vehicles in the control law
     
+
+        %% ---- PREDICTION in observer PARAMETERS
         MAX_PREDICT_ONLY_TIME = 5; % seconds
         N_good = 3; % Number of consecutive good steps to exit predict_only
         blend_thresh = 10; % You can tune this threshold
 
     end
     methods
-        function self = Scenarios_config(dt , simulation_time , scenario_where , controller_type ,data_type_for_u2, gamma_type , opinion_type, model_vehicle_type )
+        function self = Scenarios_config(dt , simulation_time , scenario_where  )
             self.dt = dt;
             self.simulation_time = simulation_time;
             self.where = scenario_where;
 
-            %% Control
-            self.controller_type = controller_type; % "local" , "coop" , "mix"
-            self.data_type_for_u2 = data_type_for_u2; % "est" , "true"
-            % type gamma for switching control = " min" , " max " , " mean "
-            self.gamma_type =  gamma_type;
-
-            % opinion type " distance" , " neighbor" , " both"
-            self.opinion_type = opinion_type;
-
-            self.model_vehicle_type = model_vehicle_type; % "delay_v" , "delay_a" , "normal"
-
-            % self.debug_mode = debug_mode;
-            % self.Dichiret_type = "constant"; % "constant" , "Acceleration" , "Deceleration" , "Lane_change"
         end
 
         function [ulim,llim] = getLimitSpeed(self)
@@ -110,7 +126,7 @@ classdef Scenarios_config < handle
                     end
                 else
                     lead_input = 0;
-                    lead_input = 2*sin(2 * pi * time / 10) ; % Example sinusoidal input for testing
+                    % lead_input = 2*sin(2 * pi * time / 10) ; % Example sinusoidal input for testing
                 end
             end
 
@@ -134,9 +150,7 @@ classdef Scenarios_config < handle
             self.CACC_bidirectional = CACC_bidirectional;
         end
 
-        function set_using_weight_trust(self, using_weight_trust)
-            self.using_weight_trust = using_weight_trust;
-        end
+
 
 
         function set_Test_better_trust(self , is_know_data_not_nearby)
@@ -161,6 +175,10 @@ classdef Scenarios_config < handle
         end
         function set_Is_noise_mesurement(self , Is_noise_mesurement)
             self.Is_noise_mesurement = Is_noise_mesurement;
+        end
+
+        function set_Use_smooth_filter(self, Use_smooth_filter)
+            self.Use_smooth_filter = Use_smooth_filter;
         end
 
         function set_monitor_sudden_change(self, monitor_sudden_change)

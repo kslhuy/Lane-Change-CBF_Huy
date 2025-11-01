@@ -7,6 +7,43 @@ scenario = struct();
 switch attack_type
 
     %% Scenario I: Bogus Messages
+    case "Mix_test"
+        switch case_num
+            case 1
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -5, data_type, {'X'});
+            case 2
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 5, data_type, {'X'});
+            case 3
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -2, data_type, {'velocity'});
+            case 4
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 2, data_type, {'velocity'});
+                    % Random faulty acceleration - low fault probability (stealthy)
+            case 5
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 1, 'probability', 0.2), data_type, {'acceleration'});
+            case 6
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 2.5, 'probability', 0.3), data_type, {'velocity'});
+            % Random faulty position - high fault probability (frequent faults)
+            case 7
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 10, 'probability', 0.5), data_type, {'X'});
+            case 8
+            % Random faulty velocity - medium fault probability 
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',5,'frequency',0.5), data_type, {'X'});
+            case 9
+                % scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 2, data_type, {'velocity'});
+                scenario = struct('attacker_id', attacker_id, ...
+                'victim_id', victim_id, ...
+                'start_time', t_star, ...
+                'end_time', t_end, ...
+                'attack_type', 'drop', ...
+                'fault_intensity', 0.5, ... %  percentage to drop no data
+                'data_type', data_type, ...
+                'attack_row', {'all'}); % Block all data
+            otherwise
+                disp("Invalid Mix_test case number"); return;
+        end
+
+
+    %% Scenario I: Bogus Messages
     case "Bogus"
         switch case_num
             case 1
@@ -14,19 +51,22 @@ switch attack_type
             case 2
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'scaling', 0.5, data_type, {'velocity'});
             case 3
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -15, data_type, {'X'});
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -10, data_type, {'X'});
             case 4
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 33, data_type, {'X'});
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 20, data_type, {'X'});
             case 5
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'linear', 0.1, data_type, {'velocity'});
             case 6
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',5,'frequency',0.5), data_type, {'X'});
             case 7
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 10, data_type, {'X'});
+                % Random faulty position - high fault probability (frequent faults)
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 10, 'probability', 0.5), data_type, {'X'});
             case 8
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 2.5, data_type, {'velocity'});
+                % Random faulty velocity - medium fault probability 
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 2.5, 'probability', 0.3), data_type, {'velocity'});
             case 9
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 0.2, data_type, {'acceleration'});
+                % Random faulty acceleration - low fault probability (stealthy)
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 0.5, 'probability', 0.2), data_type, {'acceleration'});
             case 10
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 2, data_type, {'velocity'});
             otherwise
@@ -50,7 +90,8 @@ switch attack_type
             case 6
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',5,'frequency',0.5), data_type, {'X'});
             case 7
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 5, data_type, {'X'});
+                % Random faulty position - intermittent fault
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 5, 'probability', 0.4), data_type, {'X'});
             otherwise
                 disp("Invalid Bogus case number"); return;
         end
@@ -71,7 +112,8 @@ switch attack_type
             case 6
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',2.5,'frequency',0.5), data_type, {'velocity'});
             case 7
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 2, data_type, {'velocity'});
+                % Random faulty velocity - intermittent fault
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 2, 'probability', 0.35), data_type, {'velocity'});
             case 8
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'scaling', -0.5, data_type, {'velocity'});
             case 9
@@ -96,7 +138,8 @@ switch attack_type
             case 6
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'sinusoidal', struct('amplitude',1,'frequency',0.5), data_type, {'acceleration'});
             case 7
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', 1, data_type, {'acceleration'});
+                % Random faulty acceleration - intermittent fault
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 1, 'probability', 0.25), data_type, {'acceleration'});
             case 8
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'scaling', -0.5, data_type, {'acceleration'});
             case 9

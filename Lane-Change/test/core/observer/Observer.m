@@ -30,6 +30,14 @@ classdef Observer < handle
 
         predict_only_counter = []; % Counter for consecutive good steps in prediction-only mode
         predict_only_timer =   []; % Timer for prediction-only mode
+        is_in_prediction_mode = []; % Boolean array tracking prediction-only mode for each vehicle
+        
+        % Properties for smoother noise and observer output
+        noise_filter_alpha = 0.7; % Exponential smoothing parameter for noise (0.0 = no filtering, 1.0 = max filtering)
+        previous_noise = []; % Store previous noise for smoothing
+        output_filter_alpha = 0.3; % Low-pass filter parameter for observer output
+        previous_local_output = []; % Store previous local observer output for smoothing
+        correlated_noise_state = []; % State for correlated noise generation
     end
     methods
         function self = Observer( vehicle , veh_param, inital_global_state, inital_local_state)
@@ -45,7 +53,10 @@ classdef Observer < handle
             num_vehicles = length(self.vehicle.other_vehicles);
 
             self.est_global_state_log = zeros(self.num_states, Nt, num_vehicles);
-            self.est_global_state_log(:,1,:) = inital_global_state;
+            % Initialize the log with proper 3D indexing
+            for v = 1:num_vehicles
+                self.est_global_state_log(:, 1, v) = inital_global_state(:, v);
+            end
 
             self.est_local_state_log = zeros(self.num_states, Nt);
             self.est_local_state_log(:,1) = inital_local_state;
@@ -56,11 +67,17 @@ classdef Observer < handle
 
             self.predict_only_counter = zeros(num_vehicles, 1);
             self.predict_only_timer = zeros(num_vehicles, 1);
+            self.is_in_prediction_mode = false(num_vehicles, 1); % Initialize as boolean array
             % NEW : for calculate the self belief = gamma in the controller
             self.self_belief = 1; % Initial self-belief
             self.reputation_scores = ones(num_vehicles, 1); % Initial reputation = 1
             self.P_pred_dist = eye(self.num_states); % Initial covariance
             self.S_log_dist = zeros(self.num_states, self.num_states, Nt); % Log innovation covariance
+            
+            % Initialize smoothing properties
+            self.previous_noise = zeros(self.num_states, 1);
+            self.previous_local_output = inital_local_state;
+            self.correlated_noise_state = zeros(self.num_states, 1);
 
 
             if (self.vehicle.scenarios_config.Local_observer_type == "kalman")
@@ -78,13 +95,16 @@ classdef Observer < handle
                 %% Noise Covariances
                 % These are example values; adjust based on your system/sensor characteristics.
                 % Measurement noise covariance R (variances on sensor measurements)
-                self.R = diag([0.1, 0.01, 0.0003, 0.01 ,0.0001 ]);  % variance for [x, y, theta, v]
+                self.R = diag([0.02, 0.005, 0.0003, 0.01 ,0.0003]);  % variance for [x, y, theta, v,a]
 
                 % Process noise covariance Q (model uncertainties)
-                self.Q = diag([0.005, 0.005, 0.001, 0.01,0.001]);
+                % self.Q = diag([0.005, 0.005, 0.001, 0.01,0.001]);
+                self.Q = diag([0.001, 0.001, 0.0005, 0.002, 0.0005]); % More realistic process noise
+
             else
-                self.Q = 1e-6 * eye(self.num_states); % Small process noise covariance (no model error)
-                self.R = 1e-10 * eye(self.num_states); % Very small measurement noise covariance (perfect measurements)
+                % Make noise covariances more realistic even for "no noise" case
+                self.Q = diag([0.001, 0.001, 0.0005, 0.002, 0.0005]); % More realistic process noise
+                self.R = diag([0.01, 0.005, 0.0001, 0.005, 0.0002]); % More realistic measurement noise
             end
         end
 
@@ -100,18 +120,31 @@ classdef Observer < handle
             for j = 1:num_vehicles
                 weights_new = self.get_weights_for_vehicle(j, host_id, weights, instant_index);
                 x_bar_j = self.get_local_state_for_vehicle(j, host_id, weights_new);
-                x_hat_i_j = self.get_global_states_for_vehicle(j, num_vehicles, host_id, weights_new);
+                x_hat_i_j = self.get_global_states_for_vehicle(j, num_vehicles, host_id, weights_new, instant_index);
                 u_j = self.Get_controller(j);
                 weights_new = self.adjust_weights_for_attacker(j, host_id, weights_new);
                 use_local_data_from_other = self.vehicle.scenarios_config.use_local_data_from_other;
                 output = self.distributed_Observer_each(self.vehicle.vehicle_number, j, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, false);
+                
+                % %% TEST
+                % % output = self.distributed_Observer_each_simplified(self.vehicle.vehicle_number, j, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, false);
+                % Big_X_hat_1_tempo(:,j) = output;
+                % %% END TEST
+
+
                 self.update_reputation(j, output, x_bar_j);
                 if instant_index*self.param_sys.dt < 3
                     Big_X_hat_1_tempo(:,j) = output;
                     self.Is_ok_log = [self.Is_ok_log, true];
-                else
+                elseif self.vehicle.scenarios_config.Use_predict_observer
+                    % Use sophisticated prediction-only switching logic
                     [Big_X_hat_1_tempo(:,j), temp_confidence_scores] = self.handle_predict_only_switch(j, num_vehicles, output, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, instant_index, confidence_scores);
                     confidence_scores = temp_confidence_scores;
+                else
+                    % Prediction-only mode disabled: always use normal output
+                    Big_X_hat_1_tempo(:,j) = output;
+                    self.Is_ok_log = [self.Is_ok_log, true];
+                    confidence_scores(j) = 1.0; % High confidence when not using prediction-only
                 end
             end
 
@@ -148,8 +181,8 @@ classdef Observer < handle
             end
         end
 
-        function x_hat_i_j = get_global_states_for_vehicle(self, j, num_vehicles, host_id, weights_new)
-            % Get global state estimates for all vehicles
+        function x_hat_i_j = get_global_states_for_vehicle(self, j, num_vehicles, host_id, weights_new, instant_index)
+            % Get global state estimates for all vehicles (PREVIOUS estimates, not current)
             x_hat_i_j = zeros(self.num_states, num_vehicles);
             for k = 1:num_vehicles
                 x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k, self.vehicle.vehicle_number);
@@ -159,6 +192,26 @@ classdef Observer < handle
                 end
                 x_hat_i_j(:, k) = x_hat_i_j_full(:, j);
             end
+            % for k = 1:num_vehicles
+            %     if k == host_id
+            %         % For our own vehicle, use our previous estimate from log
+            %         if instant_index > 1 && size(self.est_global_state_log, 2) >= instant_index-1
+            %             x_hat_i_j(:, k) = self.est_global_state_log(:, instant_index-1, j);
+            %         else
+            %             % Fallback for first iteration: use current estimate
+            %             x_hat_i_j(:, k) = self.est_global_state_current(:, j);
+            %         end
+            %     else
+            %         % For other vehicles, we should ideally get their PREVIOUS estimates
+            %         % But since communication center only has current data, we use current as approximation
+            %         x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k, self.vehicle.vehicle_number);
+            %         if isnan(x_hat_i_j_full) %% Case of missing data
+            %             x_hat_i_j_full = zeros(size(self.est_global_state_current));
+            %             weights_new(k+1) = 0;
+            %         end
+            %         x_hat_i_j(:, k) = x_hat_i_j_full(:, j);
+            %     end
+            % end
         end
 
         function weights_new = adjust_weights_for_attacker(self, j, host_id, weights_new)
@@ -210,6 +263,9 @@ classdef Observer < handle
                 end
                 self.predict_only_counter(j) = 0;
             end
+            
+            % Update the prediction mode status for easy access
+            self.is_in_prediction_mode(j) = (self.predict_only_counter(j) < N_good);
 
             % If in prediction-only mode, increment timer
             if self.predict_only_counter(j) < N_good && (~is_ok && self.vehicle.scenarios_config.Use_predict_observer)
@@ -258,19 +314,30 @@ classdef Observer < handle
             end
         end
 
-        function output = distributed_Observer_each( self , host_id , j, x_bar_j , x_hat_i_j, u_j ,weights,use_local, predict_only )
+        function output = distributed_Observer_each( self , host_id , j, x_bar_j , x_hat_i_j, u_j ,weights,use_local, predict_only, instant_index )
             if nargin < 7
                 use_local = true; % Default value
             end
+            if nargin < 10
+                instant_index = 1; % Default value
+            end
 
             Sig = zeros(self.num_states,1); % Initialize consensus term
+            
+            % CORRECT: x_hat_i_j(:, host_id) is actually our previous estimate of vehicle j
+            % This is what we want to use for both linearization and as the base state
+            % x_j_prev = x_hat_i_j(:, host_id); % Our current/previous estimate of vehicle j
+            
             [A , B]  = self.matrix();
+            
             % Calculate the consensus term
             % Start from 2 , because the first element is the local state of the vehicle
             for L = 2:length(weights)
                 % Why x_hat_i_j(: , l-1) because L start from 2 , but we need to start from 1 for vehicle
                 Sig = weights(L)*( x_hat_i_j(: , L-1) - x_hat_i_j(: , host_id) ) + Sig;
             end
+            
+
             %% Some situation
             % Only if we try to estimated j = i , so we have real local state that was estimated by Local observer .
             % But if we try to estimate j != i , we have (fake) the local state of j , that by vehicle j send to i vehicle
@@ -288,19 +355,45 @@ classdef Observer < handle
                 [output, ~, S] = self.predict_kalman_dist(host_id, j, x_hat_i_j(:, host_id), u_j);
                 self.S_log_dist(:, :, host_id) = S; % Store for check_elementwise_similarity
             else
-                % CASE not send local state , only host vehicle local state is use
                 if use_local
+                    % NORMAL CASE have received local state from other vehicle
                     output = A*( x_hat_i_j(: , host_id) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , host_id)) ) + B*u_j ;
                 else
+                    % CASE not received local state , only host vehicle have his own local state to use
                     if (host_id == j)
                         output = A*( x_hat_i_j(: , host_id) + Sig + w_i0 * (x_bar_j - x_hat_i_j(: , host_id)) ) + B*u_j ;
                     else
+                        % the other vehicle that we want to estimate , we dont have local data of them
                         output = A*( x_hat_i_j(: , host_id) + Sig) + B*u_j ;
                     end
                 end
             end
+        end
 
+        function output = distributed_Observer_each_simplified( self , host_id , j, x_bar_j , x_hat_i_j, u_j ,weights,use_local, predict_only )
+            if nargin < 7
+                use_local = true; % Default value
+            end
 
+            % % SIMPLIFIED VERSION: No consensus term, only local data
+            % [A , B]  = self.matrix();
+
+            % % Use the estimated state of vehicle j for the matrix calculation
+            % if host_id == j
+            %     % If estimating own vehicle, use current state
+            %     vehicle_state_for_matrix = self.vehicle.state;
+            % else
+            %     % If estimating other vehicle, use the estimated state
+            %     vehicle_state_for_matrix = x_hat_i_j(:, host_id);
+            % end
+            
+            [A , B]  = self.matrix(self.vehicle.other_vehicles(j).state);
+            
+            corrected_state = x_hat_i_j(:, host_id) ;
+            output = A * corrected_state + B * u_j;
+            % Store identity covariance for similarity check
+            self.S_log_dist(:, :, host_id) = eye(self.num_states) * 0.1;
+            
         end
 
 
@@ -378,22 +471,66 @@ classdef Observer < handle
             % self.est_local_state_current = state;
             [A , B]  = self.matrix();
 
+            % % Add small measurement noise for more realistic simulation
+            % small_noise_cov = diag([0.01, 0.01, 0.001, 0.005, 0.001]); % Small noise for [X, Y, theta, V, A]
+            % small_measurement_noise = mvnrnd(zeros(self.num_states,1), small_noise_cov)'; 
+            % mesure_state = mesure_state + small_measurement_noise;
+
             if self.vehicle.scenarios_config.Is_noise_mesurement == true
-                % process_noise = mvnrnd(zeros(self.num_states,1), Q)';  % sample process noise
-                measurement_noise = mvnrnd(zeros(self.num_states,1), self.R)';  % sample measurement noise
-                mesure_state = mesure_state + measurement_noise; % Add noise to the measurement
+                if rand() < self.vehicle.scenarios_config.noise_probability
+                    if self.vehicle.scenarios_config.Use_smooth_filter == true
+                        % Apply smoother, correlated measurement noise
+                        % Generate correlated noise using first-order Markov process
+                        correlation_factor = 0.8; % Controls noise correlation (0 = white noise, 1 = fully correlated)
+                        white_noise = mvnrnd(zeros(self.num_states,1), self.R)';
+                        
+                        % First-order Markov noise model: x[k] = correlation_factor * x[k-1] + sqrt(1-correlation_factor^2) * w[k]
+                        self.correlated_noise_state = correlation_factor * self.correlated_noise_state + ...
+                                                      sqrt(1 - correlation_factor^2) * white_noise;
+                        
+                        % Apply exponential smoothing to reduce sudden noise spikes
+                        current_noise = (1 - self.noise_filter_alpha) * self.correlated_noise_state + ...
+                                        self.noise_filter_alpha * self.previous_noise;
+                        
+                        mesure_state = mesure_state + current_noise;
+                        self.previous_noise = current_noise; % Store for next iteration
+                    else
+                        % Original simple noise generation (no smoothing)
+                        additional_measurement_noise = mvnrnd(zeros(self.num_states,1), self.R)';  % sample additional measurement noise
+                        mesure_state = mesure_state + additional_measurement_noise; % Add additional noise to the measurement
+                    end
+                end
             end
 
             if self.vehicle.scenarios_config.Local_observer_type == "observer"
-                self.est_local_state_current = A * self.est_local_state_current + B * self.vehicle.input + self.L_gain * (mesure_state - self.est_local_state_current);
+                raw_output = A * self.est_local_state_current + B * self.vehicle.input + self.L_gain * (mesure_state - self.est_local_state_current);
             elseif self.vehicle.scenarios_config.Local_observer_type == "kalman"
                 % Kalman Filter
                 self.kalman_filter(mesure_state);
-                % self.est_local_state_log(:, instant_index+1) = self.est_local_state_current;
+                raw_output = self.est_local_state_current;
             else %"true"
-                self.est_local_state_current = mesure_state;
-                % self.est_local_state_log(:, instant_index+1) = self.est_local_state_current;
+                raw_output = mesure_state;
             end
+            
+            % Apply output smoothing conditionally based on configuration
+            if self.vehicle.scenarios_config.Use_smooth_filter_in_local_observer == true
+                % Apply exponential smoothing to reduce observer output oscillations
+                if instant_index == 1
+                    % For first iteration, use raw output
+                    self.est_local_state_current = raw_output;
+                else
+                    % Apply low-pass filter: output = (1-alpha) * new_value + alpha * previous_value
+                    self.est_local_state_current = (1 - self.output_filter_alpha) * raw_output + ...
+                                                   self.output_filter_alpha * self.previous_local_output;
+                end
+                
+                % Store current output for next iteration
+                self.previous_local_output = self.est_local_state_current;
+            else
+                % No smoothing - use raw output directly
+                self.est_local_state_current = raw_output;
+            end
+            
             self.est_local_state_log(:, instant_index+1) = self.est_local_state_current;
 
 
@@ -403,29 +540,56 @@ classdef Observer < handle
             % Kalman Filter
             [A , B]  = self.matrix();
 
-            % Prediction Step
-            x_pred = A * self.est_local_state_current + B * self.vehicle.input;
+            % Add process noise to make it more realistic
+            if self.vehicle.scenarios_config.Is_noise_mesurement == true
+                process_noise = mvnrnd(zeros(self.num_states,1), self.Q)';  % sample process noise
+            else
+                process_noise = zeros(self.num_states,1); % No process noise for perfect case
+            end
+
+            % Prediction Step (with process noise)
+            x_pred = A * self.est_local_state_current + B * self.vehicle.input + process_noise;
             P_pred = A * self.P * A' + self.Q;
 
             % Measurement Update Step
             y = mesure_state; % Measurement
-            C = eye(self.num_states); % Measurement matrix (assuming we can measure all states)
-            S = C * P_pred * C' ; % Innovation covariance
-            K = P_pred * C' / S; % Kalman gain
+            % More realistic measurement matrix - not all states may be directly measurable
+            % For now, assume we can measure position, angle, and velocity but not acceleration directly
+            C = eye(self.num_states); 
+            % Make acceleration measurement less reliable
+            % C(5,5) = 0.5; % Acceleration is harder to measure accurately
+            
+            S = C * P_pred * C' + self.R; % Innovation covariance (add measurement noise)
+            K = P_pred * C' / (S + 1e-8 * eye(self.num_states)); % Kalman gain with regularization
 
             % Update the state estimate
-            self.est_local_state_current = x_pred + K * (y - C * x_pred);
-            % Update the error covariance
-            self.P = (eye(size(K,1)) - K * C) * P_pred;
+            innovation = y - C * x_pred;
+            self.est_local_state_current = x_pred + K * innovation;
+            
+            % Update the error covariance (Joseph form for numerical stability)
+            I_KC = eye(self.num_states) - K * C;
+            self.P = I_KC * P_pred * I_KC' + K * self.R * K';
+            
+            % Ensure P remains positive definite and well-conditioned
+            self.P = (self.P + self.P') / 2; % Force symmetry
+            [V, D] = eig(self.P);
+            D = max(D, 1e-8 * eye(self.num_states)); % Ensure positive eigenvalues
+            self.P = V * D * V';
         end
 
         % This model use in obesrver , so need to be here, in the observer class
-        function  [A , B] = matrix(self )
-            % theta = self.vehicle.state(3);
-            %% TODO : Need to be change
-            theta = 0;
+        function  [A , B] = matrix(self, vehicle_state)
+            if nargin < 2
+                % Default: use current vehicle's state
+                theta = self.vehicle.state(3);
+                v = self.vehicle.state(4);
+            else
+                % Use provided vehicle state (for estimating other vehicles)
+                theta = vehicle_state(3);
+                v = vehicle_state(4);
+            end
+            
             Ts = self.param_sys.dt;
-            v = self.vehicle.state(4);
             tau = self.param_sys.tau;
 
             % state = X ,Y , theta , V , A
@@ -511,6 +675,26 @@ classdef Observer < handle
             agreement = exp(-error^2 / (2 * self.num_states));
             alpha = 0.1;
             self.reputation_scores(j) = self.reputation_scores(j) + alpha * (agreement - self.reputation_scores(j));
+        end
+
+        % Convenient helper methods for prediction-only mode
+        function is_pred_mode = is_vehicle_in_prediction_mode(self, vehicle_id)
+            % Check if a specific vehicle is in prediction-only mode
+            if vehicle_id <= length(self.is_in_prediction_mode)
+                is_pred_mode = self.is_in_prediction_mode(vehicle_id);
+            else
+                is_pred_mode = false;
+            end
+        end
+        
+        function any_pred_mode = any_vehicle_in_prediction_mode(self)
+            % Check if any vehicle is in prediction-only mode
+            any_pred_mode = any(self.is_in_prediction_mode);
+        end
+        
+        function pred_vehicles = get_prediction_mode_vehicles(self)
+            % Get list of vehicle IDs currently in prediction-only mode
+            pred_vehicles = find(self.is_in_prediction_mode);
         end
 
 
@@ -633,6 +817,73 @@ classdef Observer < handle
             global_vel_err = mean(vel_err, 2);    % [num_vehicles, 1]
             global_acc_err = mean(acc_err, 2);    % [num_vehicles, 1]
 
+        end
+
+        function smoothed_output = apply_output_smoothing(self, raw_output, vehicle_idx, use_adaptive)
+            % Apply smoothing to distributed observer output
+            % raw_output: new estimate from distributed observer
+            % vehicle_idx: which vehicle this estimate is for
+            % use_adaptive: whether to use adaptive smoothing based on confidence
+            
+            if nargin < 4
+                use_adaptive = false;
+            end
+            
+            persistent previous_outputs; % Store previous outputs for each vehicle
+            if isempty(previous_outputs)
+                previous_outputs = [];
+            end
+            
+            % Initialize if first call for this vehicle
+            if size(previous_outputs, 2) < vehicle_idx || isempty(previous_outputs)
+                if isempty(previous_outputs)
+                    previous_outputs = raw_output;
+                else
+                    previous_outputs(:, vehicle_idx) = raw_output;
+                end
+                smoothed_output = raw_output;
+                return;
+            end
+            
+            % Get smoothing factor
+            if use_adaptive && vehicle_idx <= length(self.reputation_scores)
+                % Adaptive smoothing based on reputation score
+                base_alpha = 0.3;
+                reputation_factor = max(0.1, self.reputation_scores(vehicle_idx));
+                alpha = base_alpha * reputation_factor;
+            else
+                alpha = 0.3; % Fixed smoothing factor
+            end
+            
+            % Apply exponential smoothing
+            smoothed_output = (1 - alpha) * raw_output + alpha * previous_outputs(:, vehicle_idx);
+            
+            % Update stored value
+            previous_outputs(:, vehicle_idx) = smoothed_output;
+        end
+
+        function filtered_noise = generate_smooth_noise(self, base_covariance, correlation_factor)
+            % Generate smooth, correlated noise for more realistic simulation
+            % base_covariance: base noise covariance matrix
+            % correlation_factor: temporal correlation (0-1, higher = more correlated)
+            
+            if nargin < 3
+                correlation_factor = 0.8;
+            end
+            
+            % Generate white noise
+            white_noise = mvnrnd(zeros(self.num_states, 1), base_covariance)';
+            
+            % Apply first-order Markov correlation
+            self.correlated_noise_state = correlation_factor * self.correlated_noise_state + ...
+                                          sqrt(1 - correlation_factor^2) * white_noise;
+            
+            % Apply additional smoothing
+            filtered_noise = (1 - self.noise_filter_alpha) * self.correlated_noise_state + ...
+                             self.noise_filter_alpha * self.previous_noise;
+            
+            % Update previous noise for next iteration
+            self.previous_noise = filtered_noise;
         end
 
 

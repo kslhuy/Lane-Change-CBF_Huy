@@ -82,13 +82,14 @@ classdef Vehicle < handle
 
             % Local and global state initialization
             state_initial = self.state;
-            inital_local_state = zeros(length(state_initial), 1);
+            inital_local_state = state_initial; % Initialize with actual initial state, not zeros
 
 
-            %-------- To get global state
-            inital_global_state = state_initial;
-            for i = 1:length(other_vehicles) - 1
-                inital_global_state = [inital_global_state , state_initial];
+            %-------- To get global state with actual vehicle positions (3D array)
+            num_vehicles = length(other_vehicles);
+            inital_global_state = zeros(length(state_initial), num_vehicles);
+            for i = 1:num_vehicles
+                inital_global_state(:, i) = other_vehicles(i).state;
             end
             %--------
             %% Create an observer for the vehicle
@@ -136,7 +137,7 @@ classdef Vehicle < handle
             self.calculateTrustAndOpinion3(instant_index, connected_vehicles_idx);
 
             % Weight trust update
-            if (self.scenarios_config.using_weight_trust && instant_index * self.dt >= 3)
+            if (self.scenarios_config.using_weight_trust_observer && instant_index * self.dt >= 3)
                 weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number, self.trust_log(1, instant_index, :), "equal");
             else
                 weights_Dis = self.weight_module.calculate_weights_Defaut(self.vehicle_number);
@@ -197,6 +198,9 @@ classdef Vehicle < handle
                     U_final = u_1;
                     U_final(1) = self.input(1) + self.Param_opt.tau_filter*(U_target(1) - self.input(1)) ; % self.input is last input
                 end
+                
+                %% Apply acceleration limits to the controller output
+                U_final = self.clamp_acceleration_input(U_final);
 
                 %% Update new state
                 if (self.scenarios_config.model_vehicle_type == "delay_v")
@@ -228,6 +232,10 @@ classdef Vehicle < handle
                 %% We have direct input from the lead vehicle
                 acceleration = self.scenarios_config.get_LeadInput(instant_index); % acceleration is the input of the lead vehicle
                 U_target = [acceleration;0];
+                
+                %% Apply acceleration limits to the lead vehicle input
+                U_target = self.clamp_acceleration_input(U_target);
+                
                 self.input = U_target ; % update the input
 
                 %% Update new state
@@ -445,6 +453,17 @@ classdef Vehicle < handle
             v = state(4);
         end
 
+        function clamped_input = clamp_acceleration_input(self, input)
+            % Clamp the acceleration (first component) and steering angle (second component) to the defined limits
+            clamped_input = input;
+            % Clamp acceleration
+            clamped_input(1) = max(self.param.min_acceleration, ...
+                                  min(self.param.max_acceleration, input(1)));
+            % Clamp steering angle
+            clamped_input(2) = max(self.param.min_steering_angle, ...
+                                  min(self.param.max_steering_angle, input(2)));
+        end
+
 
 
 
@@ -595,7 +614,7 @@ classdef Vehicle < handle
             % plot( self.observer.est_global_state_log(1, 1:end-1, self.vehicle_number), 'r--', 'LineWidth', 1.5);
             % legend('Ground Truth X', 'Estimated X');
 
-            plot( self.observer.est_global_state_log(1, 1:end, self.vehicle_number) - self.state_log(1,1:end-1), 'b', 'LineWidth', 1.5);
+            plot( self.observer.est_global_state_log(1, 1:end, self.vehicle_number) - self.state_log(1,2:end), 'b', 'LineWidth', 1.5);
 
             legend('error X');
 
