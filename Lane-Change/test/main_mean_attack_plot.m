@@ -24,10 +24,10 @@ center_communication = CenterCommunication(attack_module);
 
 t_star = 10;
 t_end = 15;
-attacker_vehicle_id = 2;
+attacker_vehicle_id = 1;
 victim_id = -1;
-data_type_attack = "local"; % "local" , "global",
-attack_type = "Bogus"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus" , "POS" , "VEL" , "ACC"
+data_type_attack = "global"; % "local" , "global",
+attack_type = "Mix_test"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus" , "POS" , "VEL" , "ACC" , "Mix_test"
 
 
 % ──────────────────────────────────────────────────────────────────────────────
@@ -60,9 +60,9 @@ Scenarios_config.set_Lead_Senarios("constant");
 
 
 start_attack_senarios_index = 1;
-last_attack_senarios_index = 3;  % All Bogus cases (1-10)
+last_attack_senarios_index = 6;  % All Mix_test cases (1-6) - matches Atk_Scenarios.m
 
-total_num_attack_cases = last_attack_senarios_index - start_attack_senarios_index ;
+total_num_attack_cases = last_attack_senarios_index - start_attack_senarios_index + 1;
 
 vehicle_labels = {'V1', 'V2', 'V3', 'V4'};
 scenario_labels = arrayfun(@(x) sprintf("Case %d", x), start_attack_senarios_index:total_num_attack_cases, 'UniformOutput', false);
@@ -180,32 +180,17 @@ for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
         end
     end
 
-    % n_vehicles_eval = length(vehicles_to_evaluate);
-    %
-    % n_steps =  size(vehicles_to_evaluate(1).observer.est_global_state_log, 2);  % assuming dist_err is a time series
-    % all_global_dist_errors = zeros(n_steps, n_vehicles_eval);
-    % all_global_theta_errors = zeros(n_steps, n_vehicles_eval);
-    % all_global_vel_errors   = zeros(n_steps, n_vehicles_eval);
-    % all_global_acc_errors   = zeros(n_steps, n_vehicles_eval);
-    %
-    % for k = 1:n_vehicles_eval
-    %     v = vehicles_to_evaluate(k);
-    %     [dist_err, theta_err, vel_err, acc_err] = v.observer.calculate_global_errors();
-    %     all_global_dist_errors(:,k) = dist_err;
-    %     all_global_theta_errors(:,k) = theta_err;
-    %     all_global_vel_errors(:,k)   = vel_err;
-    %     all_global_acc_errors(:,k)   = acc_err;
-    % end
 
 
 
 
-
-    % Calculate overall mean of global errors for all vehicles in this scenario
-    mean_dist = mean(all_global_dist_errors,2);
-    mean_theta = mean(all_global_theta_errors,2);
-    mean_vel = mean(all_global_vel_errors,2);
-    mean_acc = mean(all_global_acc_errors,2);
+    % Calculate consensus RMSE across all observer vehicles for each target vehicle
+    % Each observer vehicle estimates all other vehicles -> average their RMSE estimates
+    % Result: mean_dist(i) = average RMSE for vehicle i across all observers
+    mean_dist = mean(all_global_dist_errors,2);   % Average RMSE across observers (dim 2)
+    mean_theta = mean(all_global_theta_errors,2); % Average RMSE across observers (dim 2)
+    mean_vel = mean(all_global_vel_errors,2);     % Average RMSE across observers (dim 2)
+    mean_acc = mean(all_global_acc_errors,2);     % Average RMSE across observers (dim 2)
 
     % write one row per evaluating vehicle
     for vi = 1:length(non_attacker_ids)
@@ -294,68 +279,67 @@ end
 %% PAPER-QUALITY PLOTTING SECTION
 %% ===================================================================
 
-% Define Bogus attack case descriptions for better labeling
-attack_descriptions = {
-    'Vel Scale -50%', 'Vel Scale +50%', 'Pos Bias -15m', 'Pos Bias +20m', ...
-    'Vel Linear +0.1', 'Pos Sinusoidal', 'Pos Fault 10m', 'Vel Fault 2.5', ...
-    'Acc Fault 0.5', 'Vel Bias +2'
+% Define Mix_test attack case descriptions for better labeling (complete list)
+all_attack_descriptions = {
+    'P Bias -5m', 'P Faulty 10m', 'V Bias -2m/s', 'V Faulty 2.5m/s', ...
+    'A Faulty 1.0m/s²', 'DoS Attack'
 };
 
-%% 1. COMPREHENSIVE ESTIMATION ERROR ANALYSIS
-figure('Position', [100, 100, 1200, 800]);
+% Select attack descriptions based on the scenario range
+attack_descriptions = all_attack_descriptions(start_attack_senarios_index:last_attack_senarios_index);
+
+%% 1. COMPREHENSIVE ESTIMATION ERROR ANALYSIS (WITHOUT ORIENTATION)
+figure('Position', [100, 100, 1200, 600]);
 
 % Subplot 1: Distance Estimation Error
-subplot(2,2,1);
+subplot(1,3,1);
 data = squeeze(mean_errors(non_attacker_ids, 1, :))';  % Distance errors for non-attackers
 bar(data);
 xticklabels(attack_descriptions(1:size(data,1)));
 xtickangle(45);
+set(gca, 'FontSize', 9);  % Make text smaller
 ylabel('Distance Error (m)');
 title('(a) Distance Estimation Error');
 legend(cellstr("V" + string(non_attacker_ids)), 'Location', 'best');
 grid on;
 
 % Subplot 2: Velocity Estimation Error  
-subplot(2,2,2);
+subplot(1,3,2);
 data = squeeze(mean_errors(non_attacker_ids, 3, :))';  % Velocity errors
 bar(data);
 xticklabels(attack_descriptions(1:size(data,1)));
 xtickangle(45);
+set(gca, 'FontSize', 9);  % Make text smaller
 ylabel('Velocity Error (m/s)');
 title('(b) Velocity Estimation Error');
 legend(cellstr("V" + string(non_attacker_ids)), 'Location', 'best');
 grid on;
 
-% Subplot 3: Orientation Estimation Error
-subplot(2,2,3);
-data = squeeze(mean_errors(non_attacker_ids, 2, :))';  % Orientation errors
-bar(data);
-xticklabels(attack_descriptions(1:size(data,1)));
-xtickangle(45);
-ylabel('Orientation Error (rad)');
-title('(c) Orientation Estimation Error');
-legend(cellstr("V" + string(non_attacker_ids)), 'Location', 'best');
-grid on;
-
-% Subplot 4: Acceleration Estimation Error
-subplot(2,2,4);
+% Subplot 3: Acceleration Estimation Error
+subplot(1,3,3);
 data = squeeze(mean_errors(non_attacker_ids, 4, :))';  % Acceleration errors
 bar(data);
 xticklabels(attack_descriptions(1:size(data,1)));
 xtickangle(45);
+set(gca, 'FontSize', 9);  % Make text smaller
 ylabel('Acceleration Error (m/s²)');
-title('(d) Acceleration Estimation Error');
+title('(c) Acceleration Estimation Error');
 legend(cellstr("V" + string(non_attacker_ids)), 'Location', 'best');
 grid on;
 
 sgtitle(sprintf('Distributed Estimation Performance Under %s Attacks (Attacker: V%d)', attack_type, attacker_vehicle_id), 'FontSize', 14, 'FontWeight', 'bold');
 
-%% 2. MEANINGFUL ATTACK IMPACT HEATMAPS
+%% 2. MEANINGFUL ATTACK IMPACT HEATMAPS (WITHOUT ORIENTATION)
 % Option 1: Separate heatmaps for each error type (RECOMMENDED)
-figure('Position', [200, 200, 1400, 1000]);
+figure('Position', [200, 200, 1200, 600]);
 
-for metric_idx = 1:4
-    subplot(2, 2, metric_idx);
+% Select only non-orientation metrics: Distance(1), Velocity(3), Acceleration(4)
+selected_metrics = [1, 3, 4];
+selected_labels = {'Distance Error (m)', 'Velocity Error (m/s)', 'Acc Error (m/s²)'};
+
+for plot_idx = 1:3
+    metric_idx = selected_metrics(plot_idx);
+    subplot(1, 3, plot_idx);
     
     % Extract data for this specific metric across all vehicles and cases
     metric_data = squeeze(mean_errors(non_attacker_ids, metric_idx, :));  % vehicles × cases
@@ -367,26 +351,30 @@ for metric_idx = 1:4
     % Customize labels and title
     xlabel('Attack Cases');
     ylabel('Vehicles');
-    title(sprintf('%s Impact', metric_labels{metric_idx}));
+    title(sprintf('%s Impact', selected_labels{plot_idx}));
     
     % Set tick labels
     if size(metric_data, 2) <= length(attack_descriptions)
         xticklabels(attack_descriptions(1:size(metric_data, 2)));
     end
-    yticklabels(cellstr("V" + string(non_attacker_ids)));
+    % Center the y-tick labels properly
+    num_vehicles = length(non_attacker_ids);
+    yticks(1:num_vehicles);
+    vehicle_labels = arrayfun(@(x) sprintf('V%d', x), non_attacker_ids, 'UniformOutput', false);
+    yticklabels(vehicle_labels);
     xtickangle(45);
+    set(gca, 'FontSize', 9);  % Make text smaller for heatmaps
+    % Force y-tick labels to be centered
+    set(gca, 'TickLength', [0 0]);  % Remove tick marks
+    ylim([0.5, num_vehicles + 0.5]);  % Set proper y-axis limits
     
-    % Add text annotations for better readability
+    % Add text annotations with simple black text
     for i = 1:size(metric_data, 1)
         for j = 1:size(metric_data, 2)
-            if metric_data(i,j) > mean(metric_data(:))
-                text_color = 'white';
-            else
-                text_color = 'black';
-            end
             text(j, i, sprintf('%.3f', metric_data(i,j)), ...
-                 'HorizontalAlignment', 'center', ...
-                 'Color', text_color);
+                 'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+                 'Color', 'black', 'FontWeight', 'bold', 'FontSize', 11, ...
+                 'EdgeColor', 'none');
         end
     end
 end
@@ -400,15 +388,15 @@ figure('Position', [300, 100, 1000, 600]);
 normalized_errors = zeros(size(mean_errors));
 for metric_idx = 1:4
     metric_slice = mean_errors(:, metric_idx, :);
-    min_val = min(metric_slice(:));
-    max_val = max(metric_slice(:));
+    min_val = min(metric_slice(:));           % Find minimum error for THIS metric
+    max_val = max(metric_slice(:));           % Find maximum error for THIS metric
     if max_val > min_val
         normalized_errors(:, metric_idx, :) = (metric_slice - min_val) / (max_val - min_val);
     end
 end
 
-% Calculate weighted impact score (you can adjust weights based on importance)
-weights = [0.3, 0.2, 0.3, 0.2];  % [distance, orientation, velocity, acceleration]
+% Calculate weighted impact score with equal weighting for distance, velocity, and acceleration
+weights = [1/3, 0.0, 1/3, 1/3];  % [distance, orientation(excluded), velocity, acceleration] - Equal weighting
 impact_scores = squeeze(sum(normalized_errors .* reshape(weights, 1, 4, 1), 2));
 
 % Create normalized impact heatmap
@@ -418,476 +406,371 @@ xlabel('Attack Cases');
 ylabel('Vehicles');
 title(sprintf('Normalized Combined Impact Score - %s Attacks by V%d', attack_type, attacker_vehicle_id));
 xticklabels(attack_descriptions(1:size(impact_scores, 2)));
-yticklabels(cellstr("V" + string(non_attacker_ids)));
+% Center the y-tick labels properly
+num_vehicles = length(non_attacker_ids);
+yticks(1:num_vehicles);
+vehicle_labels = arrayfun(@(x) sprintf('V%d', x), non_attacker_ids, 'UniformOutput', false);
+yticklabels(vehicle_labels);
 xtickangle(45);
+set(gca, 'FontSize', 8);  % Make text smaller for heatmaps
+% Force y-tick labels to be centered
+set(gca, 'TickLength', [0 0]);  % Remove tick marks
+ylim([0.5, num_vehicles + 0.5]);  % Set proper y-axis limits
 
-% Add text annotations
+% Add text annotations with simple black text
 for i = 1:length(non_attacker_ids)
     for j = 1:size(impact_scores, 2)
         score = impact_scores(non_attacker_ids(i), j);
-        if score > 0.5
-            text_color = 'white';
-        else
-            text_color = 'black';
-        end
+        
         text(j, i, sprintf('%.2f', score), ...
-             'HorizontalAlignment', 'center', ...
-             'Color', text_color);
+             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+             'Color', 'black', 'FontWeight', 'bold', 'FontSize', 11, ...
+             'EdgeColor', 'none');
     end
 end
 
-%% 3. VULNERABILITY ANALYSIS PER VEHICLE
-figure('Position', [300, 300, 1000, 400]);
-for v_idx = 1:length(non_attacker_ids)
-    subplot(1, length(non_attacker_ids), v_idx);
-    vehicle_errors = squeeze(mean_errors(non_attacker_ids(v_idx), :, :));  % All metrics for this vehicle
-    bar(vehicle_errors');
-    xticklabels(attack_descriptions(1:size(vehicle_errors,2)));
-    xtickangle(45);
-    ylabel('Error Magnitude');
-    title(sprintf('V%d Vulnerability', non_attacker_ids(v_idx)));
-    legend(metric_labels, 'Location', 'best', 'FontSize', 8);
-    grid on;
-end
-sgtitle('Individual Vehicle Vulnerability Analysis', 'FontSize', 14, 'FontWeight', 'bold');
+%% Option 3: Raw Average Combined Error Heatmap (Non-normalized)
+figure('Position', [400, 200, 1000, 600]);
 
-%% 4. COMPREHENSIVE TRUST ANALYSIS FOR ALL CASES
-% Create trust evolution plots for ALL attack cases
-if exist('all_case_trust_logs', 'var') && ~isempty(all_case_trust_logs{end})
-    
-    fprintf('\n=== COMPREHENSIVE TRUST ANALYSIS FOR ALL CASES ===\n');
-    
-    n_cases = length(all_case_trust_logs);
-    
-    % CREATE INDIVIDUAL TRUST EVOLUTION PLOTS FOR EACH CASE
-    for case_idx = 1:n_cases
-        if ~isempty(all_case_trust_logs{case_idx})
-            
-            vehicles_data = all_case_vehicles{case_idx};
-            scenario_data = all_case_scenarios{case_idx};
-            
-            % Create trust evolution plot for this specific case
-            figure('Position', [100 + case_idx*50, 100 + case_idx*50, 1200, 800]);
-            
-            attack_start_idx = round(scenario_data.t_start / scenario_data.dt);
-            attack_end_idx = round(scenario_data.t_end / scenario_data.dt);
-            
-            % Plot for each non-attacker vehicle
-            for v_idx = 1:length(non_attacker_ids)
-                vehicle_id = non_attacker_ids(v_idx);
-                
-                subplot(2, 2, v_idx);
-                
-                if vehicle_id <= length(vehicles_data) && isfield(vehicles_data(vehicle_id), 'trust_log')
-                    trust_log = vehicles_data(vehicle_id).trust_log;
-                    
-                    if size(trust_log, 3) >= attacker_vehicle_id && size(trust_log, 2) > 1
-                        trust_in_attacker = squeeze(trust_log(1, :, attacker_vehicle_id));
-                        time_vector = (1:length(trust_in_attacker)) * scenario_data.dt;
-                        
-                        plot(time_vector, trust_in_attacker, 'b-', 'LineWidth', 2);
-                        hold on;
-                        
-                        % Highlight attack period
-                        attack_region = [scenario_data.t_start, scenario_data.t_start, scenario_data.t_end, scenario_data.t_end];
-                        y_limits = [min(trust_in_attacker)-0.1, max(trust_in_attacker)+0.1];
-                        attack_height = [y_limits(1), y_limits(2), y_limits(2), y_limits(1)];
-                        patch(attack_region, attack_height, 'red', 'FaceAlpha', 0.2, 'EdgeColor', 'none');
-                        
-                        % Add trust threshold line
-                        trust_threshold = 0.7;
-                        plot([time_vector(1), time_vector(end)], [trust_threshold, trust_threshold], 'r--', 'LineWidth', 1.5);
-                        
-                        xlabel('Time (s)');
-                        ylabel('Trust Score');
-                        title(sprintf('V%d → V%d (Attacker)', vehicle_id, attacker_vehicle_id));
-                        grid on;
-                        ylim(y_limits);
-                        
-                        % Calculate metrics for this case
-                        if attack_start_idx <= length(trust_in_attacker) && attack_end_idx <= length(trust_in_attacker)
-                            pre_attack_trust = mean(trust_in_attacker(1:attack_start_idx));
-                            during_attack_trust = mean(trust_in_attacker(attack_start_idx:attack_end_idx));
-                            degradation = pre_attack_trust - during_attack_trust;
-                            
-                            text(0.05, 0.95, sprintf('Degradation: %.3f', degradation), ...
-                                 'Units', 'normalized', 'BackgroundColor', 'white', 'FontSize', 9);
-                            
-                            % Find detection time
-                            attack_trust = trust_in_attacker(attack_start_idx:end);
-                            detection_idx = find(attack_trust < trust_threshold, 1);
-                            if ~isempty(detection_idx)
-                                detection_time = detection_idx * scenario_data.dt;
-                                detection_time_abs = scenario_data.t_start + detection_time;
-                                plot(detection_time_abs, trust_threshold, 'ro', 'MarkerSize', 8, 'MarkerFaceColor', 'red');
-                                text(0.05, 0.85, sprintf('Detection: %.2fs', detection_time), ...
-                                     'Units', 'normalized', 'BackgroundColor', 'white', 'FontSize', 9);
-                            else
-                                text(0.05, 0.85, 'No Detection', ...
-                                     'Units', 'normalized', 'BackgroundColor', 'yellow', 'FontSize', 9);
-                            end
-                        end
-                        
-                        if v_idx == 1
-                            legend('Trust Score', 'Attack Period', 'Detection Threshold', 'Detection Point', ...
-                                   'Location', 'best', 'FontSize', 8);
-                        end
-                    end
-                end
-            end
-            
-            case_desc = attack_descriptions{case_idx};
-            sgtitle(sprintf('Trust Evolution - Case %d: %s Attack by V%d', ...
-                    case_idx, case_desc, attacker_vehicle_id), ...
-                    'FontSize', 14, 'FontWeight', 'bold');
-        end
-    end
-    
-    % CREATE COMPARISON PLOT ACROSS ALL CASES
-    figure('Position', [400, 400, 1400, 900]);
-    
-    % Calculate summary metrics across all cases
-    trust_degradation_summary = zeros(n_cases, length(non_attacker_ids));
-    detection_time_summary = zeros(n_cases, length(non_attacker_ids));
-    
-    for case_idx = 1:n_cases
-        if ~isempty(all_case_trust_logs{case_idx})
-            vehicles_data = all_case_vehicles{case_idx};
-            scenario_data = all_case_scenarios{case_idx};
-            
-            attack_start_idx = round(scenario_data.t_start / scenario_data.dt);
-            attack_end_idx = round(scenario_data.t_end / scenario_data.dt);
-            
-            for v_idx = 1:length(non_attacker_ids)
-                vehicle_id = non_attacker_ids(v_idx);
-                
-                if vehicle_id <= length(vehicles_data) && isfield(vehicles_data(vehicle_id), 'trust_log')
-                    trust_log = vehicles_data(vehicle_id).trust_log;
-                    
-                    if size(trust_log, 3) >= attacker_vehicle_id && size(trust_log, 2) > attack_end_idx
-                        trust_in_attacker = squeeze(trust_log(1, :, attacker_vehicle_id));
-                        
-                        % Calculate degradation
-                        pre_attack_trust = mean(trust_in_attacker(1:attack_start_idx));
-                        during_attack_trust = mean(trust_in_attacker(attack_start_idx:attack_end_idx));
-                        trust_degradation_summary(case_idx, v_idx) = pre_attack_trust - during_attack_trust;
-                        
-                        % Calculate detection time
-                        trust_threshold = 0.7;
-                        attack_trust = trust_in_attacker(attack_start_idx:end);
-                        detection_idx = find(attack_trust < trust_threshold, 1);
-                        if ~isempty(detection_idx)
-                            detection_time_summary(case_idx, v_idx) = detection_idx * scenario_data.dt;
-                        else
-                            detection_time_summary(case_idx, v_idx) = NaN;
-                        end
-                    end
-                end
-            end
-        end
-    end
-    
-    % Create SUMMARY comparison plots
-    case_labels = arrayfun(@(x) attack_descriptions{x}, 1:n_cases, 'UniformOutput', false);
-    
-    % Plot 1: Trust degradation comparison
-    subplot(2, 3, 1);
-    imagesc(trust_degradation_summary');
-    colorbar;
-    title('Trust Degradation Across All Cases');
-    xlabel('Attack Cases');
-    ylabel('Vehicles');
-    xticks(1:n_cases);
-    xticklabels(case_labels);
-    yticklabels(cellstr("V" + string(non_attacker_ids)));
-    xtickangle(45);
-    
-    % Add values on heatmap
-    for i = 1:size(trust_degradation_summary, 1)
-        for j = 1:size(trust_degradation_summary, 2)
-            if ~isnan(trust_degradation_summary(i, j))
-                text(i, j, sprintf('%.2f', trust_degradation_summary(i, j)), ...
-                     'HorizontalAlignment', 'center', 'Color', 'white', 'FontSize', 8);
-            end
-        end
-    end
-    
-    % Plot 2: Detection time comparison
-    subplot(2, 3, 2);
-    imagesc(detection_time_summary');
-    colorbar;
-    title('Detection Time (s) Across All Cases');
-    xlabel('Attack Cases');
-    ylabel('Vehicles');
-    xticks(1:n_cases);
-    xticklabels(case_labels);
-    yticklabels(cellstr("V" + string(non_attacker_ids)));
-    xtickangle(45);
-    
-    % Add values on heatmap
-    for i = 1:size(detection_time_summary, 1)
-        for j = 1:size(detection_time_summary, 2)
-            if ~isnan(detection_time_summary(i, j))
-                text(i, j, sprintf('%.1f', detection_time_summary(i, j)), ...
-                     'HorizontalAlignment', 'center', 'Color', 'white', 'FontSize', 8);
-            end
-        end
-    end
-    
-    % Plot 3: Average trust degradation per case
-    subplot(2, 3, 3);
-    mean_degradation = nanmean(trust_degradation_summary, 2);
-    std_degradation = nanstd(trust_degradation_summary, 0, 2);
-    bar(1:n_cases, mean_degradation, 'FaceColor', [0.3, 0.7, 0.9]);
-    hold on;
-    errorbar(1:n_cases, mean_degradation, std_degradation, 'k.', 'LineWidth', 1.5);
-    xlabel('Attack Cases');
-    ylabel('Mean Trust Degradation');
-    title('Average Trust Response by Case');
-    xticks(1:n_cases);
-    xticklabels(case_labels);
-    xtickangle(45);
-    grid on;
-    
-    % Plot 4: Average detection time per case
-    subplot(2, 3, 4);
-    mean_detection = nanmean(detection_time_summary, 2);
-    std_detection = nanstd(detection_time_summary, 0, 2);
-    bar(1:n_cases, mean_detection, 'FaceColor', [0.9, 0.5, 0.2]);
-    hold on;
-    errorbar(1:n_cases, mean_detection, std_detection, 'k.', 'LineWidth', 1.5);
-    xlabel('Attack Cases');
-    ylabel('Mean Detection Time (s)');
-    title('Average Detection Speed by Case');
-    xticks(1:n_cases);
-    xticklabels(case_labels);
-    xtickangle(45);
-    grid on;
-    
-    % Plot 5: Trust degradation vs detection correlation
-    subplot(2, 3, 5);
-    valid_data = ~isnan(trust_degradation_summary(:)) & ~isnan(detection_time_summary(:));
-    if sum(valid_data) > 1
-        scatter(trust_degradation_summary(valid_data), detection_time_summary(valid_data), 100, 'filled');
-        xlabel('Trust Degradation');
-        ylabel('Detection Time (s)');
-        title('Trust Response vs Detection Speed');
-        
-        % Add case labels to points
-        valid_indices = find(valid_data);
-        for k = 1:length(valid_indices)
-            [case_idx, vehicle_idx] = ind2sub(size(trust_degradation_summary), valid_indices(k));
-            text(trust_degradation_summary(valid_indices(k)), detection_time_summary(valid_indices(k)), ...
-                 sprintf('C%d-V%d', case_idx, non_attacker_ids(vehicle_idx)), ...
-                 'FontSize', 7, 'HorizontalAlignment', 'left');
-        end
-        grid on;
-    end
-    
-    % Plot 6: Case-by-case comparison
-    subplot(2, 3, 6);
-    for case_idx = 1:n_cases
-        plot(1:length(non_attacker_ids), trust_degradation_summary(case_idx, :), ...
-             'o-', 'LineWidth', 2, 'MarkerSize', 8, 'DisplayName', sprintf('Case %d', case_idx));
-        hold on;
-    end
-    xlabel('Vehicles');
-    ylabel('Trust Degradation');
-    title('Trust Degradation by Vehicle & Case');
-    xticks(1:length(non_attacker_ids));
-    xticklabels(cellstr("V" + string(non_attacker_ids)));
-    legend('Location', 'best');
-    grid on;
-    
-    sgtitle(sprintf('Trust Analysis Summary - %s Attacks by V%d (All Cases)', attack_type, attacker_vehicle_id), ...
-            'FontSize', 14, 'FontWeight', 'bold');
-    
-    % Print detailed statistics
-    fprintf('Attack Type: %s, Attacker: V%d\n', attack_type, attacker_vehicle_id);
-    fprintf('Cases Analyzed: %d\n', n_cases);
-    
-    for case_idx = 1:n_cases
-        fprintf('\nCase %d (%s):\n', case_idx, case_labels{case_idx});
-        case_degradation = trust_degradation_summary(case_idx, :);
-        case_detection = detection_time_summary(case_idx, :);
-        
-        valid_deg = case_degradation(~isnan(case_degradation));
-        valid_det = case_detection(~isnan(case_detection));
-        
-        if ~isempty(valid_deg)
-            fprintf('  Trust Degradation: Mean=%.3f, Max=%.3f\n', mean(valid_deg), max(valid_deg));
-        end
-        if ~isempty(valid_det)
-            fprintf('  Detection Time: Mean=%.2fs, Min=%.2fs\n', mean(valid_det), min(valid_det));
-        end
-    end
-    
-else
-    fprintf('Warning: No direct trust data collected from simulations\n');
-    fprintf('Using last simulation data for trust analysis...\n');
-    
-    % Use the last simulation's trust data for demonstration
-    if exist('platton_vehicles', 'var') && ~isempty(platton_vehicles)
-        
-        % Create trust evolution plot during attack
-        figure('Position', [400, 400, 1200, 800]);
-        
-        attack_start_idx = round(t_star / Scenarios_config.dt);
-        attack_end_idx = round(t_end / Scenarios_config.dt);
-        time_vector = (1:size(platton_vehicles(1).trust_log, 2)) * Scenarios_config.dt;
-        
-        % Plot trust evolution for each vehicle toward the attacker
-        for v_idx = 1:length(non_attacker_ids)
-            vehicle_id = non_attacker_ids(v_idx);
-            
-            subplot(2, 2, v_idx);
-            
-            if vehicle_id <= length(platton_vehicles) && size(platton_vehicles(vehicle_id).trust_log, 3) >= attacker_vehicle_id
-                trust_in_attacker = squeeze(platton_vehicles(vehicle_id).trust_log(1, :, attacker_vehicle_id));
-                
-                plot(time_vector, trust_in_attacker, 'b-', 'LineWidth', 2);
-                hold on;
-                
-                % Highlight attack period
-                attack_region = [t_star, t_star, t_end, t_end];
-                y_limits = ylim;
-                attack_height = [y_limits(1), y_limits(2), y_limits(2), y_limits(1)];
-                patch(attack_region, attack_height, 'red', 'FaceAlpha', 0.2, 'EdgeColor', 'none');
-                
-                % Add trust threshold line
-                trust_threshold = 0.7;
-                plot([time_vector(1), time_vector(end)], [trust_threshold, trust_threshold], 'r--', 'LineWidth', 1.5);
-                
-                xlabel('Time (s)');
-                ylabel('Trust Score');
-                title(sprintf('V%d Trust in V%d (Attacker)', vehicle_id, attacker_vehicle_id));
-                grid on;
-                legend('Trust Score', 'Attack Period', 'Detection Threshold', 'Location', 'best');
-                
-                % Calculate and display metrics
-                pre_attack_trust = mean(trust_in_attacker(1:attack_start_idx));
-                during_attack_trust = mean(trust_in_attacker(attack_start_idx:attack_end_idx));
-                degradation = pre_attack_trust - during_attack_trust;
-                
-                text(0.05, 0.95, sprintf('Degradation: %.3f', degradation), ...
-                     'Units', 'normalized', 'BackgroundColor', 'white', 'FontSize', 10);
-                
-                % Find detection time
-                attack_trust = trust_in_attacker(attack_start_idx:end);
-                detection_idx = find(attack_trust < trust_threshold, 1);
-                if ~isempty(detection_idx)
-                    detection_time = detection_idx * Scenarios_config.dt;
-                    detection_time_abs = t_star + detection_time;
-                    plot(detection_time_abs, trust_threshold, 'ro', 'MarkerSize', 8, 'MarkerFaceColor', 'red');
-                    text(0.05, 0.85, sprintf('Detection: %.2fs', detection_time), ...
-                         'Units', 'normalized', 'BackgroundColor', 'white', 'FontSize', 10);
-                end
-            end
-        end
-        
-        sgtitle(sprintf('Trust Evolution During %s Attack by V%d (Case %d)', ...
-                attack_type, attacker_vehicle_id, total_num_attack_cases), ...
-                'FontSize', 14, 'FontWeight', 'bold');
-        
-        % Additional trust analysis using trip models
-        figure('Position', [500, 500, 1400, 600]);
-        
-        % Plot detailed trust components for one representative vehicle-pair
-        if length(non_attacker_ids) > 0
-            repr_vehicle_id = non_attacker_ids(1);  % Use first non-attacker
-            if repr_vehicle_id <= length(platton_vehicles) && ~isempty(platton_vehicles(repr_vehicle_id).trip_models)
-                
-                % Find trust model for the attacker
-                trust_model = [];
-                for tm_idx = 1:length(platton_vehicles(repr_vehicle_id).trip_models)
-                    if ~isempty(platton_vehicles(repr_vehicle_id).trip_models{tm_idx})
-                        trust_model = platton_vehicles(repr_vehicle_id).trip_models{tm_idx};
-                        break;
-                    end
-                end
-                
-                if ~isempty(trust_model) && ~isempty(trust_model.trust_sample_log)
-                    time_steps = 1:length(trust_model.trust_sample_log);
-                    time_vector_tm = time_steps * Scenarios_config.dt;
-                    
-                    % Plot 1: Trust components
-                    subplot(2, 3, 1);
-                    plot(time_vector_tm, trust_model.trust_sample_log, 'b-', 'LineWidth', 1.5);
-                    hold on;
-                    plot(time_vector_tm, trust_model.final_score_log, 'r-', 'LineWidth', 1.5);
-                    xlabel('Time (s)');
-                    ylabel('Trust Score');
-                    title('Trust Sample vs Final Score');
-                    legend('Trust Sample', 'Final Score', 'Location', 'best');
-                    grid on;
-                    
-                    % Plot 2: Trust factors
-                    subplot(2, 3, 2);
-                    if ~isempty(trust_model.gamma_cross_log)
-                        plot(time_vector_tm, trust_model.gamma_cross_log, 'g-', 'LineWidth', 1.5);
-                        hold on;
-                    end
-                    if ~isempty(trust_model.gamma_local_log)
-                        plot(time_vector_tm, trust_model.gamma_local_log, 'm-', 'LineWidth', 1.5);
-                    end
-                    xlabel('Time (s)');
-                    ylabel('Trust Factor');
-                    title('Trust Validation Factors');
-                    legend('Cross-validation', 'Local consistency', 'Location', 'best');
-                    grid on;
-                    
-                    % Plot 3: Individual scores
-                    subplot(2, 3, 3);
-                    if ~isempty(trust_model.v_score_log)
-                        plot(time_vector_tm, trust_model.v_score_log, 'b-', 'LineWidth', 1);
-                        hold on;
-                    end
-                    if ~isempty(trust_model.d_score_log)
-                        plot(time_vector_tm, trust_model.d_score_log, 'r-', 'LineWidth', 1);
-                    end
-                    if ~isempty(trust_model.a_score_log)
-                        plot(time_vector_tm, trust_model.a_score_log, 'g-', 'LineWidth', 1);
-                    end
-                    xlabel('Time (s)');
-                    ylabel('Score');
-                    title('Individual Trust Metrics');
-                    legend('Velocity', 'Distance', 'Acceleration', 'Location', 'best');
-                    grid on;
-                    
-                    sgtitle(sprintf('Detailed Trust Analysis: V%d evaluating V%d', repr_vehicle_id, attacker_vehicle_id), ...
-                            'FontSize', 12, 'FontWeight', 'bold');
-                end
-            end
-        end
-        
-        % Use existing plotting functions for comprehensive view
-        fprintf('Generating comprehensive trust plots using existing functions...\n');
-        simulator0.plot_all_trust_log(platton_vehicles);
-        
-        % Generate individual trust model plots
-        fprintf('Generating individual trust model plots...\n');
-        for v_idx = 1:length(non_attacker_ids)
-            vehicle_id = non_attacker_ids(v_idx);
-            if vehicle_id <= length(platton_vehicles) && ~isempty(platton_vehicles(vehicle_id).trip_models)
-                for tm_idx = 1:length(platton_vehicles(vehicle_id).trip_models)
-                    if ~isempty(platton_vehicles(vehicle_id).trip_models{tm_idx})
-                        try
-                            platton_vehicles(vehicle_id).trip_models{tm_idx}.plot_trust_log(vehicle_id, tm_idx);
-                        catch
-                            fprintf('Warning: Could not plot trust log for V%d->V%d\n', vehicle_id, tm_idx);
-                        end
-                    end
-                end
-            end
-        end
+% Calculate raw combined errors (excluding orientation) - sum all error types
+raw_selected_metrics = [1, 3, 4]; % Distance(1), Velocity(3), Acceleration(4) - excluding orientation(2)
+
+% Extract only the selected metrics for non-attacker vehicles
+raw_errors_selected = mean_errors(non_attacker_ids, raw_selected_metrics, :); % 3 vehicles × 3 metrics × 6 cases
+
+% Calculate weighted average for each vehicle and case
+raw_combined_errors = zeros(length(non_attacker_ids), size(mean_errors, 3));
+for i = 1:length(non_attacker_ids)
+    for j = 1:size(mean_errors, 3)
+        vehicle_errors = squeeze(raw_errors_selected(i, :, j)); % 3 metrics for this vehicle and case
+        raw_combined_errors(i, j) = sum(vehicle_errors); % Total combined RMSE (sum of all error types)
     end
 end
+
+% Create raw error heatmap
+imagesc(raw_combined_errors);
+colorbar;
+xlabel('Attack Cases');
+ylabel('Vehicles');
+title(sprintf('Raw Average Combined Error (Distance + Velocity + Acceleration) - Attacks by V%d', attacker_vehicle_id));
+xticklabels(attack_descriptions(1:size(raw_combined_errors, 2)));
+% Center the y-tick labels properly
+num_vehicles = length(non_attacker_ids);
+yticks(1:num_vehicles);
+vehicle_labels = arrayfun(@(x) sprintf('V%d', x), non_attacker_ids, 'UniformOutput', false);
+yticklabels(vehicle_labels);
+xtickangle(45);
+set(gca, 'FontSize', 8);  % Make text smaller for heatmaps
+% Force y-tick labels to be centered
+set(gca, 'TickLength', [0 0]);  % Remove tick marks
+ylim([0.5, num_vehicles + 0.5]);  % Set proper y-axis limits
+
+% Add text annotations with simple black text
+for i = 1:length(non_attacker_ids)
+    for j = 1:size(raw_combined_errors, 2)
+        raw_error = raw_combined_errors(i, j);
+        
+        text(j, i, sprintf('%.3f', raw_error), ...
+             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+             'Color', 'black', 'FontWeight', 'bold', 'FontSize', 11, ...
+             'EdgeColor', 'none');
+    end
+end
+
+% %% 3. VULNERABILITY ANALYSIS PER VEHICLE (WITHOUT ORIENTATION)
+% figure('Position', [300, 300, 1000, 400]);
+% selected_metrics = [1, 3, 4]; % Distance, Velocity, Acceleration (excluding orientation)
+% selected_labels = {'Distance Error (m)', 'Velocity Error (m/s)', 'Acc Error (m/s²)'};
+
+% for v_idx = 1:length(non_attacker_ids)
+%     subplot(1, length(non_attacker_ids), v_idx);
+%     vehicle_errors = squeeze(mean_errors(non_attacker_ids(v_idx), selected_metrics, :));  % Selected metrics for this vehicle
+%     bar(vehicle_errors');
+%     xticklabels(attack_descriptions(1:size(vehicle_errors,2)));
+%     xtickangle(45);
+%     set(gca, 'FontSize', 8);  % Make text smaller
+%     ylabel('Error Magnitude');
+%     title(sprintf('V%d Vulnerability', non_attacker_ids(v_idx)));
+%     legend(selected_labels, 'Location', 'best', 'FontSize', 8);
+%     grid on;
+% end
+% sgtitle('Individual Vehicle Vulnerability Analysis', 'FontSize', 14, 'FontWeight', 'bold');
+
+%% 4. HYBRID HEATMAP: NORMALIZED IMPACT COLORS WITH RAW ERROR VALUES
+figure('Position', [500, 300, 1000, 600]);
+
+% Use normalized impact scores for colormap, but show raw combined errors as text
+imagesc(impact_scores(non_attacker_ids, :));
+colorbar;
+xlabel('Attack Cases');
+ylabel('Vehicles');
+title(sprintf('Hybrid Analysis: Impact Score Colors + Raw Error Values - %s Attacks by V%d', attack_type, attacker_vehicle_id));
+
+% Set axis labels and formatting
+xticklabels(attack_descriptions(1:size(impact_scores, 2)));
+num_vehicles = length(non_attacker_ids);
+yticks(1:num_vehicles);
+vehicle_labels = arrayfun(@(x) sprintf('V%d', x), non_attacker_ids, 'UniformOutput', false);
+yticklabels(vehicle_labels);
+xtickangle(45);
+set(gca, 'FontSize', 8);
+set(gca, 'TickLength', [0 0]);
+ylim([0.5, num_vehicles + 0.5]);
+
+% Add text annotations showing RAW COMBINED ERROR values
+for i = 1:length(non_attacker_ids)
+    for j = 1:size(raw_combined_errors, 2)
+        raw_error = raw_combined_errors(i, j);
+        
+        % Display raw error value as text
+        text(j, i, sprintf('%.3f', raw_error), ...
+             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+             'Color', 'black', 'FontWeight', 'bold', 'FontSize', 11, ...
+             'EdgeColor', 'none');
+    end
+end
+
+% Add a colorbar title to clarify what the colors represent
+c = colorbar;
+c.Label.String = 'Normalized Impact Score (0-1)';
+c.Label.FontSize = 10;
+c.Label.FontWeight = 'bold';
+
+% Add legend/explanation
+annotation('textbox', [0.02, 0.95, 0.3, 0.05], ...
+    'String', 'Colors: Normalized Impact | Numbers: Raw Combined RMSE', ...
+    'FontSize', 10, 'FontWeight', 'bold', ...
+    'BackgroundColor', 'white', 'EdgeColor', 'black', ...
+    'HorizontalAlignment', 'left');
 
 %% 5. SUMMARY STATISTICS FOR PAPER
 fprintf('\n=== SUMMARY STATISTICS FOR PAPER ===\n');
 fprintf('Attack Type: %s, Attacker: V%d\n', attack_type, attacker_vehicle_id);
 fprintf('Total Attack Cases Tested: %d\n', total_num_attack_cases);
 fprintf('Attack Duration: %.1f seconds (t=%.1fs to %.1fs)\n', t_end-t_star, t_star, t_end);
+
+%% RAW COMBINED ERROR ANALYSIS
+fprintf('\n=== RAW AVERAGE COMBINED ERROR ANALYSIS ===\n');
+
+% Get the raw combined error data for analysis
+raw_error_data = raw_combined_errors;
+
+% Find attack case with highest raw error
+[max_raw_per_case, ~] = max(raw_error_data, [], 1);  % Max raw error across vehicles for each case
+[overall_max_raw, most_severe_raw_case] = max(max_raw_per_case);
+fprintf('Highest Raw Error Attack: Case %d (%s) - Max Error: %.4f\n', ...
+    most_severe_raw_case, attack_descriptions{most_severe_raw_case}, overall_max_raw);
+
+% Find attack case with lowest raw error
+[min_raw_per_case, ~] = min(raw_error_data, [], 1);  % Min raw error across vehicles for each case
+[overall_min_raw, least_severe_raw_case] = min(min_raw_per_case);
+fprintf('Lowest Raw Error Attack: Case %d (%s) - Min Error: %.4f\n', ...
+    least_severe_raw_case, attack_descriptions{least_severe_raw_case}, overall_min_raw);
+
+% Find vehicle with highest raw error across all attacks
+[max_raw_per_vehicle, ~] = max(raw_error_data, [], 2);  % Max raw error across cases for each vehicle
+[vehicle_max_raw, most_affected_vehicle_idx] = max(max_raw_per_vehicle);
+most_affected_vehicle = non_attacker_ids(most_affected_vehicle_idx);
+fprintf('Most Affected Vehicle: V%d - Max Raw Error: %.4f\n', ...
+    most_affected_vehicle, vehicle_max_raw);
+
+% Find vehicle with lowest raw error across all attacks
+[min_raw_per_vehicle, ~] = min(raw_error_data, [], 2);  % Min raw error across cases for each vehicle
+[vehicle_min_raw, least_affected_vehicle_idx] = min(min_raw_per_vehicle);
+least_affected_vehicle = non_attacker_ids(least_affected_vehicle_idx);
+fprintf('Most Robust Vehicle: V%d - Min Raw Error: %.4f\n', ...
+    least_affected_vehicle, vehicle_min_raw);
+
+% Average raw error per attack case
+avg_raw_per_case = mean(raw_error_data, 1);
+fprintf('\nAverage Raw Combined Error by Attack Case:\n');
+for i = 1:length(attack_descriptions)
+    fprintf('  Case %d (%s): %.4f\n', i, attack_descriptions{i}, avg_raw_per_case(i));
+end
+
+% Average raw error per vehicle
+avg_raw_per_vehicle = mean(raw_error_data, 2);
+fprintf('\nAverage Raw Combined Error by Vehicle:\n');
+for i = 1:length(non_attacker_ids)
+    fprintf('  V%d: %.4f\n', non_attacker_ids(i), avg_raw_per_vehicle(i));
+end
+
+% Raw error severity classification based on actual error magnitudes
+critical_error_threshold = 2.0;   % Combined error > 2.0 is critical
+high_error_threshold = 1.0;       % Combined error > 1.0 is high
+moderate_error_threshold = 0.5;   % Combined error > 0.5 is moderate
+
+fprintf('\n=== RAW ERROR SEVERITY CLASSIFICATION ===\n');
+fprintf('Critical Error (>%.1f): System performance severely compromised\n', critical_error_threshold);
+fprintf('High Error (%.1f-%.1f): Significant performance degradation\n', high_error_threshold, critical_error_threshold);
+fprintf('Moderate Error (%.1f-%.1f): Noticeable but manageable impact\n', moderate_error_threshold, high_error_threshold);
+fprintf('Low Error (<%.1f): Minimal impact on system performance\n', moderate_error_threshold);
+
+critical_cases = find(max_raw_per_case > critical_error_threshold);
+high_cases = find(max_raw_per_case > high_error_threshold & max_raw_per_case <= critical_error_threshold);
+moderate_cases = find(max_raw_per_case > moderate_error_threshold & max_raw_per_case <= high_error_threshold);
+low_cases = find(max_raw_per_case <= moderate_error_threshold);
+
+if ~isempty(critical_cases)
+    fprintf('\nCRITICAL ERROR CASES: ');
+    for i = 1:length(critical_cases)
+        fprintf('Case %d (%s) ', critical_cases(i), attack_descriptions{critical_cases(i)});
+    end
+    fprintf('\n');
+end
+
+if ~isempty(high_cases)
+    fprintf('HIGH ERROR CASES: ');
+    for i = 1:length(high_cases)
+        fprintf('Case %d (%s) ', high_cases(i), attack_descriptions{high_cases(i)});
+    end
+    fprintf('\n');
+end
+
+if ~isempty(moderate_cases)
+    fprintf('MODERATE ERROR CASES: ');
+    for i = 1:length(moderate_cases)
+        fprintf('Case %d (%s) ', moderate_cases(i), attack_descriptions{moderate_cases(i)});
+    end
+    fprintf('\n');
+end
+
+if ~isempty(low_cases)
+    fprintf('LOW ERROR CASES: ');
+    for i = 1:length(low_cases)
+        fprintf('Case %d (%s) ', low_cases(i), attack_descriptions{low_cases(i)});
+    end
+    fprintf('\n');
+end
+
+% Error magnitude distribution analysis
+fprintf('\n=== ERROR MAGNITUDE DISTRIBUTION ===\n');
+overall_avg_raw = mean(raw_error_data(:));
+overall_std_raw = std(raw_error_data(:));
+overall_max_raw_all = max(raw_error_data(:));
+overall_min_raw_all = min(raw_error_data(:));
+
+fprintf('Overall Statistics:\n');
+fprintf('  Mean Combined Error: %.4f\n', overall_avg_raw);
+fprintf('  Standard Deviation: %.4f\n', overall_std_raw);
+fprintf('  Maximum Error: %.4f\n', overall_max_raw_all);
+fprintf('  Minimum Error: %.4f\n', overall_min_raw_all);
+fprintf('  Error Range: %.4f\n', overall_max_raw_all - overall_min_raw_all);
+
+%% ERROR COMPONENT CONTRIBUTION ANALYSIS
+fprintf('\n=== ERROR COMPONENT CONTRIBUTION ANALYSIS ===\n');
+
+% Calculate average contribution of each error type to total combined error
+% Extract individual error components for non-attacker vehicles
+dist_errors_only = squeeze(mean_errors(non_attacker_ids, 1, :));  % Distance errors
+vel_errors_only = squeeze(mean_errors(non_attacker_ids, 3, :));   % Velocity errors  
+acc_errors_only = squeeze(mean_errors(non_attacker_ids, 4, :));   % Acceleration errors
+
+% Calculate average contribution percentages
+avg_dist_error = mean(dist_errors_only(:));
+avg_vel_error = mean(vel_errors_only(:));
+avg_acc_error = mean(acc_errors_only(:));
+total_avg_error = avg_dist_error + avg_vel_error + avg_acc_error;
+
+% Calculate percentage contributions
+dist_contribution = (avg_dist_error / total_avg_error) * 100;
+vel_contribution = (avg_vel_error / total_avg_error) * 100;
+acc_contribution = (avg_acc_error / total_avg_error) * 100;
+
+fprintf('Average Error Component Contributions to RAW COMBINED ERROR:\n');
+fprintf('  Distance Error: %.4f (%.1f%%)\n', avg_dist_error, dist_contribution);
+fprintf('  Velocity Error: %.4f (%.1f%%)\n', avg_vel_error, vel_contribution);
+fprintf('  Acceleration Error: %.4f (%.1f%%)\n', avg_acc_error, acc_contribution);
+fprintf('  Total Combined: %.4f (100.0%%)\n', total_avg_error);
+
+% Find dominant error component
+[max_contribution, max_idx] = max([dist_contribution, vel_contribution, acc_contribution]);
+component_names = {'Distance', 'Velocity', 'Acceleration'};
+fprintf('\nDominant Error Component: %s (%.1f%% of total error)\n', component_names{max_idx}, max_contribution);
+
+% Analyze contribution variability across cases
+fprintf('\nContribution Variability Across Attack Cases:\n');
+for case_idx = 1:size(dist_errors_only, 2)
+    case_dist = mean(dist_errors_only(:, case_idx));
+    case_vel = mean(vel_errors_only(:, case_idx));
+    case_acc = mean(acc_errors_only(:, case_idx));
+    case_total = case_dist + case_vel + case_acc;
+    
+    if case_total > 0  % Avoid division by zero
+        case_dist_pct = (case_dist / case_total) * 100;
+        case_vel_pct = (case_vel / case_total) * 100;
+        case_acc_pct = (case_acc / case_total) * 100;
+        
+        fprintf('  %s: Dist %.1f%%, Vel %.1f%%, Acc %.1f%%\n', ...
+            attack_descriptions{case_idx}, case_dist_pct, case_vel_pct, case_acc_pct);
+    end
+end
+
+%% NORMALIZED HEATMAP ANALYSIS
+fprintf('\n=== NORMALIZED COMBINED IMPACT ANALYSIS ===\n');
+
+% Get the normalized impact scores for analysis
+impact_data = impact_scores(non_attacker_ids, :);
+
+% Find most severe attack case
+[max_impact_per_case, ~] = max(impact_data, [], 1);  % Max impact across vehicles for each case
+[overall_max_impact, most_severe_case] = max(max_impact_per_case);
+fprintf('Most Severe Attack: Case %d (%s) - Max Impact Score: %.3f\n', ...
+    most_severe_case, attack_descriptions{most_severe_case}, overall_max_impact);
+
+% Find least severe attack case  
+[min_impact_per_case, ~] = min(impact_data, [], 1);  % Min impact across vehicles for each case
+[overall_min_impact, least_severe_case] = min(min_impact_per_case);
+fprintf('Least Severe Attack: Case %d (%s) - Min Impact Score: %.3f\n', ...
+    least_severe_case, attack_descriptions{least_severe_case}, overall_min_impact);
+
+% Find most impacted vehicle across all attacks
+[max_impact_per_vehicle, ~] = max(impact_data, [], 2);  % Max impact across cases for each vehicle
+[vehicle_max_impact, most_impacted_vehicle_idx] = max(max_impact_per_vehicle);
+most_impacted_vehicle = non_attacker_ids(most_impacted_vehicle_idx);
+fprintf('Most Impacted Vehicle: V%d - Max Impact Score: %.3f\n', ...
+    most_impacted_vehicle, vehicle_max_impact);
+
+% Find least impacted vehicle across all attacks
+[min_impact_per_vehicle, ~] = min(impact_data, [], 2);  % Min impact across cases for each vehicle  
+[vehicle_min_impact, least_impacted_vehicle_idx] = min(min_impact_per_vehicle);
+least_impacted_vehicle = non_attacker_ids(least_impacted_vehicle_idx);
+fprintf('Most Resilient Vehicle: V%d - Min Impact Score: %.3f\n', ...
+    least_impacted_vehicle, vehicle_min_impact);
+
+% Average impact per attack case
+avg_impact_per_case = mean(impact_data, 1);
+fprintf('\nAverage Impact Score by Attack Case:\n');
+for i = 1:length(attack_descriptions)
+    fprintf('  Case %d (%s): %.3f\n', i, attack_descriptions{i}, avg_impact_per_case(i));
+end
+
+% Average impact per vehicle
+avg_impact_per_vehicle = mean(impact_data, 2);
+fprintf('\nAverage Impact Score by Vehicle:\n');
+for i = 1:length(non_attacker_ids)
+    fprintf('  V%d: %.3f\n', non_attacker_ids(i), avg_impact_per_vehicle(i));
+end
+
+% Severity classification
+high_severity_threshold = 0.7;
+medium_severity_threshold = 0.4;
+
+fprintf('\n=== SEVERITY CLASSIFICATION ===\n');
+fprintf('High Severity (>%.1f): Cases where normalized impact > %.1f\n', high_severity_threshold, high_severity_threshold);
+fprintf('Medium Severity (%.1f-%.1f): Moderate impact\n', medium_severity_threshold, high_severity_threshold);
+fprintf('Low Severity (<%.1f): Minimal impact\n', medium_severity_threshold);
+
+high_severity_cases = find(max_impact_per_case > high_severity_threshold);
+if ~isempty(high_severity_cases)
+    fprintf('HIGH SEVERITY CASES: ');
+    for i = 1:length(high_severity_cases)
+        fprintf('Case %d (%s) ', high_severity_cases(i), attack_descriptions{high_severity_cases(i)});
+    end
+    fprintf('\n');
+else
+    fprintf('No high severity cases found.\n');
+end
 
 % Find most/least vulnerable cases
 overall_errors = squeeze(mean(mean(mean_errors(non_attacker_ids, :, :), 1), 2));

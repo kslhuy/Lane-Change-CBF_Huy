@@ -423,6 +423,11 @@ classdef Simulator
 
             state_labels = {'Position X', 'Position Y', 'Theta', 'Velocity','Acc'};
 
+            % Create time vector for plotting
+            num_time_steps = size(car_1.observer.est_global_state_log, 2) - 1;
+            dt_config = car_1.scenarios_config.dt;
+            time_vector = 0:dt_config:(num_time_steps-1)*dt_config;
+
             figure("Name", "Error Global Position Estimates " + num2str(car_1.vehicle_number) + "and " + num2str(car_2.vehicle_number), "NumberTitle", "off");
             % title(['Global Position Estimates ' num2str(self.vehicle.vehicle_number)]);
 
@@ -430,10 +435,10 @@ classdef Simulator
                 subplot(num_states, 1, state_idx);
                 hold on;
                 for v = 1:num_vehicles
-                    plot(squeeze(car_1.observer.est_global_state_log(state_idx, 1:end-1, v) - car_2.observer.est_global_state_log(state_idx, 1:end-1, v)), 'DisplayName', ['Vehicle ', num2str(v)]);
+                    plot(time_vector, squeeze(car_1.observer.est_global_state_log(state_idx, 1:end-1, v) - car_2.observer.est_global_state_log(state_idx, 1:end-1, v)), 'DisplayName', ['Vehicle ', num2str(v)]);
                 end
                 title(state_labels{state_idx});
-                % xlabel('Time (s)');
+                xlabel('Time (s)');
                 ylabel(state_labels{state_idx});
                 legend;
                 grid on;
@@ -441,11 +446,16 @@ classdef Simulator
         end
 
         %% Function for plot
-        function plot_ground_error_global_est_ALL(self , collected_car)
+        function plot_ground_error_global_est_ALL(~, collected_car)
             figure("Name", "Error global est ");
             nb_vehicles = length(collected_car);
             state_labels = {'Error Position X', 'Error Velocity','Error Acc'};
             num_states_show = length(state_labels); % Number of states
+            
+            % Create time vector for plotting
+            num_time_steps = size(collected_car(1).observer.est_global_state_log, 2);
+            dt_config = collected_car(1).scenarios_config.dt;
+            time_vector = dt_config:dt_config:(num_time_steps)*dt_config; % Start from dt since we're using 2:end
 
             for v_subplot_horizontal = 1:nb_vehicles
                 vehicles = collected_car(v_subplot_horizontal);
@@ -461,7 +471,7 @@ classdef Simulator
                     % Correct subplot indexing
                     subplot(num_states_show, nb_vehicles, (v_subplot_vertical-1)*nb_vehicles + v_subplot_horizontal);
                     for v_idx = 1:nb_vehicles
-                        plot( vehicles.observer.est_global_state_log(state_idx, 1:end, v_idx) - collected_car(v_idx).state_log(state_idx, 2:end), 'LineWidth', 1 , 'DisplayName', ['Vehicle ', num2str(v_idx)]);
+                        plot(time_vector, vehicles.observer.est_global_state_log(state_idx, 1:end, v_idx) - collected_car(v_idx).state_log(state_idx, 2:end), 'LineWidth', 1 , 'DisplayName', ['Vehicle ', num2str(v_idx)]);
                         hold on;
                     end
                     ylabel(state_labels{v_subplot_vertical});
@@ -473,12 +483,15 @@ classdef Simulator
             xlabel('Time (s)');
         end
 
-        function plot_all_trust_log(self, collected_car)
+        function plot_all_trust_log(~, collected_car)
             % Improved subplot layout for trust logs of 4 vehicles
 
             nb_vehicles = length(collected_car);
             time_steps = size(collected_car(1).trust_log, 2);
-            time_vector = 1:time_steps;
+            
+            % Create time vector for plotting
+            dt_config = collected_car(1).scenarios_config.dt;
+            time_vector = 0:dt_config:(time_steps-1)*dt_config;
 
             figure("Name", "All Trust Values Over Time", "NumberTitle", "off");
 
@@ -495,11 +508,52 @@ classdef Simulator
                 if v == 1
                     legend show;
                 end
+                % Add horizontal reference line at y = 0.5
+                yline(0.5, 'r--', 'LineWidth', 1.5, 'DisplayName', 'Reference (0.5)');
                 grid on;
             end
-            xlabel('Time Step');
+            xlabel('Time (s)');
 
             sgtitle('All Trust Values Over Time');
+        end
+
+        function plot_all_trust_log_exclude_attacker(~, collected_car)
+            % Simple trust log plot that excludes attacker (vehicle 1)
+            % Shows only non-attacker vehicles (V2, V3, V4)
+
+            nb_vehicles = length(collected_car);
+            attacker_id = 1; % Vehicle 1 is the attacker
+            
+            % Create main figure
+            figure("Name", "Trust Values Over Time (Excluding Attacker)", "NumberTitle", "off");
+
+            subplot_idx = 1;
+            
+            % Plot trust logs for non-attacker vehicles (vehicles 2, 3, 4)
+            for v = 2:nb_vehicles
+                if v ~= attacker_id
+                    time_steps = size(collected_car(v).trust_log, 2);
+                    
+                    % Create time vector for plotting
+                    dt_config = collected_car(v).scenarios_config.dt;
+                    time_vector = 0:dt_config:(time_steps-1)*dt_config;
+                    
+                    subplot(2, 2, subplot_idx);
+                    hold on;
+                    for vehicle_idx = 1:nb_vehicles
+                        plot(time_vector, squeeze(collected_car(v).trust_log(1, :, vehicle_idx)), ...
+                            'DisplayName', ['Vehicle ' num2str(vehicle_idx)], 'LineWidth', 1);
+                    end
+                    hold off;
+                    title(['Trust Log for V' num2str(v)]);
+                    legend show;
+                    grid on;
+                    subplot_idx = subplot_idx + 1;
+                end
+            end
+            
+            xlabel('Time (s)');
+            sgtitle('Trust Values Over Time (Excluding Attacker)');
         end
     end
 end

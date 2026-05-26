@@ -188,7 +188,7 @@ classdef Vehicle < handle
                 %% calculate the optimal input of the vehicle
                 %using low pass filter to smooth the input
 
-                U_target = [0,0];
+                U_target = [0;0];  % Changed to column vector for consistency
                 if (self.scenarios_config.controller_type == "local")
                     U_final = u_1 ;
                 elseif (self.scenarios_config.controller_type == "coop")
@@ -540,7 +540,7 @@ classdef Vehicle < handle
                             %% mix non_nearby trust
                             opinion_neigbor = neighbor_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
                             opinion_distance = distance_based_opinion(self,vehicle_id,instant_index,received_trusts,received_vehicles,ego_trust_in_connected);
-                            self.trust_log(1, instant_index, vehicle_id) = 0.6*(self.trust_log(1, instant_index, vehicle_id)) + 0.2*opinion_neigbor + 0.2*opinion_distance ;
+                            self.trust_log(1, instant_index, vehicle_id) = 0.7*(self.trust_log(1, instant_index, vehicle_id)) + 0.2*opinion_neigbor + 0.1*opinion_distance ;
                             % self.trust_log(1, instant_index, vehicle_id) = (opinion_neigbor + opinion_distance )/ 2;
                         end
 
@@ -647,18 +647,22 @@ classdef Vehicle < handle
             state_labels = {'Error Position X', ' Error Position Y', 'Error Theta', 'Error Velocity','Error Acc'};
             num_states = size(self.observer.est_global_state_log, 1); % Number of states
 
+            % Create time vector for plotting
+            num_time_steps = size(self.observer.est_global_state_log, 2);
+            dt_config = self.scenarios_config.dt;
+            time_vector = 0:dt_config:(num_time_steps-1)*dt_config;
 
             for state_idx = 1:num_states
                 subplot(num_states, 1, state_idx);
                 for v = 1:nb_vehicles
-                    plot( self.observer.est_global_state_log(state_idx, 1:end, v) - vehicles(v).state_log(state_idx, 1:end-1), 'LineWidth', 1 , 'DisplayName', ['Vehicle ', num2str(v)]);
+                    plot(time_vector, self.observer.est_global_state_log(state_idx, 1:end, v) - vehicles(v).state_log(state_idx, 2:end), 'LineWidth', 1 , 'DisplayName', ['Vehicle ', num2str(v)]);
                     % plot(vehicles(v).state_log(state_idx, 1:end-1), 'DisplayName', ['Vehicle ', num2str(v)]);
                     hold on;
                     % plot(self.observer.est_global_state_log(state_idx, 1:end, v), 'DisplayName', ['Vehicle ', num2str(v)]);
                     ylim([-1, 1]); % Set y-axis limits for better visibility
                 end
                 title(state_labels{state_idx});
-                % xlabel('Time (s)');
+                xlabel('Time (s)');
                 ylabel(state_labels{state_idx});
                 legend;
                 grid on;
@@ -717,31 +721,42 @@ classdef Vehicle < handle
         function plot_u1_u2_gamma(self)
             figure("Name", "Controller " + num2str(self.vehicle_number), "NumberTitle", "off");
 
+            % Create time vector for plotting
+            num_time_steps_u1 = size(self.u1_log, 2);
+            dt_config = self.scenarios_config.dt;
+            time_vector_u1 = 0:dt_config:(num_time_steps_u1- 1)*dt_config;
+            
+            num_time_steps_input = size(self.input_log, 2) - 1;  % for 1:end-1
+            time_vector_input = 0:dt_config:(num_time_steps_input-1)*dt_config;
+            
+            num_time_steps_gamma = length(self.gamma_log);
+            time_vector_gamma = 0:dt_config:(num_time_steps_gamma-1)*dt_config;
+
             subplot(5,1,1);
-
-            plot( self.u1_log(1,:), 'r', 'LineWidth', 1.5);
-
+            plot(time_vector_u1, self.u1_log(1,:), 'r', 'LineWidth', 1.5);
             legend('U1');
-
-            title(["car " num2str(self.vehicle_number)]);
+            grid on;
+            title(["Vehicle " num2str(self.vehicle_number)]);
 
             subplot(5,1,2);
-
-            plot( self.u2_log(1,:), 'b', 'LineWidth', 1.5);
+            plot(time_vector_u1, self.u2_log(1,:), 'b', 'LineWidth', 1.5);
+            grid on;
             legend('U2');
 
             subplot(5,1,3);
-
-            plot( self.u_target_log(1,:), 'b', 'LineWidth', 1.5);
+            plot(time_vector_u1, self.u_target_log(1,:), 'g', 'LineWidth', 1.5);
+            grid on;
             legend('U target');
+            
             subplot(5,1,4);
-
-            plot( self.input_log(1,1:end-1), 'LineWidth', 1.5);
+            plot(time_vector_input, self.input_log(1,1:end-1),'k', 'LineWidth', 1.5);
+            grid on;
             legend('U final');
 
             subplot(5,1,5);
-            plot( self.gamma_log,  'LineWidth', 1.5);
+            plot(time_vector_gamma, self.gamma_log,'m',  'LineWidth', 1.5);
             legend('Gamma');
+            grid on;
             xlabel('Time (s)');
         end
 
@@ -758,7 +773,8 @@ classdef Vehicle < handle
             time_steps = size(self.trust_log, 2);
 
             % Create a time vector for the x-axis
-            time_vector = 1:time_steps;
+            dt_config = self.scenarios_config.dt;
+            time_vector = 0:dt_config:(time_steps-1)*dt_config;
 
             % Create a new figure
 
@@ -772,7 +788,7 @@ classdef Vehicle < handle
             hold off;
 
             % Add labels and legend
-            xlabel('Time Step');
+            xlabel('Time (s)');
             ylabel(['Trust Value of' num2str(self.vehicle_number)]);
             title(['Trust Values Over Time of' num2str(self.vehicle_number)]);
             legend show;

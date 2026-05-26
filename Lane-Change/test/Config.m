@@ -42,6 +42,10 @@ Scenarios_config.MAX_PREDICT_ONLY_TIME = 3; % seconds
 Scenarios_config.N_good = 3; % Number of consecutive good steps to exit predict_only
 Scenarios_config.blend_thresh = 3; % You can tune this threshold
 
+Scenarios_config.rollback_enabled = true; % Enable/disable rollback functionality
+
+
+
 
 %%%% Attack related
 
@@ -54,9 +58,9 @@ t_star = 10;
 t_end = 15;
 attacker_vehicle_id = 1;
 victim_id = -1;                 % -1 mean every vehicle
-case_nb_attack = 1;             % case number of attack scenario
+case_nb_attack = 4;             % case number of attack scenario
 data_type_attack = "local"; % "local" , "global", "none"
-attack_type = "Mix_test"; % "DoS"  , "Collusion" ,"Bogus", "None" , "POS" , "VEL" , "ACC"
+attack_type = "DoS"; % "DoS"  , "Collusion" ,"Bogus", "None" , "POS" , "VEL" , "ACC"
 
 
 Scenarios_config.attacker_update_locally = true; % if the attacker does update observer by only using the local data   
@@ -67,7 +71,7 @@ Scenarios_config.attacker_update_locally = true; % if the attacker does update o
 Scenarios_config.control_use_accel = true; % if using acceleration control
 
 Scenarios_config.gamma_type = "min"; % type gamma for switching control = " min" , " max " , " mean " , "self_belief"
-Scenarios_config.controller_type = "local"; % type of controller for the ego vehicle: "local" , "coop" , "mix" 
+Scenarios_config.controller_type = "mix"; % type of controller for the ego vehicle: "local" , "coop" , "mix" 
 Scenarios_config.CACC_bidirectional = false; % If true, the CACC controller will consider both leading and following vehicles in the control law
 
 Scenarios_config.data_type_for_u2 = "true"; % "est" , "true" using the estimated or true data for u2 (CACC)
@@ -78,8 +82,8 @@ Scenarios_config.using_weight_trust_observer = true; % if using weight trust for
 
 Scenarios_config.opinion_type = "mix_non_nearby"; % opinion type " distance" , " trust" , " both" , "mix_non_nearby"
 Scenarios_config.Dichiret_type = "Single" ; % "Single" , "Dual"
-Scenarios_config.Use_weight_local_trust = true;
-Scenarios_config.Use_weight_global_trust = true; % if using weight trust for global data
+Scenarios_config.Use_weight_local_trust = false; % if using weight trust for local data
+Scenarios_config.Use_weight_global_trust = false; % if using weight trust for global data
 
 Scenarios_config.acceleration_trust_score_method = "vrel_dis_adjusted"; % 'mathematical' - Use exact mathematical formula from paper
                                                                         % 'enhanced' - Use enhanced implementation with reduced sensitivity

@@ -32,7 +32,7 @@ Road_type = "Highway"; % "Highway" , "Urban"
 use_predict_observer = false; % Will override distributed observer with a prediction model
 predict_controller_type = "true_other"; % "self" , "true_other" , "predict_other"
 Local_observer_type = "kalman"; % "mesurement" , "kalman" , "observer"
-set_Is_noise_mesurement = false; % if the measurement is noisy
+set_Is_noise_mesurement = true; % if the measurement is noisy
 use_local_data_from_other = true; % if the local data from other vehicles is used (true = ourpaper , false = another paper)
 attacker_update_locally = false; % if the attacker does update observer by only using the local data   
 
@@ -64,24 +64,28 @@ kappa = 1; % parameter in the design weigts matrix
 Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 
 
+% Initialize Scenarios_config with only 3 parameters
+Scenarios_config = Scenarios_config(dt, simulation_time, Road_type);
 
+% Set other properties
+Scenarios_config.controller_type = controller_type;
+Scenarios_config.data_type_for_u2 = data_type_for_u2;
+Scenarios_config.gamma_type = gamma_type;
+Scenarios_config.opinion_type = opinion_type;
+Scenarios_config.model_vehicle_type = model_vehicle_type;
 
-
-Scenarios_config = Scenarios_config(dt, simulation_time,  Road_type , controller_type, data_type_for_u2 , gamma_type , opinion_type,model_vehicle_type );
 % Observer related
-Scenarios_config.set_predict_controller_type(predict_controller_type);
-Scenarios_config.set_Use_predict_observer(use_predict_observer);
-Scenarios_config.set_Local_observer_type(Local_observer_type);
-Scenarios_config.set_Is_noise_mesurement(set_Is_noise_mesurement); % if the measurement is noisy
+Scenarios_config.predict_controller_type = predict_controller_type;
+Scenarios_config.Use_predict_observer = use_predict_observer;
+Scenarios_config.Local_observer_type = Local_observer_type;
+Scenarios_config.Is_noise_mesurement = set_Is_noise_mesurement;
+Scenarios_config.use_local_data_from_other = use_local_data_from_other;
+Scenarios_config.attacker_update_locally = attacker_update_locally;
 
-Scenarios_config.set_Use_local_data_from_other( use_local_data_from_other)
-Scenarios_config.Is_attacker_not_update(attacker_update_locally);
-
-
-Scenarios_config.set_Trip_Dichiret(Dichiret_type); % "Single" , "Dual"
-Scenarios_config.set_monitor_sudden_change(monitor_sudden_change); % if the sudden change is monitored
-
-Scenarios_config.set_Test_better_trust(is_know_data_not_nearby);
+% Trust related
+Scenarios_config.Dichiret_type = Dichiret_type;
+Scenarios_config.Monitor_sudden_change = monitor_sudden_change;
+Scenarios_config.is_know_data_not_nearby = is_know_data_not_nearby;
 
 
 % Define driving Senarios lanes
@@ -148,7 +152,7 @@ mean_errors = zeros(length(vehicle_labels), length(metric_labels),length(scenari
 for l = 1:length(lead_senarios)
 
     lead_senario = lead_senarios(l);
-    Scenarios_config.set_Lead_Senarios(lead_senario); % For different senarios
+    Scenarios_config.lead_senario = lead_senario; % For different senarios
 
     % [80; 0.5 * lane_width; 0; 23 ; 0] = state initialization
     car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 23 ; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
@@ -173,7 +177,7 @@ for l = 1:length(lead_senarios)
 
     %% define a simulator and start simulation
     simulator0 = Simulator(straightLanes, [] , platton_vehicles, Scenarios_config.dt , IsShowAnimation );
-    [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time);
+    [state_log, input_log] = simulator0.startSimulation(Scenarios_config.simulation_time, t_star, t_end, attacker_vehicle_id);
 
     % After the simulation, calculate errors for each vehicle
     vehicles_to_evaluate = [car2, car3, car4];  % Update based on which vehicles to evaluate

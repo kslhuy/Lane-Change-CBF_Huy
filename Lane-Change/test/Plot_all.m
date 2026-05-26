@@ -48,6 +48,9 @@ car4.plot_u1_u2_gamma()
 
 simulator0.plot_all_trust_log(platton_vehicles);
 
+%% Plot trust log excluding attacker with detailed V2->V1 trust
+simulator0.plot_all_trust_log_exclude_attacker(platton_vehicles);
+
 
 
 %% Plot the trust log for each trip model

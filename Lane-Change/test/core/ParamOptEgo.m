@@ -40,9 +40,9 @@ classdef ParamOptEgo
         % k_v = 2.0;
         % k_a = 1;
 
-        k_s = 2.0;
-        k_v = 2.0;
-        k_a = 2.0;
+        k_s = 0.8;
+        k_v = 0.5;
+        k_a = 0.1;
         K;
 
 

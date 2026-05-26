@@ -24,6 +24,8 @@ classdef Scenarios_config < handle
         Monitor_sudden_change = false; % if the sudden change is monitored
         use_local_data_from_other = true; % if the local data from other vehicles is used
 
+        rollback_enabled = false; % Enable/disable rollback functionality
+
         %%%% Attack related
 
         attacker_update_locally = true; % if the attacker is not updated from the others , only use local data

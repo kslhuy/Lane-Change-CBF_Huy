@@ -167,8 +167,8 @@ classdef Attack_module < handle
                         case 'drop'
                             drop_chance = fault_intensity;  % Use fault_intensity as drop rate
                             if rand < drop_chance
-                                perturbation = NaN; % No data transmitted
-                                x_hat_i_j = NaN;
+                                perturbation = NaN(size(x_hat_i_j)); % No data transmitted
+                                x_hat_i_j = NaN(size(x_hat_i_j)); % Set entire matrix to NaN
                             end
                         otherwise
                             warning('Unknown attack type in scenario %d: %s', i, attack_type);
@@ -301,8 +301,8 @@ classdef Attack_module < handle
                         case 'drop'
                             drop_chance = fault_intensity;  % Use fault_intensity as drop rate
                             if rand < drop_chance
-                                perturbation = NaN;
-                                x_bar_j = NaN;
+                                perturbation = NaN(size(x_bar_j));
+                                x_bar_j = NaN(size(x_bar_j)); % Set entire matrix to NaN
                             end
                             % Add 'delay' logic here if needed, adjusting for timestamp
                         otherwise
