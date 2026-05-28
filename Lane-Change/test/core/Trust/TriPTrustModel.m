@@ -1256,10 +1256,8 @@ classdef TriPTrustModel < handle
             % half_lenght_vehicle = target_vehicle.param.l_r; % distance between vehicle's c.g. and rear axle
             vehicle_length = target_vehicle.param.l_r + target_vehicle.param.l_f ; % total length of a vehicle
 
-            % leader_velocity = leader_vehicle.observer.est_local_state_current(4);
-            % leader_state = host_vehicle.center_communication.get_local_state(leader_vehicle.vehicle_number , host_id);
-            leader_state = host_vehicle.other_vehicles(1).state; % Get the leader state from the log
-            if ( isnan(leader_state))
+            leader_state = host_vehicle.center_communication.get_local_state(leader_vehicle.vehicle_number , host_id);
+            if any(isnan(leader_state(:)))
                 % Use the lastest state of leader vehicle
                 leader_state = self.lead_state_lastest ;
                 leader_beacon_interval = (instant_idx - self.lead_state_lastest_timestamp)*host_vehicle.dt;
@@ -1269,7 +1267,6 @@ classdef TriPTrustModel < handle
                 self.lead_state_lastest_timestamp = instant_idx;
                 leader_beacon_interval = 0;
             end
-            %% TODO : need to get the recveived data from the leader vehicle (not the real data)
             leader_velocity = leader_state(4);
             leader_acceleration = leader_state(5);
 
@@ -1301,7 +1298,7 @@ classdef TriPTrustModel < handle
                 end
                 % host_distance_measurement = (host_id - target_id)*(target_vehicle.state(1) - host_pos_X) - vehicle_length;
             else
-                %% So why we in test case , we know the real distance between host and target (even its not nearby)
+                %% Oracle mode for test-only studies where non-nearby distance is assumed known.
                 if host_vehicle.scenarios_config.is_know_data_not_nearby == true
                     delta_X = target_vehicle.state(1) - host_pos_X;  % center-to-center distance
 
@@ -1335,7 +1332,7 @@ classdef TriPTrustModel < handle
             %% TODO : need to get real distance between host and target
 
             target_state = host_vehicle.center_communication.get_local_state(target_id,host_id);
-            if ( isnan(target_state))
+            if any(isnan(target_state(:)))
                 beacon_score_local = 0;  % Local channel beacon not received
                 v_score = 0;
                 d_score = 0;
@@ -1452,7 +1449,8 @@ classdef TriPTrustModel < handle
 
 
             %% ---------- Global channel evaluation
-            if (isnan( target_vehicle.center_communication.get_global_state(target_id,host_id)))
+            target_global_state = target_vehicle.center_communication.get_global_state(target_id,host_id);
+            if any(isnan(target_global_state(:)))
                 % Global channel beacon not received
                 beacon_score_global = 0;
                 gamma_cross = 0;

@@ -8,6 +8,8 @@ classdef Attack_module < handle
         dt;                  % Time step for simulation
         attack_values_global;
         attack_values_local;
+        data_history_global;
+        data_history_local;
     end
 
     methods
@@ -25,6 +27,9 @@ classdef Attack_module < handle
 
             self.attack_values_local = struct('vehicle_id', {}, 'timestamp', {}, ...
                 'attack_type', {}, 'attack_rows', {}, 'perturbation', {});
+
+            self.data_history_global = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            self.data_history_local = containers.Map('KeyType', 'char', 'ValueType', 'any');
         end
 
         function setScenario(self, scenario_type, scenario_params)
@@ -32,22 +37,24 @@ classdef Attack_module < handle
             switch scenario_type
                 case 'time_based'
                     required_fields = {'attacker_id' ,'victim_id','start_time', 'end_time', 'attack_type', 'fault_intensity','data_type' , 'attack_row'};
-                    for i = 1:length(required_fields)
-                        if ~isfield(scenario_params, required_fields{i})
-                            error('Missing required field: %s', required_fields{i});
+                    for s = 1:numel(scenario_params)
+                        for i = 1:length(required_fields)
+                            if ~isfield(scenario_params(s), required_fields{i})
+                                error('Missing required field: %s', required_fields{i});
+                            end
                         end
+                        params = scenario_params(s);
+                        new_scenario = struct('type', {'time_based'}, ...
+                            'attacker_id', {params.attacker_id}, ...
+                            'victim_id', {params.victim_id}, ...
+                            'start_time', {params.start_time}, ...
+                            'end_time', {params.end_time}, ...
+                            'attack_type', {params.attack_type}, ...
+                            'fault_intensity', {params.fault_intensity}, ...
+                            'data_type', {params.data_type}, ...
+                            'attack_row', {params.attack_row});
+                        self.scenario(end+1) = new_scenario;
                     end
-                    % Append new scenario to the array
-                    new_scenario = struct('type', 'time_based', ...
-                        'attacker_id', scenario_params.attacker_id, ...
-                        'victim_id', scenario_params.victim_id, ...
-                        'start_time', scenario_params.start_time, ...
-                        'end_time', scenario_params.end_time, ...
-                        'attack_type', scenario_params.attack_type, ...
-                        'fault_intensity', scenario_params.fault_intensity,...
-                        'data_type',scenario_params.data_type,...
-                        'attack_row',scenario_params.attack_row);
-                    self.scenario(end+1) = new_scenario;
                 case 'none'
                     % Clear all scenarios
                     self.scenario = struct('type', {}, 'attacker_id', {}, 'victim_id', {}, ...
@@ -68,26 +75,20 @@ classdef Attack_module < handle
                 return;
             end
 
-            % % Store history for replay attacks with size limit
-            % persistent data_history;
-            % if isempty(data_history)
-            %     data_history = containers.Map;
-            % end
-            % key = sprintf('%d_%s', vehicle_id, num2str(self.dt));
-            % if ~isKey(data_history, key)
-            %     data_history(key) = struct('time', [], 'data', []);
-            % end
-            % history = data_history(key);
-            % history.time(end+1) = timestamp;
-            % history.data(:, end+1) = x_hat_i_j;
-            %
-            % % Limit history to last 100 entries to avoid memory issues
-            % max_history_size = 100;
-            % if length(history.time) > max_history_size
-            %     history.time = history.time(end-max_history_size+1:end);
-            %     history.data = history.data(:, end-max_history_size+1:end);
-            % end
-            % data_history(key) = history;
+            key = sprintf('%d_%g', vehicle_id, self.dt);
+            if ~isKey(self.data_history_global, key)
+                self.data_history_global(key) = struct('time', [], 'data', {{}});
+            end
+            history = self.data_history_global(key);
+            history.time(end+1) = timestamp;
+            history.data{end+1} = original_data;
+
+            max_history_size = 100;
+            if length(history.time) > max_history_size
+                history.time = history.time(end-max_history_size+1:end);
+                history.data = history.data(end-max_history_size+1:end);
+            end
+            self.data_history_global(key) = history;
 
             for i = 1:length(self.scenario)
                 if (strcmp(self.scenario(i).type, 'time_based') && ...
@@ -116,49 +117,48 @@ classdef Attack_module < handle
                             end
                             
                             if rand < fault_prob
-                                % Apply random fault when probability triggers
-                                perturbation(attack_rows) = randn(size(attack_rows)) * fault_mag;
-                                x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + perturbation(attack_rows);
+                                perturbation(attack_rows, :) = randn(length(attack_rows), size(x_hat_i_j, 2)) * fault_mag;
+                                x_hat_i_j(attack_rows, :) = x_hat_i_j(attack_rows, :) + perturbation(attack_rows, :);
                             else
-                                % No fault this time step - behave normally
-                                perturbation(attack_rows) = 0;
+                                perturbation(attack_rows, :) = 0;
                             end
                         case 'scaling'
-                            perturbation(attack_rows) = x_hat_i_j(attack_rows) * fault_intensity; % Added value
-                            x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) * (1 + fault_intensity);
+                            perturbation(attack_rows, :) = x_hat_i_j(attack_rows, :) * fault_intensity; % Added value
+                            x_hat_i_j(attack_rows, :) = x_hat_i_j(attack_rows, :) * (1 + fault_intensity);
                         case 'bias'
-                            perturbation(attack_rows) = fault_intensity; % Added value
-                            x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + fault_intensity;
+                            perturbation(attack_rows, :) = fault_intensity; % Added value
+                            x_hat_i_j(attack_rows, :) = x_hat_i_j(attack_rows, :) + fault_intensity;
                         case 'linear'
-                            perturbation(attack_rows) = fault_intensity * (timestamp - self.scenario(i).start_time);
-                            x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + fault_intensity * (timestamp - self.scenario(i).start_time);
+                            perturbation(attack_rows, :) = fault_intensity * (timestamp - self.scenario(i).start_time);
+                            x_hat_i_j(attack_rows, :) = x_hat_i_j(attack_rows, :) + perturbation(attack_rows, :);
                         case 'sinusoidal'
                             amplitude = fault_intensity.amplitude;
                             frequency = fault_intensity.frequency;
-                            perturbation(attack_rows) = amplitude * sin(2 * pi * frequency * (timestamp - self.scenario(i).start_time));
-                            x_hat_i_j(attack_rows) = x_hat_i_j(attack_rows) + perturbation(attack_rows);
+                            perturbation(attack_rows, :) = amplitude * sin(2 * pi * frequency * (timestamp - self.scenario(i).start_time));
+                            x_hat_i_j(attack_rows, :) = x_hat_i_j(attack_rows, :) + perturbation(attack_rows, :);
                         case 'replay'
                             % Replay data from `fault_intensity` seconds ago
                             delay = abs(fault_intensity);
                             idx = find(history.time <= timestamp - delay, 1, 'last');
                             if ~isempty(idx)
-                                perturbation(attack_rows) = history.data(attack_rows, idx) - x_hat_i_j(attack_rows);
-                                x_hat_i_j(attack_rows) = history.data(attack_rows, idx);
+                                delayed_data = history.data{idx};
+                                perturbation(attack_rows, :) = delayed_data(attack_rows, :) - x_hat_i_j(attack_rows, :);
+                                x_hat_i_j(attack_rows, :) = delayed_data(attack_rows, :);
                             else
-                                perturbation(attack_rows) = 0; % No change if no history
+                                perturbation(attack_rows, :) = 0; % No change if no history
                             end
                         case 'coordinated'
                             % For acceleration-velocity coordination
                             a_bias = fault_intensity.a_bias;
                             if any(strcmp(self.scenario(i).attack_row, 'acceleration'))
-                                acc_rows = attack_rows(strcmp(self.scenario(i).attack_row, 'acceleration'));
-                                perturbation(acc_rows) = a_bias;
-                                x_hat_i_j(acc_rows) = x_hat_i_j(acc_rows) + a_bias;
+                                acc_rows = intersect(attack_rows, self.GetAttackRows_global({'acceleration'}, size(x_hat_i_j, 1)));
+                                perturbation(acc_rows, :) = a_bias;
+                                x_hat_i_j(acc_rows, :) = x_hat_i_j(acc_rows, :) + a_bias;
                             end
                             if any(strcmp(self.scenario(i).attack_row, 'velocity'))
-                                vel_rows = attack_rows(strcmp(self.scenario(i).attack_row, 'velocity'));
-                                perturbation(vel_rows) = a_bias * (timestamp - self.scenario(i).start_time);
-                                x_hat_i_j(vel_rows) = x_hat_i_j(vel_rows) + perturbation(vel_rows);
+                                vel_rows = intersect(attack_rows, self.GetAttackRows_global({'velocity'}, size(x_hat_i_j, 1)));
+                                perturbation(vel_rows, :) = a_bias * (timestamp - self.scenario(i).start_time);
+                                x_hat_i_j(vel_rows, :) = x_hat_i_j(vel_rows, :) + perturbation(vel_rows, :);
 
                             end
                             % case 'drop'
@@ -187,9 +187,6 @@ classdef Attack_module < handle
 
         % Simulate cyber-attack on local aggregated data
         function [x_bar_j,original_data] = SetLocalAttack(self,vehicle_id, x_bar_j, instant_idx)
-            persistent data_history;
-
-
             timestamp = instant_idx * self.dt; %convert to seconds
             original_data = x_bar_j; % Preserve original for layering attacks
             % SETLOCALATTACK Simulates attacks based on all active scenarios.
@@ -199,24 +196,21 @@ classdef Attack_module < handle
             end
 
             % Store history for replay attacks with size limit
-            if isempty(data_history)
-                data_history = containers.Map;
+            key = sprintf('%d_%g', vehicle_id, self.dt);
+            if ~isKey(self.data_history_local, key)
+                self.data_history_local(key) = struct('time', [], 'data', {{}});
             end
-            key = sprintf('%d_%s', vehicle_id, num2str(self.dt));
-            if ~isKey(data_history, key)
-                data_history(key) = struct('time', [], 'data', []);
-            end
-            history = data_history(key);
+            history = self.data_history_local(key);
             history.time(end+1) = timestamp;
-            history.data(:, end+1) = x_bar_j;
+            history.data{end+1} = original_data;
 
             % Limit history to last 100 entries to avoid memory issues
             max_history_size = 100;
             if length(history.time) > max_history_size
                 history.time = history.time(end-max_history_size+1:end);
-                history.data = history.data(:, end-max_history_size+1:end);
+                history.data = history.data(end-max_history_size+1:end);
             end
-            data_history(key) = history;
+            self.data_history_local(key) = history;
 
 
 
@@ -273,8 +267,9 @@ classdef Attack_module < handle
                             delay = abs(fault_intensity);
                             idx = find(history.time <= timestamp - delay, 1, 'last');
                             if ~isempty(idx)
-                                perturbation(attack_rows) = history.data(attack_rows, idx) - x_bar_j(attack_rows);
-                                x_bar_j(attack_rows) = history.data(attack_rows, idx);
+                                delayed_data = history.data{idx};
+                                perturbation(attack_rows) = delayed_data(attack_rows) - x_bar_j(attack_rows);
+                                x_bar_j(attack_rows) = delayed_data(attack_rows);
                             else
                                 perturbation(attack_rows) = 0; % No change if no data available
                             end
@@ -283,7 +278,7 @@ classdef Attack_module < handle
                             % For acceleration-velocity coordination
                             a_bias = fault_intensity.a_bias;
                             if any(strcmp(self.scenario(i).attack_row, 'acceleration'))
-                                acc_rows = attack_rows(strcmp(self.scenario(i).attack_row, 'acceleration'));
+                                acc_rows = intersect(attack_rows, self.GetAttackRows_global({'acceleration'}, size(x_bar_j, 1)));
                                 perturbation(acc_rows) = a_bias;
                                 x_bar_j(acc_rows) = x_bar_j(acc_rows) + perturbation(acc_rows);
                                 % x_bar_j(attack_rows(strcmp(self.scenario(i).attack_row, 'acceleration'))) = ...
@@ -291,7 +286,7 @@ classdef Attack_module < handle
                                 %     x_bar_j(attack_rows(strcmp(self.scenario(i).attack_row, 'acceleration'))) + a_bias;
                             end
                             if any(strcmp(self.scenario(i).attack_row, 'velocity'))
-                                vel_rows = attack_rows(strcmp(self.scenario(i).attack_row, 'velocity'));
+                                vel_rows = intersect(attack_rows, self.GetAttackRows_global({'velocity'}, size(x_bar_j, 1)));
                                 perturbation(vel_rows) = a_bias * (timestamp - self.scenario(i).start_time);
                                 x_bar_j(vel_rows) = x_bar_j(vel_rows) + perturbation(vel_rows);
                             end

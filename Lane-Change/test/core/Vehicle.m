@@ -592,7 +592,7 @@ classdef Vehicle < handle
             if ~isempty(new_received_trusts_vehicle)
                 %% Use trust-based weights instead of distance-based
                 if sum(weights) > 0
-                    normalized_weights = weights / length(weights); % Normalize trust-based weights
+                    normalized_weights = weights / sum(weights); % Normalize trust-based weights
                     opinion_score = sum(normalized_weights .* new_received_trusts_vehicle); % Weighted sum
                 else
                     opinion_score = 0; % Default to zero if no valid weights

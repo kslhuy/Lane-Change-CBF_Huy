@@ -15,15 +15,13 @@ if (debug_mode )
 end
 
 
-%% Set Attack senario
-attack_module = Attack_module(Scenarios_config.dt);
-%% Comunication Module
-center_communication = CenterCommunication(attack_module);
+%% Attack and communication modules are reset inside each attack case.
 
 
 
 t_star = 10;
 t_end = 15;
+rmse_time_window = [t_star, t_end];
 attacker_vehicle_id = 1;
 victim_id = -1;
 data_type_attack = "global"; % "local" , "global",
@@ -32,24 +30,23 @@ attack_type = "Mix_test"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus" 
 
 % ──────────────────────────────────────────────────────────────────────────────
 % 3) Excel logging setup
-excel_filename = sprintf('Results_%s_Attacker_V%d.xlsx', attack_type, attacker_vehicle_id);
+excel_filename = sprintf('Results_%s_FullAndAttackWindow_%gs_%gs_Attacker_V%d.xlsx', ...
+    attack_type, rmse_time_window(1), rmse_time_window(2), attacker_vehicle_id);
 sheet_name     = 'Summary';
+stats_sheet_name = 'MetricStats';
 headers = {'AttackType','AttackerVehicle','Case','Vehicle', ...
-    'Mean_Distance','Mean_Orientation','Mean_Velocity','Mean_Acceleration', ...
+    'Full_RMSE_Distance','Full_RMSE_Orientation','Full_RMSE_Velocity','Full_RMSE_Acceleration', ...
+    'AttackWindow_RMSE_Distance','AttackWindow_RMSE_Orientation','AttackWindow_RMSE_Velocity','AttackWindow_RMSE_Acceleration', ...
+    'Full_Raw_Combined','AttackWindow_Raw_Combined','RMSE_Window_Start','RMSE_Window_End', ...
     'Mean_Trust_Score','Trust_Degradation','Attack_Detection_Time'};
 
-% Write headers if file does not exist
-if ~isfile(excel_filename)
-    writecell(headers, excel_filename, 'Sheet', sheet_name, 'Range', 'A1');
-end
-
-% Read existing rows to find next empty row
-raw = readcell(excel_filename, 'Sheet', sheet_name);
-row_index = size(raw,1) + 1;
+% Refresh this run's summary from the top to avoid mixing stale partial rows.
+writecell(headers, excel_filename, 'Sheet', sheet_name, 'Range', 'A1');
+row_index = 2;
 
 
 
-% car1 is in the same lane with ego vehicle , lane lowest
+% Vehicles are initialized in the same lane with fixed platoon spacing.
 initial_lane_id = 1;
 direction_flag = 0; % 1 stands for changing to the left adjacent lane, 0 stands for keeping the current lane, -1 stands for changing
 
@@ -62,49 +59,84 @@ Scenarios_config.set_Lead_Senarios("constant");
 start_attack_senarios_index = 1;
 last_attack_senarios_index = 6;  % All Mix_test cases (1-6) - matches Atk_Scenarios.m
 
-total_num_attack_cases = last_attack_senarios_index - start_attack_senarios_index + 1;
+attack_case_numbers = start_attack_senarios_index:last_attack_senarios_index;
+total_num_attack_cases = numel(attack_case_numbers);
 
-vehicle_labels = {'V1', 'V2', 'V3', 'V4'};
-scenario_labels = arrayfun(@(x) sprintf("Case %d", x), start_attack_senarios_index:total_num_attack_cases, 'UniformOutput', false);
+num_vehicles = 5;
+all_vehicle_ids = 1:num_vehicles;
+non_attacker_ids = all_vehicle_ids(all_vehicle_ids ~= attacker_vehicle_id);
+
+% Override the 4-vehicle graph from Config for this 5-vehicle workflow.
+graph = ones(num_vehicles) - eye(num_vehicles);
+clear('Weight_Trust_module');
+weight_trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
+
+vehicle_labels = arrayfun(@(x) sprintf('V%d', x), all_vehicle_ids, 'UniformOutput', false);
+scenario_labels = arrayfun(@(x) sprintf("Case %d", x), attack_case_numbers, 'UniformOutput', false);
 metric_labels = {'Distance Error (m)', 'Orientation Error (rad)', 'Velocity Error (m/s)','Acc Error (m/s)'};
 
-mean_errors = zeros(length(vehicle_labels), length(metric_labels),length(scenario_labels)); % 4 vehicles × 4 metrics × nb  scenarios
+mean_errors = zeros(num_vehicles, length(metric_labels), total_num_attack_cases); % vehicles x metrics x attack cases
+mean_errors_full = zeros(num_vehicles, length(metric_labels), total_num_attack_cases);
 
 
 is_plot_each_case = false;
 
-% Get vehicle IDs
-all_vehicle_ids = [1, 2, 3, 4];
+initial_x_positions = 80:-20:(80 - 20 * (num_vehicles - 1));
+initial_speeds = [23, repmat(26, 1, num_vehicles - 1)];
+controller_types = ["None", repmat("IDM", 1, num_vehicles - 1)];
+controller2_types = ["None", repmat("CACC", 1, num_vehicles - 1)];
 
-% Get IDs excluding attacker
-non_attacker_ids = all_vehicle_ids(all_vehicle_ids ~= attacker_vehicle_id);
+% Give each vehicle a small fixed parameter mismatch, reused for all cases.
+rng_state = rng;
+rng(10);
+param_spread = 0.03;
+vehicle_params = cell(num_vehicles, 1);
+for vehicle_id = all_vehicle_ids
+    veh_param = param_sys;
+    scale = @(spread) 1 + spread * (2 * rand - 1);
 
-for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
+    veh_param.l_f = param_sys.l_f * scale(param_spread);
+    veh_param.l_r = param_sys.l_r * scale(param_spread);
+    veh_param.l_fc = param_sys.l_fc * scale(param_spread);
+    veh_param.l_rc = param_sys.l_rc * scale(param_spread);
+    veh_param.width = param_sys.width * scale(0.01);
+    veh_param.tau = param_sys.tau * scale(param_spread);
+    veh_param.tau_v = param_sys.tau_v * scale(param_spread);
+    veh_param.mass = param_sys.mass * scale(0.05);
+    veh_param.C1 = param_sys.C1 * scale(0.05);
+    veh_param.C2 = param_sys.C2 * scale(0.05);
+
+    veh_param.max_acceleration = param_sys.max_acceleration * scale(0.05);
+    veh_param.min_acceleration = param_sys.min_acceleration * scale(0.05);
+
+    max_steer = param_sys.max_steering_angle * scale(0.02);
+    veh_param.max_steering_angle = max_steer;
+    veh_param.min_steering_angle = -max_steer;
+
+    vehicle_params{vehicle_id} = veh_param;
+end
+rng(rng_state);
+
+for case_idx = 1:total_num_attack_cases
+    case_nb_attack = attack_case_numbers(case_idx);
     fprintf('Running %s attack by V%d, Case %d/%d...\n', ...
-        attack_type, attacker_vehicle_id, case_nb_attack, total_num_attack_cases);
+        attack_type, attacker_vehicle_id, case_idx, total_num_attack_cases);
 
+    attack_module = Attack_module(Scenarios_config.dt);
     attack_module = Atk_Scenarios(attack_module , attack_type ,data_type_attack,case_nb_attack , t_star, t_end, attacker_vehicle_id,victim_id );
+    center_communication = CenterCommunication(attack_module);
 
 
-    car1 = Vehicle(1, "None", param_sys, [80; 0.5 * lane_width; 0; 23 ; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
+    platton_vehicles = Vehicle.empty;
+    for vehicle_id = all_vehicle_ids
+        initial_state = [initial_x_positions(vehicle_id); 0.5 * lane_width; 0; initial_speeds(vehicle_id); 0];
+        new_vehicle = Vehicle(vehicle_id, controller_types(vehicle_id), vehicle_params{vehicle_id}, initial_state, initial_lane_id, straightLanes, direction_flag, 0, Scenarios_config, weight_trust_module);
+        platton_vehicles = [platton_vehicles; new_vehicle];
+    end
 
-    % car2 , car3 is in the middle lane, lane middle
-    car2 = Vehicle(2, "IDM", param_sys, [60; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
-
-    car3 = Vehicle(3, "IDM", param_sys, [40; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
-
-    % car4 is in the lane highest
-    car4 = Vehicle(4, "IDM", param_sys, [20; 0.5 * lane_width; 0; 26; 0], initial_lane_id,  straightLanes, direction_flag, 0, Scenarios_config, Weight_Trust_module);
-
-
-
-
-    platton_vehicles = [car1; car2; car3; car4];
-
-    car1.assign_neighbor_vehicle(platton_vehicles, [],"None", center_communication, graph);
-    car2.assign_neighbor_vehicle(platton_vehicles, [],"CACC", center_communication, graph);
-    car3.assign_neighbor_vehicle(platton_vehicles, [],"CACC", center_communication, graph );
-    car4.assign_neighbor_vehicle(platton_vehicles, [],"CACC", center_communication, graph);
+    for vehicle_id = all_vehicle_ids
+        platton_vehicles(vehicle_id).assign_neighbor_vehicle(platton_vehicles, [], controller2_types(vehicle_id), center_communication, graph);
+    end
 
 
     %% define a simulator and start simulation
@@ -113,21 +145,23 @@ for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
 
     % plot
     if (is_plot_each_case)
-        car1.plot_ground_error_global_est(platton_vehicles);
-        car2.plot_ground_error_global_est(platton_vehicles);
-        car3.plot_ground_error_global_est(platton_vehicles);
-        car4.plot_ground_error_global_est(platton_vehicles);
+        for vehicle_id = all_vehicle_ids
+            platton_vehicles(vehicle_id).plot_ground_error_global_est(platton_vehicles);
+        end
     end
     % After the simulation, calculate errors for each vehicle
-    % vehicles_to_evaluate = [car2, car3, car4];  % Update based on which vehicles to evaluate
-
     % Select vehicles to evaluate based on IDs
     vehicles_to_evaluate = platton_vehicles(non_attacker_ids);
 
-    all_global_dist_errors = []; % Initialize arrays to store global errors
-    all_global_theta_errors = []; % global orientation errors of vehicles to evaluate
-    all_global_vel_errors = [];
-    all_global_acc_errors = [];
+    all_full_dist_errors = [];
+    all_full_theta_errors = [];
+    all_full_vel_errors = [];
+    all_full_acc_errors = [];
+
+    all_attack_dist_errors = [];
+    all_attack_theta_errors = [];
+    all_attack_vel_errors = [];
+    all_attack_acc_errors = [];
     
     % Trust-related metrics
     all_trust_scores = [];
@@ -136,44 +170,41 @@ for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
 
     for k = 1:length(vehicles_to_evaluate)
         v = vehicles_to_evaluate(k);
-        [dist_err, theta_err, vel_err,global_acc_err] = v.observer.calculate_global_errors();  % Call global error calculation
-        all_global_dist_errors = [all_global_dist_errors, dist_err];
-        all_global_theta_errors = [all_global_theta_errors, theta_err];
-        all_global_vel_errors = [all_global_vel_errors, vel_err];
-        all_global_acc_errors = [all_global_acc_errors, global_acc_err];
+        [dist_full, theta_full, vel_full, acc_full] = v.observer.calculate_global_errors();
+        [dist_attack, theta_attack, vel_attack, acc_attack] = v.observer.calculate_global_errors(rmse_time_window);
+
+        all_full_dist_errors = [all_full_dist_errors, dist_full];
+        all_full_theta_errors = [all_full_theta_errors, theta_full];
+        all_full_vel_errors = [all_full_vel_errors, vel_full];
+        all_full_acc_errors = [all_full_acc_errors, acc_full];
+
+        all_attack_dist_errors = [all_attack_dist_errors, dist_attack];
+        all_attack_theta_errors = [all_attack_theta_errors, theta_attack];
+        all_attack_vel_errors = [all_attack_vel_errors, vel_attack];
+        all_attack_acc_errors = [all_attack_acc_errors, acc_attack];
         
-        % Extract trust scores (assuming trust model exists)
-        try
-            if isfield(v, 'trust_model') && ~isempty(v.trust_model)
-                trust_scores = v.trust_model.trust_sample_log;
-                all_trust_scores = [all_trust_scores; mean(trust_scores, 2)];
-                
-                % Calculate trust degradation during attack
-                attack_start_idx = round(t_star / Scenarios_config.dt);
-                attack_end_idx = round(t_end / Scenarios_config.dt);
-                if length(trust_scores) > attack_end_idx
-                    pre_attack_trust = mean(trust_scores(1:attack_start_idx, attacker_vehicle_id));
-                    during_attack_trust = mean(trust_scores(attack_start_idx:attack_end_idx, attacker_vehicle_id));
-                    trust_degradation = [trust_degradation; pre_attack_trust - during_attack_trust];
-                    
-                    % Detect when trust drops below threshold
-                    trust_threshold_detection = 0.7; % Adjust based on your system
-                    detection_idx = find(trust_scores(attack_start_idx:end, attacker_vehicle_id) < trust_threshold_detection, 1);
-                    if ~isempty(detection_idx)
-                        attack_detection_times = [attack_detection_times; detection_idx * Scenarios_config.dt];
-                    else
-                        attack_detection_times = [attack_detection_times; NaN];
-                    end
-                else
-                    trust_degradation = [trust_degradation; NaN];
-                    attack_detection_times = [attack_detection_times; NaN];
-                end
+        % Extract each evaluator's trust in the attacker from Vehicle.trust_log.
+        trust_trace = squeeze(v.trust_log(1, :, attacker_vehicle_id));
+        attack_start_idx = max(1, round(t_star / Scenarios_config.dt));
+        attack_end_idx = min(length(trust_trace), round(t_end / Scenarios_config.dt));
+
+        if attack_start_idx <= length(trust_trace) && attack_start_idx <= attack_end_idx
+            pre_attack_end_idx = max(1, attack_start_idx - 1);
+            pre_attack_trust = mean(trust_trace(1:pre_attack_end_idx), 'omitnan');
+            during_attack_trust = mean(trust_trace(attack_start_idx:attack_end_idx), 'omitnan');
+
+            all_trust_scores = [all_trust_scores; mean(trust_trace, 'omitnan')];
+            trust_degradation = [trust_degradation; pre_attack_trust - during_attack_trust];
+
+            trust_threshold_detection = 0.7;
+            detection_idx = find(trust_trace(attack_start_idx:attack_end_idx) < trust_threshold_detection, 1);
+            if ~isempty(detection_idx)
+                detection_time = (attack_start_idx + detection_idx - 1) * Scenarios_config.dt;
+                attack_detection_times = [attack_detection_times; detection_time];
             else
-                all_trust_scores = [all_trust_scores; NaN];
-                trust_degradation = [trust_degradation; NaN];
                 attack_detection_times = [attack_detection_times; NaN];
             end
-        catch
+        else
             all_trust_scores = [all_trust_scores; NaN];
             trust_degradation = [trust_degradation; NaN];
             attack_detection_times = [attack_detection_times; NaN];
@@ -184,16 +215,22 @@ for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
 
 
 
-    % Calculate consensus RMSE across all observer vehicles for each target vehicle
+    % Calculate consensus RMSE across all observer vehicles for each target vehicle.
     % Each observer vehicle estimates all other vehicles -> average their RMSE estimates
-    % Result: mean_dist(i) = average RMSE for vehicle i across all observers
-    mean_dist = mean(all_global_dist_errors,2);   % Average RMSE across observers (dim 2)
-    mean_theta = mean(all_global_theta_errors,2); % Average RMSE across observers (dim 2)
-    mean_vel = mean(all_global_vel_errors,2);     % Average RMSE across observers (dim 2)
-    mean_acc = mean(all_global_acc_errors,2);     % Average RMSE across observers (dim 2)
+    % Result: mean_attack_dist(i) = average RMSE for vehicle i across all observers.
+    mean_full_dist = mean(all_full_dist_errors,2);
+    mean_full_theta = mean(all_full_theta_errors,2);
+    mean_full_vel = mean(all_full_vel_errors,2);
+    mean_full_acc = mean(all_full_acc_errors,2);
+
+    mean_attack_dist = mean(all_attack_dist_errors,2);
+    mean_attack_theta = mean(all_attack_theta_errors,2);
+    mean_attack_vel = mean(all_attack_vel_errors,2);
+    mean_attack_acc = mean(all_attack_acc_errors,2);
 
     % write one row per evaluating vehicle
     for vi = 1:length(non_attacker_ids)
+        target_id = non_attacker_ids(vi);
         % Handle trust metrics safely
         if isempty(all_trust_scores) || vi > length(all_trust_scores)
             trust_score = NaN;
@@ -212,16 +249,27 @@ for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
         else
             detection_time = attack_detection_times(vi);
         end
+
+        full_raw_combined = mean_full_dist(target_id) + mean_full_vel(target_id) + mean_full_acc(target_id);
+        attack_raw_combined = mean_attack_dist(target_id) + mean_attack_vel(target_id) + mean_attack_acc(target_id);
         
         row_data = {
             attack_type, ...
             sprintf('V%d', attacker_vehicle_id), ...
             sprintf('Case %d', case_nb_attack), ...
-            sprintf('V%d', non_attacker_ids(vi)), ...
-            mean_dist(vi), ...
-            mean_theta(vi), ...
-            mean_vel(vi), ...
-            mean_acc(vi), ...
+            sprintf('V%d', target_id), ...
+            mean_full_dist(target_id), ...
+            mean_full_theta(target_id), ...
+            mean_full_vel(target_id), ...
+            mean_full_acc(target_id), ...
+            mean_attack_dist(target_id), ...
+            mean_attack_theta(target_id), ...
+            mean_attack_vel(target_id), ...
+            mean_attack_acc(target_id), ...
+            full_raw_combined, ...
+            attack_raw_combined, ...
+            rmse_time_window(1), ...
+            rmse_time_window(2), ...
             trust_score, ...
             trust_deg, ...
             detection_time
@@ -234,7 +282,8 @@ for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
 
 
     % Store the errors for plotting
-    mean_errors(:, :, case_nb_attack) = [mean_dist, mean_theta, mean_vel,mean_acc];
+    mean_errors(:, :, case_idx) = [mean_attack_dist, mean_attack_theta, mean_attack_vel, mean_attack_acc];
+    mean_errors_full(:, :, case_idx) = [mean_full_dist, mean_full_theta, mean_full_vel, mean_full_acc];
     
     % Store trust data for direct analysis - COLLECT ALL CASES
     if ~exist('all_case_trust_logs', 'var')
@@ -244,24 +293,24 @@ for case_nb_attack = start_attack_senarios_index:total_num_attack_cases
     end
     
     % Store complete trust data for each case
-    all_case_trust_logs{case_nb_attack} = struct();
-    all_case_vehicles{case_nb_attack} = platton_vehicles;
-    all_case_scenarios{case_nb_attack} = struct('t_start', t_star, 't_end', t_end, 'dt', Scenarios_config.dt);
+    all_case_trust_logs{case_idx} = struct();
+    all_case_vehicles{case_idx} = platton_vehicles;
+    all_case_scenarios{case_idx} = struct('t_start', t_star, 't_end', t_end, 'dt', Scenarios_config.dt, 'case_number', case_nb_attack);
     
     % Collect trust logs from all vehicles for this case
     for v_idx = 1:length(platton_vehicles)
         vehicle = platton_vehicles(v_idx);
-        if isfield(vehicle, 'trust_log')
-            all_case_trust_logs{case_nb_attack}.(sprintf('vehicle_%d', v_idx)) = vehicle.trust_log;
+        if isprop(vehicle, 'trust_log')
+            all_case_trust_logs{case_idx}.(sprintf('vehicle_%d', v_idx)) = vehicle.trust_log;
         end
         
         % Also store trip model data
-        if isfield(vehicle, 'trip_models')
+        if isprop(vehicle, 'trip_models')
             for tm_idx = 1:length(vehicle.trip_models)
                 if ~isempty(vehicle.trip_models{tm_idx})
                     trust_model = vehicle.trip_models{tm_idx};
                     field_name = sprintf('trust_model_v%d_to_v%d', v_idx, tm_idx);
-                    all_case_trust_logs{case_nb_attack}.(field_name) = struct( ...
+                    all_case_trust_logs{case_idx}.(field_name) = struct( ...
                         'trust_samples', trust_model.trust_sample_log, ...
                         'final_scores', trust_model.final_score_log, ...
                         'gamma_cross', trust_model.gamma_cross_log, ...
@@ -327,7 +376,9 @@ title('(c) Acceleration Estimation Error');
 legend(cellstr("V" + string(non_attacker_ids)), 'Location', 'best');
 grid on;
 
-sgtitle(sprintf('Distributed Estimation Performance Under %s Attacks (Attacker: V%d)', attack_type, attacker_vehicle_id), 'FontSize', 14, 'FontWeight', 'bold');
+sgtitle(sprintf('Distributed Estimation Performance Under %s Attacks (Attacker: V%d, RMSE %.1f-%.1fs)', ...
+    attack_type, attacker_vehicle_id, rmse_time_window(1), rmse_time_window(2)), ...
+    'FontSize', 14, 'FontWeight', 'bold');
 
 %% 2. MEANINGFUL ATTACK IMPACT HEATMAPS (WITHOUT ORIENTATION)
 % Option 1: Separate heatmaps for each error type (RECOMMENDED)
@@ -429,53 +480,53 @@ for i = 1:length(non_attacker_ids)
     end
 end
 
-%% Option 3: Raw Average Combined Error Heatmap (Non-normalized)
-figure('Position', [400, 200, 1000, 600]);
+% %% Option 3: Raw Average Combined Error Heatmap (Non-normalized)
+% figure('Position', [400, 200, 1000, 600]);
 
-% Calculate raw combined errors (excluding orientation) - sum all error types
-raw_selected_metrics = [1, 3, 4]; % Distance(1), Velocity(3), Acceleration(4) - excluding orientation(2)
+% % Calculate raw combined errors (excluding orientation) - sum all error types
+% raw_selected_metrics = [1, 3, 4]; % Distance(1), Velocity(3), Acceleration(4) - excluding orientation(2)
 
-% Extract only the selected metrics for non-attacker vehicles
-raw_errors_selected = mean_errors(non_attacker_ids, raw_selected_metrics, :); % 3 vehicles × 3 metrics × 6 cases
+% % Extract only the selected metrics for non-attacker vehicles
+% raw_errors_selected = mean_errors(non_attacker_ids, raw_selected_metrics, :); % 3 vehicles × 3 metrics × 6 cases
 
-% Calculate weighted average for each vehicle and case
-raw_combined_errors = zeros(length(non_attacker_ids), size(mean_errors, 3));
-for i = 1:length(non_attacker_ids)
-    for j = 1:size(mean_errors, 3)
-        vehicle_errors = squeeze(raw_errors_selected(i, :, j)); % 3 metrics for this vehicle and case
-        raw_combined_errors(i, j) = sum(vehicle_errors); % Total combined RMSE (sum of all error types)
-    end
-end
+% % Calculate weighted average for each vehicle and case
+% raw_combined_errors = zeros(length(non_attacker_ids), size(mean_errors, 3));
+% for i = 1:length(non_attacker_ids)
+%     for j = 1:size(mean_errors, 3)
+%         vehicle_errors = squeeze(raw_errors_selected(i, :, j)); % 3 metrics for this vehicle and case
+%         raw_combined_errors(i, j) = sum(vehicle_errors); % Total combined RMSE (sum of all error types)
+%     end
+% end
 
-% Create raw error heatmap
-imagesc(raw_combined_errors);
-colorbar;
-xlabel('Attack Cases');
-ylabel('Vehicles');
-title(sprintf('Raw Average Combined Error (Distance + Velocity + Acceleration) - Attacks by V%d', attacker_vehicle_id));
-xticklabels(attack_descriptions(1:size(raw_combined_errors, 2)));
-% Center the y-tick labels properly
-num_vehicles = length(non_attacker_ids);
-yticks(1:num_vehicles);
-vehicle_labels = arrayfun(@(x) sprintf('V%d', x), non_attacker_ids, 'UniformOutput', false);
-yticklabels(vehicle_labels);
-xtickangle(45);
-set(gca, 'FontSize', 8);  % Make text smaller for heatmaps
-% Force y-tick labels to be centered
-set(gca, 'TickLength', [0 0]);  % Remove tick marks
-ylim([0.5, num_vehicles + 0.5]);  % Set proper y-axis limits
+% % Create raw error heatmap
+% imagesc(raw_combined_errors);
+% colorbar;
+% xlabel('Attack Cases');
+% ylabel('Vehicles');
+% title(sprintf('Raw Average Combined Error (Distance + Velocity + Acceleration) - Attacks by V%d', attacker_vehicle_id));
+% xticklabels(attack_descriptions(1:size(raw_combined_errors, 2)));
+% % Center the y-tick labels properly
+% num_vehicles = length(non_attacker_ids);
+% yticks(1:num_vehicles);
+% vehicle_labels = arrayfun(@(x) sprintf('V%d', x), non_attacker_ids, 'UniformOutput', false);
+% yticklabels(vehicle_labels);
+% xtickangle(45);
+% set(gca, 'FontSize', 8);  % Make text smaller for heatmaps
+% % Force y-tick labels to be centered
+% set(gca, 'TickLength', [0 0]);  % Remove tick marks
+% ylim([0.5, num_vehicles + 0.5]);  % Set proper y-axis limits
 
-% Add text annotations with simple black text
-for i = 1:length(non_attacker_ids)
-    for j = 1:size(raw_combined_errors, 2)
-        raw_error = raw_combined_errors(i, j);
+% % Add text annotations with simple black text
+% for i = 1:length(non_attacker_ids)
+%     for j = 1:size(raw_combined_errors, 2)
+%         raw_error = raw_combined_errors(i, j);
         
-        text(j, i, sprintf('%.3f', raw_error), ...
-             'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
-             'Color', 'black', 'FontWeight', 'bold', 'FontSize', 11, ...
-             'EdgeColor', 'none');
-    end
-end
+%         text(j, i, sprintf('%.3f', raw_error), ...
+%              'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+%              'Color', 'black', 'FontWeight', 'bold', 'FontSize', 11, ...
+%              'EdgeColor', 'none');
+%     end
+% end
 
 % %% 3. VULNERABILITY ANALYSIS PER VEHICLE (WITHOUT ORIENTATION)
 % figure('Position', [300, 300, 1000, 400]);
@@ -495,6 +546,84 @@ end
 %     grid on;
 % end
 % sgtitle('Individual Vehicle Vulnerability Analysis', 'FontSize', 14, 'FontWeight', 'bold');
+
+% Raw combined attack-window RMSE used by the hybrid heatmap and summary.
+raw_selected_metrics = [1, 3, 4]; % Distance, velocity, acceleration
+raw_errors_selected = mean_errors(non_attacker_ids, raw_selected_metrics, :);
+raw_combined_errors = zeros(length(non_attacker_ids), size(mean_errors, 3));
+raw_errors_full_selected = mean_errors_full(non_attacker_ids, raw_selected_metrics, :);
+raw_combined_errors_full = zeros(length(non_attacker_ids), size(mean_errors_full, 3));
+for i = 1:length(non_attacker_ids)
+    for j = 1:size(mean_errors, 3)
+        vehicle_errors = squeeze(raw_errors_selected(i, :, j));
+        raw_combined_errors(i, j) = sum(vehicle_errors);
+
+        vehicle_full_errors = squeeze(raw_errors_full_selected(i, :, j));
+        raw_combined_errors_full(i, j) = sum(vehicle_full_errors);
+    end
+end
+
+% Write compact statistics for both full-run and attack-window RMSE to Excel.
+metric_stats_headers = {'AttackType','AttackerVehicle','Case','Window','Window_Start','Window_End', ...
+    'Metric','Mean','Std','Min','Max'};
+metric_stats_rows = metric_stats_headers;
+metric_names = {'Distance','Orientation','Velocity','Acceleration','Raw_Combined'};
+
+for case_idx = 1:total_num_attack_cases
+    case_nb_attack = attack_case_numbers(case_idx);
+    for window_idx = 1:2
+        if window_idx == 1
+            window_label = 'Full';
+            window_start = 0;
+            window_end = Scenarios_config.simulation_time;
+            data_cube = mean_errors_full;
+            combined_data = raw_combined_errors_full;
+        else
+            window_label = 'AttackWindow';
+            window_start = rmse_time_window(1);
+            window_end = rmse_time_window(2);
+            data_cube = mean_errors;
+            combined_data = raw_combined_errors;
+        end
+
+        for metric_idx = 1:length(metric_names)
+            if metric_idx <= 4
+                metric_values = squeeze(data_cube(non_attacker_ids, metric_idx, case_idx));
+            else
+                metric_values = combined_data(:, case_idx);
+            end
+
+            metric_values = metric_values(:);
+            valid_values = metric_values(~isnan(metric_values));
+            if isempty(valid_values)
+                mean_value = NaN;
+                std_value = NaN;
+                min_value = NaN;
+                max_value = NaN;
+            else
+                mean_value = mean(valid_values);
+                std_value = std(valid_values, 0);
+                min_value = min(valid_values);
+                max_value = max(valid_values);
+            end
+
+            metric_stats_rows(end+1, :) = { ...
+                attack_type, ...
+                sprintf('V%d', attacker_vehicle_id), ...
+                sprintf('Case %d', case_nb_attack), ...
+                window_label, ...
+                window_start, ...
+                window_end, ...
+                metric_names{metric_idx}, ...
+                mean_value, ...
+                std_value, ...
+                min_value, ...
+                max_value};
+        end
+    end
+end
+
+writecell(metric_stats_rows, excel_filename, 'Sheet', stats_sheet_name, 'Range', 'A1');
 
 %% 4. HYBRID HEATMAP: NORMALIZED IMPACT COLORS WITH RAW ERROR VALUES
 figure('Position', [500, 300, 1000, 600]);
@@ -548,6 +677,7 @@ fprintf('\n=== SUMMARY STATISTICS FOR PAPER ===\n');
 fprintf('Attack Type: %s, Attacker: V%d\n', attack_type, attacker_vehicle_id);
 fprintf('Total Attack Cases Tested: %d\n', total_num_attack_cases);
 fprintf('Attack Duration: %.1f seconds (t=%.1fs to %.1fs)\n', t_end-t_star, t_star, t_end);
+fprintf('RMSE Window: %.1f seconds to %.1f seconds\n', rmse_time_window(1), rmse_time_window(2));
 
 %% RAW COMBINED ERROR ANALYSIS
 fprintf('\n=== RAW AVERAGE COMBINED ERROR ANALYSIS ===\n');

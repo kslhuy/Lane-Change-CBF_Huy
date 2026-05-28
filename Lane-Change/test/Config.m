@@ -95,7 +95,7 @@ Scenarios_config.acceleration_trust_score_method = "vrel_dis_adjusted"; % 'mathe
 % -- option trust (no imporant yet)
 Scenarios_config.Monitor_sudden_change = false; % if the sudden change is monitored
 
-Scenarios_config.is_know_data_not_nearby = true ; % just for test purpose, Use that we have better Trust score , meaning that we know the data all of the other vehicles
+Scenarios_config.is_know_data_not_nearby = false ; % false avoids oracle non-nearby distance data in trust evaluation
 
 % New validation controls
 Scenarios_config.Use_physical_constraints_check = true; % Enable/disable physical constraints validation (recommended: true)

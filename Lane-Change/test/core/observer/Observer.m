@@ -225,7 +225,10 @@ classdef Observer < handle
                 self.create_step_data(instant_index, pre_update_states, neighbor_deltas, anchor_deltas, input_deltas, weights_used, trust_scores);
                 
                 % Check for newly malicious vehicles based on trust threshold
-                self.check_and_trigger_rollback(instant_index, trust_scores);
+                [rollback_applied, corrected_states] = self.check_and_trigger_rollback(instant_index, trust_scores);
+                if rollback_applied
+                    Big_X_hat_1_tempo = corrected_states;
+                end
             end
 
             %% Save the global state estmate to log
@@ -246,7 +249,7 @@ classdef Observer < handle
         function [x_bar_j , weights_new] = get_local_state_for_vehicle(self, j, host_id, weights_new)
             % Get local state for vehicle j, handle missing data
             x_bar_j = self.vehicle.center_communication.get_local_state(j, host_id);
-            if isnan(x_bar_j)
+            if any(isnan(x_bar_j(:)))
                 x_bar_j = zeros(size(self.est_local_state_current));
                 weights_new(1) = 0;
             end
@@ -257,7 +260,7 @@ classdef Observer < handle
             x_hat_i_j = zeros(self.num_states, num_vehicles);
             for k = 1:num_vehicles
                 x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k, self.vehicle.vehicle_number);
-                if isnan(x_hat_i_j_full)
+                if any(isnan(x_hat_i_j_full(:)))
                     x_hat_i_j_full = zeros(size(self.est_global_state_current));
                     weights_new(k+1) = 0;
                 end
@@ -269,7 +272,7 @@ classdef Observer < handle
         function weights_new = adjust_weights_for_attacker(self, j, host_id, weights_new)
             % Adjust weights if host is attacker
             if self.vehicle.scenarios_config.attacker_update_locally
-                if (~isempty(self.vehicle.center_communication.attack_module.scenario) && host_id == self.vehicle.center_communication.attack_module.scenario(1).attacker_id) || (self.vehicle.scenarios_config.lead_senario ~= "constant")
+                if (~isempty(self.vehicle.center_communication.attack_module.scenario) && ismember(host_id, self.vehicle.center_communication.attack_module.scenario(1).attacker_id)) || (self.vehicle.scenarios_config.lead_senario ~= "constant")
                     weights_new = zeros(size(weights_new));
                     weights_new(1) = 1; % Keep the local state weight
                 end
@@ -579,7 +582,7 @@ classdef Observer < handle
                         % Apply smoother, correlated measurement noise
                         % Generate correlated noise using first-order Markov process
                         correlation_factor = 0.8; % Controls noise correlation (0 = white noise, 1 = fully correlated)
-                        white_noise = mvnrnd(zeros(self.num_states,1), self.R)';
+                        white_noise = self.sample_gaussian(self.R);
                         
                         % First-order Markov noise model: x[k] = correlation_factor * x[k-1] + sqrt(1-correlation_factor^2) * w[k]
                         self.correlated_noise_state = correlation_factor * self.correlated_noise_state + ...
@@ -593,7 +596,7 @@ classdef Observer < handle
                         self.previous_noise = current_noise; % Store for next iteration
                     else
                         % Original simple noise generation (no smoothing)
-                        additional_measurement_noise = mvnrnd(zeros(self.num_states,1), self.R)';  % sample additional measurement noise
+                        additional_measurement_noise = self.sample_gaussian(self.R);  % sample additional measurement noise
                         mesure_state = mesure_state + additional_measurement_noise; % Add additional noise to the measurement
                     end
                 end
@@ -639,7 +642,7 @@ classdef Observer < handle
 
             % Add process noise to make it more realistic
             if self.vehicle.scenarios_config.Is_noise_mesurement == true
-                process_noise = mvnrnd(zeros(self.num_states,1), self.Q)';  % sample process noise
+                process_noise = self.sample_gaussian(self.Q);  % sample process noise
             else
                 process_noise = zeros(self.num_states,1); % No process noise for perfect case
             end
@@ -672,6 +675,20 @@ classdef Observer < handle
             [V, D] = eig(self.P);
             D = max(D, 1e-8 * eye(self.num_states)); % Ensure positive eigenvalues
             self.P = V * D * V';
+        end
+
+        function sample = sample_gaussian(~, covariance)
+            covariance = (covariance + covariance') / 2;
+            n = size(covariance, 1);
+            [factor, p] = chol(covariance + 1e-10 * eye(n), 'lower');
+
+            if p ~= 0
+                [V, D] = eig(covariance);
+                eig_values = max(diag(D), 0);
+                factor = V * diag(sqrt(eig_values));
+            end
+
+            sample = factor * randn(n, 1);
         end
 
         % This model use in obesrver , so need to be here, in the observer class
@@ -871,7 +888,7 @@ classdef Observer < handle
             host_id = self.vehicle.vehicle_number;
             for j = 1:self.num_vehicles
                 if abs(host_id - j) == 1 && length(self.vehicle.trip_models) >= j && ...
-                   isfield(self.vehicle.trip_models{j}, 'flag_local_est_check') && ...
+                   isprop(self.vehicle.trip_models{j}, 'flag_local_est_check') && ...
                    self.vehicle.trip_models{j}.flag_local_est_check
                     step_data.exclude_virtual_node0_flags(j) = true;
                 end
@@ -880,8 +897,10 @@ classdef Observer < handle
             self.add_to_rollback_buffer(step_data);
         end
         
-        function check_and_trigger_rollback(self, instant_index, trust_scores)
+        function [rollback_applied, corrected_states] = check_and_trigger_rollback(self, instant_index, trust_scores)
             % Check for newly malicious vehicles and trigger rollback if needed
+            rollback_applied = false;
+            corrected_states = [];
             if ~self.rollback_enabled
                 return;
             end
@@ -917,14 +936,14 @@ classdef Observer < handle
             
             % Trigger rollback for newly discovered malicious vehicles
             if ~isempty(newly_malicious)
-                for malicious_id = newly_malicious
-                    self.trigger_contamination_rollback(malicious_id, instant_index);
-                end
+                [rollback_applied, corrected_states] = self.trigger_contamination_rollback(newly_malicious(1), instant_index);
             end
         end
         
-        function trigger_contamination_rollback(self, malicious_vehicle_id, current_time)
+        function [rollback_applied, corrected_states] = trigger_contamination_rollback(self, malicious_vehicle_id, current_time)
             % Trigger rollback to remove contamination from a malicious vehicle
+            rollback_applied = false;
+            corrected_states = [];
             buffer_size = self.get_buffer_size();
             if buffer_size == 0
                 fprintf('[Observer] No rollback data available for vehicle %d\n', malicious_vehicle_id);
@@ -975,6 +994,7 @@ classdef Observer < handle
             
             % Update current state estimates
             self.est_global_state_current = corrected_states;
+            rollback_applied = true;
             
             % Fix 4: Clear/mark buffer and increment epoch after rollback
             self.clear_rollback_buffer();
@@ -1008,8 +1028,9 @@ classdef Observer < handle
                         consensus_delta = consensus_delta + neighbor_data.delta;
                     else
                         % Skip malicious vehicle's contribution
-                        fprintf('[Observer] Excluding malicious vehicle %d contribution for vehicle %d\n', ...
-                               malicious_vehicle_id, vehicle_j);
+                        continue;
+                        % fprintf('[Observer] Excluding malicious vehicle %d contribution for vehicle %d\n', ...
+                        %        malicious_vehicle_id, vehicle_j);
                     end
                 end
             end
@@ -1130,12 +1151,30 @@ classdef Observer < handle
             end
         end
 
-        function [global_dist_err, global_theta_err, global_vel_err,global_acc_err] = calculate_global_errors(self)
+        function [global_dist_err, global_theta_err, global_vel_err,global_acc_err] = calculate_global_errors(self, time_window)
             % Extract actual and estimated states for error calculation
             estimated_states = self.est_global_state_log; % size: [num_states, num_time_steps, num_vehicles]
             % actual_states = self.vehicle.state_log;      % size: [num_states, num_time_steps]
 
             num_time_steps = size(estimated_states, 2);
+            if nargin < 2 || isempty(time_window)
+                time_indices = 1:num_time_steps;
+            else
+                if numel(time_window) ~= 2 || time_window(2) < time_window(1)
+                    error('time_window must be [start_time, end_time] with end_time >= start_time.');
+                end
+
+                dt = self.vehicle.scenarios_config.dt;
+                start_idx = max(1, ceil(time_window(1) / dt));
+                end_idx = min(num_time_steps, floor(time_window(2) / dt));
+
+                if start_idx > end_idx
+                    error('Requested RMSE time window [%.3f, %.3f] is outside the available simulation log.', ...
+                        time_window(1), time_window(2));
+                end
+
+                time_indices = start_idx:end_idx;
+            end
 
             actual_states_all = zeros(self.num_states, num_time_steps+1, self.num_vehicles);
             for v = 1:self.num_vehicles
@@ -1143,29 +1182,31 @@ classdef Observer < handle
             end
 
             % Initialize error matrices
-            dist_err = zeros(self.num_vehicles, num_time_steps);
-            theta_err = zeros(self.num_vehicles, num_time_steps);
-            vel_err = zeros(self.num_vehicles, num_time_steps);
-            acc_err = zeros(self.num_vehicles, num_time_steps);
+            num_selected_steps = numel(time_indices);
+            dist_err = zeros(self.num_vehicles, num_selected_steps);
+            theta_err = zeros(self.num_vehicles, num_selected_steps);
+            vel_err = zeros(self.num_vehicles, num_selected_steps);
+            acc_err = zeros(self.num_vehicles, num_selected_steps);
 
 
             % Calculate errors for each vehicle at each time step
             for v = 1:self.num_vehicles
-                for t = 1:num_time_steps
+                for t_idx = 1:num_selected_steps
+                    t = time_indices(t_idx);
                     est = estimated_states(:, t, v); % Estimated state for vehicle v at time t
                     act = actual_states_all(:, t+1, v); % Actual state for vehicle v at time t
 
                     % Distance error - Root Mean Square Error (RMSE)
-                    dist_err(v, t) = (est(1) - act(1))^2;
+                    dist_err(v, t_idx) = (est(1) - act(1))^2;
 
                     % Theta error (orientation) - RMSE
-                    theta_err(v, t) = (est(3) - act(3))^2;
+                    theta_err(v, t_idx) = (est(3) - act(3))^2;
 
                     % Velocity error - RMSE
-                    vel_err(v, t) = (est(4) - act(4))^2;
+                    vel_err(v, t_idx) = (est(4) - act(4))^2;
 
                     % Acceleration error - RMSE
-                    acc_err(v, t) = (est(5) - act(5))^2;
+                    acc_err(v, t_idx) = (est(5) - act(5))^2;
                 end
             end
 

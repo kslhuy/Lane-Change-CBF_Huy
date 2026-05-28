@@ -86,7 +86,12 @@ classdef Simulator
                         % xlim([0, 500]); % Set x-axis limits
                         % % Adjust xlim dynamically to follow the ego vehicle
 
-                        offset_x = (self.other_vehicles(4).state(1) + self.other_vehicles(3).state(1))/2 + 5; % Assuming state(1) is the X position
+                        if num_car >= 1
+                            vehicle_x_positions = arrayfun(@(vehicle) vehicle.state(1), self.other_vehicles);
+                            offset_x = mean(vehicle_x_positions);
+                        else
+                            offset_x = 0;
+                        end
                         xlim([offset_x  - 100, offset_x + 200]); % Keep the ego vehicle in the center
 
                         ylim([-30, 30]); % Adjusted for better visibility
@@ -484,10 +489,10 @@ classdef Simulator
         end
 
         function plot_all_trust_log(~, collected_car)
-            % Improved subplot layout for trust logs of 4 vehicles
-
             nb_vehicles = length(collected_car);
             time_steps = size(collected_car(1).trust_log, 2);
+            num_cols = ceil(sqrt(nb_vehicles));
+            num_rows = ceil(nb_vehicles / num_cols);
             
             % Create time vector for plotting
             dt_config = collected_car(1).scenarios_config.dt;
@@ -496,7 +501,7 @@ classdef Simulator
             figure("Name", "All Trust Values Over Time", "NumberTitle", "off");
 
             for v = 1:nb_vehicles
-                subplot(2, 2, v); % 2x2 grid for 4 vehicles
+                subplot(num_rows, num_cols, v);
                 hold on;
                 for vehicle_idx = 1:nb_vehicles
                     plot(time_vector, squeeze(collected_car(v).trust_log(1, :, vehicle_idx)), ...
@@ -519,18 +524,20 @@ classdef Simulator
 
         function plot_all_trust_log_exclude_attacker(~, collected_car)
             % Simple trust log plot that excludes attacker (vehicle 1)
-            % Shows only non-attacker vehicles (V2, V3, V4)
 
             nb_vehicles = length(collected_car);
             attacker_id = 1; % Vehicle 1 is the attacker
+            num_plots = max(1, nb_vehicles - 1);
+            num_cols = ceil(sqrt(num_plots));
+            num_rows = ceil(num_plots / num_cols);
             
             % Create main figure
             figure("Name", "Trust Values Over Time (Excluding Attacker)", "NumberTitle", "off");
 
             subplot_idx = 1;
             
-            % Plot trust logs for non-attacker vehicles (vehicles 2, 3, 4)
-            for v = 2:nb_vehicles
+            % Plot trust logs for non-attacker vehicles
+            for v = 1:nb_vehicles
                 if v ~= attacker_id
                     time_steps = size(collected_car(v).trust_log, 2);
                     
@@ -538,7 +545,7 @@ classdef Simulator
                     dt_config = collected_car(v).scenarios_config.dt;
                     time_vector = 0:dt_config:(time_steps-1)*dt_config;
                     
-                    subplot(2, 2, subplot_idx);
+                    subplot(num_rows, num_cols, subplot_idx);
                     hold on;
                     for vehicle_idx = 1:nb_vehicles
                         plot(time_vector, squeeze(collected_car(v).trust_log(1, :, vehicle_idx)), ...
