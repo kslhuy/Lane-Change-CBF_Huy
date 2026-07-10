@@ -21,8 +21,6 @@ classdef TriPTrustModel < handle
         wj_nearby = 1.0;  % Weight for jerkiness
         wh_nearby = 1.0;  % Weight for heading
 
-        wt = 0.4; % Trust decay weight
-        wt_global = 0.5; % Trust decay weight
 
 
         % ---- New properties for weighted based trust sample calculation
@@ -30,7 +28,53 @@ classdef TriPTrustModel < handle
         w_lt_d = 0.35; % Weight for distance in weighted trust sample
         w_lt_a = 0.3; % Weight for acceleration in weighted trust sample
 
+        % ---- Python local trust model parameters
+        py_weight_velocity = 3.0;
+        py_weight_distance = 2.0;
+        py_weight_acceleration = 1.0;
+        py_weight_heading = 1.0;
+
+        local_trust_fusion_mode = "product"; % "product", "equal_geometric", or "weighted_geometric"
+        local_weight_velocity = 0.30;
+        local_weight_distance = 0.20;
+        local_weight_acceleration = 0.15;
+        local_weight_heading = 0.15;
+        local_weight_beacon = 0.10;
+        local_weight_quality = 0.10;
+
+        stationary_velocity_threshold = 0.2;
+        velocity_tolerance = 0.3;
+        min_velocity_tolerance = 0.05;
+        turn_velocity_tolerance_gain = 0.35;
+        accel_velocity_tolerance_gain = 0.15;
+        stationary_noise_tolerance = 0.15;
+        active_trust_tolerance_scale = 1.0;
+
+        acceleration_base_tolerance = 1.0;
+        acceleration_speed_tolerance_gain = 0.35;
+        acceleration_host_tolerance_gain = 0.6;
+        acceleration_turn_tolerance_gain = 0.8;
+        acceleration_distance_base_tolerance = 0.35;
+        acceleration_distance_turn_gain = 0.4;
+        acceleration_rel_velocity_tolerance = 0.3;
+
+        heading_min_movement_m = 0.05;
+        heading_base_tolerance_rad = 0.35;
+        heading_turn_tolerance_gain = 1.0;
+        heading_yaw_rate_tolerance = 0.8;
+
+        distance_physical_violation_ratio = 1.5;
+        distance_source_switch_grace_ratio = 3.0;
+        severe_v2v_distance_violation_ratio = 2.5;
+        severe_v2v_distance_score_cap = 0.05;
+        local_pose_distance_tolerance = 0.5;
+        local_pose_distance_relative_tolerance = 0.1;
+        severe_local_pose_distance_ratio = 2.0;
+
         % ---- Parameters for trust evolution model 
+        wt = 0.45; % Trust decay weight
+        wt_global = 0.5; % Trust decay weight
+
         C = 0.2;   % Regularization constant
         tacc = 1.2;% Trust-based acceleration scaling factor
         k = 5;     % Number of trust levels
@@ -46,6 +90,24 @@ classdef TriPTrustModel < handle
 
 
         % New properties for global estimate checks
+        use_python_global_trust = true; % Use Python-compatible global trust calculation
+        distributed_trust_fallback = 0.2; % Fallback trust score when distributed trust cannot be calculated
+        distributed_trust_state_indices = 1:5;
+        distributed_trust_contribution_caps = [4.0, 4.0, 1.5, 2.0, 0.2];
+        distributed_trust_accel_weight = 0.05;
+        distributed_self_turn_distance_gain = 2.0;
+        distributed_self_turn_velocity_gain = 1.0;
+        % lower covariance = stronger penalty for same mismatch
+        distributed_trust_covariance_diag = [1.5, 1.0, 1.8, 0.5, 0.25];
+        distributed_local_tau2_diag = [1.5, 0.5];
+        use_relative_velocity_in_relative_trust = true;
+        theta_similarity_distance_scale = 1.5;
+        theta_similarity_velocity_scale = 1.0;
+        theta_similarity_gain = 2.5;
+        theta_turn_gain = 2.0;
+        theta_contribution_cap = 3.0;
+        gamma_self_penalty_floor = 0.35;
+        gamma_self_penalty_exponent = 1.0;
         sigma2 = 1; % Sensitivity parameter for cross-validation trust factor
         tau2 = 0.5;   % Sensitivity parameter for local consistency trust factor
         last_d;
@@ -79,6 +141,7 @@ classdef TriPTrustModel < handle
 
         D_pos_log = [];          % Log for position discrepancies
         D_vel_log = [];          % Log for velocity discrepancies
+        D_theta_log = [];        % Log for heading discrepancies
         anomaly_pos_log = [];    % Log for position anomaly flags
         anomaly_vel_log = [];    % Log for velocity anomaly flags
         anomaly_gamma_log = [];  % Already included from previous request
@@ -109,10 +172,11 @@ classdef TriPTrustModel < handle
         
         % Missing properties for anomaly detection
         D_acc_log = []; % Log for acceleration discrepancies
+        D_total_log = []; % Log for total global Mahalanobis discrepancy
         anomaly_acc_log = []; % Log for acceleration anomaly flags
 
         % Trust decay parameters
-        lambda_h = 0.2; % Trust decay factor when no beacon received
+        lambda_h = 0.8; % Trust decay factor when no beacon received, one missing packet keeps 80% of previous trust
         previous_trust_scores; % Store previous trust scores per vehicle
         
         % Physical constraints parameters
@@ -122,6 +186,10 @@ classdef TriPTrustModel < handle
         
         % Temporal consistency tracking
         previous_states_map; % Store previous states per vehicle
+        local_score_previous_states_map; % Python-style local score state history
+        local_score_previous_host_state = [];
+        local_score_current_host_state = [];
+        local_score_host_instant_idx = -Inf;
         temporal_score_log = []; % Log for temporal consistency scores
         physical_valid_log = []; % Log for physical constraints validation
         
@@ -214,14 +282,14 @@ classdef TriPTrustModel < handle
             self.beacon_score_log = [];
             self.final_score_log = [];
 
-            self.lead_state_lastest = zeros(4,1);
+            self.lead_state_lastest = zeros(5,1);
             self.previous_state = zeros(4,1);
 
-            tau2_diag_element = [1.5 , 0.5];
+            tau2_diag_element = self.distributed_local_tau2_diag;
             self.tau2_matrix_gamma_local = diag(tau2_diag_element);
 
             % Compute covariance matrix (adaptive variance)
-            sigma2_diag_element = [1.5, 1 ,0.01, 0.5 , 0.1];
+            sigma2_diag_element = self.distributed_trust_covariance_diag;
             self.sigma2_matrix_gamma_cross = diag(sigma2_diag_element);
 
 
@@ -240,6 +308,10 @@ classdef TriPTrustModel < handle
             % Initialize separate arrays for local and global trust decay (much faster than maps)
             self.previous_trust_scores = struct('local', [], 'global', []); % Separate arrays for local and global trust
             self.previous_states_map = containers.Map('KeyType', 'int32', 'ValueType', 'any');
+            self.local_score_previous_states_map = containers.Map('KeyType', 'int32', 'ValueType', 'any');
+            self.local_score_previous_host_state = [];
+            self.local_score_current_host_state = [];
+            self.local_score_host_instant_idx = -Inf;
             
             % Initialize filter buffers
             self.velocity_score_buffer = [];
@@ -600,6 +672,857 @@ classdef TriPTrustModel < handle
             end
         end
 
+        %%% Python-style local trust scoring helpers %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        function value = clamp_unit(~, value)
+            if ~isfinite(value)
+                value = 0;
+            end
+            value = max(0, min(1, value));
+        end
+
+        function angle_wrapped = wrap_angle(~, angle_value)
+            angle_wrapped = atan2(sin(angle_value), cos(angle_value));
+        end
+
+        function score = robust_score(self, error_value, tolerance)
+            tol = max(abs(tolerance), 1e-3);
+            ratio = abs(error_value) / tol;
+            score = self.clamp_unit(1.0 / (1.0 + ratio * ratio));
+        end
+
+        function state = normalize_local_state(~, state)
+            state = state(:);
+            if length(state) < 5
+                state = [state; zeros(5 - length(state), 1)];
+            end
+        end
+
+        function update_local_host_score_state(self, host_state, instant_idx)
+            host_state = self.normalize_local_state(host_state);
+            if isempty(self.local_score_current_host_state) || self.local_score_host_instant_idx ~= instant_idx
+                if ~isempty(self.local_score_current_host_state)
+                    self.local_score_previous_host_state = self.local_score_current_host_state;
+                end
+                self.local_score_host_instant_idx = instant_idx;
+            end
+            self.local_score_current_host_state = struct( ...
+                'state', host_state, ...
+                'instant_idx', instant_idx);
+        end
+
+        function entry = make_local_score_entry(self, state, instant_idx, distance_from_host, relative_velocity_from_host, distance_is_measured)
+            entry = struct( ...
+                'state', self.normalize_local_state(state), ...
+                'instant_idx', instant_idx, ...
+                'distance_from_host', distance_from_host, ...
+                'relative_velocity_from_host', relative_velocity_from_host, ...
+                'distance_is_measured', logical(distance_is_measured));
+        end
+
+        function [entry, has_entry] = get_local_score_previous_target(self, target_id)
+            key = int32(target_id);
+            has_entry = isKey(self.local_score_previous_states_map, key);
+            if has_entry
+                entry = self.local_score_previous_states_map(key);
+            else
+                entry = [];
+            end
+        end
+
+        function store_local_score_target_state(self, target_id, entry)
+            self.local_score_previous_states_map(int32(target_id)) = entry;
+        end
+
+        function dt = local_entry_dt(~, previous_entry, current_entry, default_dt)
+            dt = default_dt;
+            if ~isempty(previous_entry) && ~isempty(current_entry) && ...
+                    isfield(previous_entry, 'instant_idx') && isfield(current_entry, 'instant_idx')
+                instant_delta = current_entry.instant_idx - previous_entry.instant_idx;
+                if isfinite(instant_delta) && instant_delta > 0
+                    dt = instant_delta * default_dt;
+                end
+            end
+            dt = max(dt, 0.01);
+        end
+
+        function yaw_rate = yaw_rate_from_entries(self, previous_entry, current_entry, default_dt)
+            yaw_rate = 0.0;
+            if isempty(previous_entry) || isempty(current_entry)
+                return;
+            end
+            prev_state = previous_entry.state;
+            curr_state = current_entry.state;
+            dt = self.local_entry_dt(previous_entry, current_entry, default_dt);
+            theta_delta = self.wrap_angle(curr_state(3) - prev_state(3));
+            yaw_rate = abs(theta_delta) / dt;
+        end
+
+        function v_rel = estimate_radial_relative_velocity(self, host_state, target_state)
+            host_state = self.normalize_local_state(host_state);
+            target_state = self.normalize_local_state(target_state);
+
+            los = [target_state(1) - host_state(1); target_state(2) - host_state(2)];
+            los_norm = norm(los);
+            if los_norm <= 1e-6
+                v_rel = target_state(4) - host_state(4);
+                return;
+            end
+
+            los_hat = los / los_norm;
+            target_velocity_xy = [target_state(4) * cos(target_state(3)); target_state(4) * sin(target_state(3))];
+            host_velocity_xy = [host_state(4) * cos(host_state(3)); host_state(4) * sin(host_state(3))];
+            v_rel = dot(target_velocity_xy - host_velocity_xy, los_hat);
+        end
+
+        function [distance_value, is_measured] = resolve_relative_distance(self, host_state, target_state, measured_distance)
+            if isfinite(measured_distance) && measured_distance > 0
+                distance_value = max(measured_distance, 0.1);
+                is_measured = true;
+                return;
+            end
+
+            host_state = self.normalize_local_state(host_state);
+            target_state = self.normalize_local_state(target_state);
+            distance_value = max(norm(target_state(1:2) - host_state(1:2)), 0.1);
+            is_measured = false;
+        end
+
+        function relative_velocity = resolve_relative_velocity(self, host_state, target_state, measured_relative_velocity)
+            if nargin >= 4 && isfinite(measured_relative_velocity)
+                relative_velocity = measured_relative_velocity;
+            else
+                relative_velocity = self.estimate_radial_relative_velocity(host_state, target_state);
+            end
+        end
+
+        function limit_value = relative_acceleration_limit(self)
+            limit_value = 2.0 * max(abs(self.MAX_ACCEL), abs(self.MAX_DECEL));
+        end
+
+        function score = evaluate_velocity_python(self, host_state, target_entry, leader_state, previous_target, default_dt)
+            target_state = target_entry.state;
+            v_target = target_state(4);
+
+            base_tolerance = max([self.velocity_tolerance, self.min_velocity_tolerance, 0.01]);
+            tolerance_scale = max(1.0, self.active_trust_tolerance_scale);
+            turn_bonus = 0.0;
+            dt = max(default_dt, 0.01);
+            if ~isempty(previous_target)
+                dt = self.local_entry_dt(previous_target, target_entry, default_dt);
+                heading_delta = self.wrap_angle(target_state(3) - previous_target.state(3));
+                yaw_rate = abs(heading_delta) / dt;
+                speed_scale = max([abs(v_target), abs(host_state(4)), 0.3]);
+                turn_bonus = self.turn_velocity_tolerance_gain * yaw_rate * speed_scale;
+            end
+            accel_bonus = self.accel_velocity_tolerance_gain * max(abs(target_state(5)), abs(host_state(5)));
+            v_tolerance = max(base_tolerance + turn_bonus + accel_bonus, 0.01) * tolerance_scale;
+
+            context_refs = host_state(4);
+            if ~isempty(leader_state) && length(leader_state) >= 4 && isfinite(leader_state(4))
+                context_refs = [context_refs; leader_state(4)];
+            end
+            context_refs = context_refs(isfinite(context_refs));
+
+            if ~isempty(previous_target)
+                previous_velocity = previous_target.state(4);
+                previous_acceleration = 0.0;
+                if length(previous_target.state) >= 5 && isfinite(previous_target.state(5))
+                    previous_acceleration = previous_target.state(5);
+                end
+                if isfinite(previous_velocity)
+                    expected_velocity = previous_velocity + ...
+                        0.5 * (previous_acceleration + target_state(5)) * dt;
+                    temporal_score = self.robust_score(v_target - expected_velocity, v_tolerance);
+                else
+                    temporal_score = NaN;
+                end
+            else
+                temporal_score = NaN;
+            end
+
+            if isempty(context_refs)
+                score = 1.0;
+                return;
+            end
+
+            v_ref = median(context_refs);
+
+            if abs(v_target) < self.stationary_velocity_threshold && abs(v_ref) < self.stationary_velocity_threshold
+                v_error = abs(v_target - v_ref);
+                if v_error < self.stationary_noise_tolerance
+                    score = 1.0;
+                else
+                    normalized_error = v_error / self.stationary_velocity_threshold;
+                    score = self.clamp_unit((max(1.0 - normalized_error, 0.0)) ^ self.py_weight_velocity);
+                end
+                return;
+            end
+
+            context_tolerance = max(2.0 * v_tolerance, 0.01);
+            context_score = self.robust_score(v_target - v_ref, context_tolerance);
+            if isempty(previous_target) || ~isfinite(temporal_score)
+                score = context_score;
+                return;
+            end
+
+            % Follower targets can legitimately lag the host during transients.
+            target_is_behind_host = target_state(1) < host_state(1);
+            if target_is_behind_host
+                temporal_weight = 0.75;
+            else
+                temporal_weight = 0.60;
+            end
+            score = temporal_weight * temporal_score + (1.0 - temporal_weight) * context_score;
+            score = self.clamp_unit(score);
+        end
+
+        function [score, severe_mismatch] = evaluate_distance_python(self, host_state, target_entry, previous_target, previous_host, default_dt)
+            severe_mismatch = false;
+            if isempty(previous_target)
+                score = 1.0;
+                return;
+            end
+
+            d_current = target_entry.distance_from_host;
+            current_is_measured = target_entry.distance_is_measured;
+            prev_is_measured = previous_target.distance_is_measured;
+            source_switched = current_is_measured ~= prev_is_measured;
+
+            if prev_is_measured && isfinite(previous_target.distance_from_host) && previous_target.distance_from_host > 0
+                d_prev = previous_target.distance_from_host;
+            else
+                if ~isempty(previous_host)
+                    prev_host_state = previous_host.state;
+                else
+                    prev_host_state = host_state;
+                end
+                d_prev = norm(previous_target.state(1:2) - prev_host_state(1:2));
+            end
+            d_prev = max(d_prev, 0.1);
+
+            v_rel = target_entry.relative_velocity_from_host;
+            if isfinite(previous_target.relative_velocity_from_host)
+                v_rel_prev = previous_target.relative_velocity_from_host;
+            elseif ~isempty(previous_host)
+                v_rel_prev = self.estimate_radial_relative_velocity(previous_host.state, previous_target.state);
+            else
+                v_rel_prev = self.estimate_radial_relative_velocity(host_state, previous_target.state);
+            end
+
+            dt = self.local_entry_dt(previous_target, target_entry, default_dt);
+            v_rel_robust = 0.5 * (v_rel + v_rel_prev);
+            d_expected = d_prev + v_rel_robust * dt;
+
+            d_measured = max(d_current, 0.1);
+            d_error = abs(d_current - d_expected);
+            actual_change = abs(d_current - d_prev);
+            tolerance_scale = max(1.0, self.active_trust_tolerance_scale);
+            max_phys_change = abs(v_rel_prev) * dt + 0.5 * self.relative_acceleration_limit() * (dt ^ 2);
+            max_phys_change = max(max_phys_change, 0.5 * self.stationary_noise_tolerance);
+            max_phys_change = max_phys_change * tolerance_scale;
+            if ~current_is_measured && ~prev_is_measured && ~source_switched
+                % Non-nearby distance is inferred from exchanged pose estimates, not
+                % directly measured. Use a wider per-step gate so normal estimator
+                % noise does not collapse the distance score for a single sample.
+                estimated_distance_noise_floor = max([ ...
+                    self.local_pose_distance_tolerance, ...
+                    2.0 * self.stationary_noise_tolerance, ...
+                    0.1]);
+                max_phys_change = max(max_phys_change, estimated_distance_noise_floor);
+            end
+
+            violation_ratio = self.distance_physical_violation_ratio;
+            if source_switched
+                violation_ratio = max(violation_ratio, self.distance_source_switch_grace_ratio);
+            end
+
+            violation_detected = actual_change > max_phys_change * violation_ratio;
+            severe_v2v_violation = ~current_is_measured && ~prev_is_measured && ~source_switched && ...
+                actual_change > max_phys_change * self.severe_v2v_distance_violation_ratio;
+
+            if violation_detected
+                if current_is_measured || prev_is_measured || source_switched
+                    penalty_factor = 1.25;
+                else
+                    penalty_factor = 3.0;
+                end
+                d_error = max(d_error, actual_change * penalty_factor);
+            end
+
+            normalized_error = d_error / (d_measured * tolerance_scale);
+            score = self.clamp_unit((max(1.0 - normalized_error, 0.0)) ^ self.py_weight_distance);
+            if severe_v2v_violation
+                score = min(score, self.severe_v2v_distance_score_cap);
+            end
+        end
+
+        function [score, severe_mismatch] = evaluate_local_pose_distance_python(self, host_state, target_entry)
+            severe_mismatch = false;
+            if ~target_entry.distance_is_measured
+                score = 1.0;
+                return;
+            end
+
+            measured_distance = max(target_entry.distance_from_host, 0.1);
+            reported_distance = norm(target_entry.state(1:2) - host_state(1:2));
+            if ~isfinite(reported_distance)
+                score = 1.0;
+                return;
+            end
+
+            pose_error = abs(reported_distance - measured_distance);
+            pose_tolerance = max([ ...
+                self.local_pose_distance_tolerance, ...
+                self.local_pose_distance_relative_tolerance * measured_distance, ...
+                0.5 * self.stationary_noise_tolerance]);
+            tolerance_scale = max(1.0, self.active_trust_tolerance_scale);
+            pose_tolerance = pose_tolerance * tolerance_scale;
+            excess_error = max(pose_error - pose_tolerance, 0.0);
+            normalized_error = excess_error / max([measured_distance * tolerance_scale, pose_tolerance, 0.1]);
+            score = self.clamp_unit((max(1.0 - normalized_error, 0.0)) ^ self.py_weight_distance);
+
+            severe_mismatch = pose_error > max( ...
+                pose_tolerance * self.severe_local_pose_distance_ratio, ...
+                pose_tolerance + self.stationary_noise_tolerance);
+            if severe_mismatch
+                score = min(score, self.severe_v2v_distance_score_cap);
+            end
+        end
+
+        function score = evaluate_acceleration_python(self, host_state, target_entry, previous_target, previous_host, current_host, default_dt)
+            target_state = target_entry.state;
+            if isempty(previous_target)
+                score = 1.0;
+                return;
+            end
+
+            a_target = target_state(5);
+            a_host = host_state(5);
+            v_target = target_state(4);
+            v_host = host_state(4);
+            dt = self.local_entry_dt(previous_target, target_entry, default_dt);
+            tolerance_scale = max(1.0, self.active_trust_tolerance_scale);
+
+            if abs(v_target) < self.stationary_velocity_threshold && abs(v_host) < self.stationary_velocity_threshold
+                a_error = abs(a_target - a_host);
+                noise_tolerance = max(0.35, 3.0 * self.stationary_noise_tolerance) * tolerance_scale;
+                stationary_score = self.robust_score(a_error, noise_tolerance);
+                score = self.clamp_unit(stationary_score ^ max(min(self.py_weight_acceleration, 3.0), 0.1));
+                return;
+            end
+
+            target_yaw_rate = self.yaw_rate_from_entries(previous_target, target_entry, default_dt);
+            host_yaw_rate = self.yaw_rate_from_entries(previous_host, current_host, default_dt);
+            combined_yaw_rate = max(target_yaw_rate, host_yaw_rate);
+
+            v_rel_now = target_entry.relative_velocity_from_host;
+            if isfinite(previous_target.relative_velocity_from_host)
+                v_rel_prev = previous_target.relative_velocity_from_host;
+            elseif ~isempty(previous_host)
+                v_rel_prev = self.estimate_radial_relative_velocity(previous_host.state, previous_target.state);
+            else
+                v_rel_prev = self.estimate_radial_relative_velocity(host_state, previous_target.state);
+            end
+
+            a_rel_reported = a_target - a_host;
+            a_from_velocity = (v_target - previous_target.state(4)) / dt;
+            a_error = a_target - a_from_velocity;
+            a_tol = self.acceleration_base_tolerance + ...
+                self.acceleration_speed_tolerance_gain * max([abs(v_target), abs(v_host), abs(v_rel_now), abs(v_rel_prev)]) + ...
+                self.acceleration_host_tolerance_gain * abs(a_host) + ...
+                self.acceleration_turn_tolerance_gain * combined_yaw_rate * max(abs(v_target), 0.2);
+            a_tol = a_tol * tolerance_scale;
+            score_temporal = self.robust_score(a_error, a_tol);
+
+            if previous_target.distance_is_measured && isfinite(previous_target.distance_from_host) && previous_target.distance_from_host > 0
+                d_prev = previous_target.distance_from_host;
+            else
+                if ~isempty(previous_host)
+                    prev_host_state = previous_host.state;
+                else
+                    prev_host_state = host_state;
+                end
+                d_prev = norm(previous_target.state(1:2) - prev_host_state(1:2));
+            end
+            d_prev = max(d_prev, 0.1);
+            d_curr = max(target_entry.distance_from_host, 0.1);
+
+            d_pred = d_prev + v_rel_prev * dt + 0.5 * a_rel_reported * (dt ^ 2);
+            d_error = d_curr - d_pred;
+            d_tol = self.acceleration_distance_base_tolerance + ...
+                0.25 * max(abs(v_rel_prev), abs(v_rel_now)) * dt + ...
+                self.acceleration_distance_turn_gain * combined_yaw_rate * max(d_curr, 0.5) * dt;
+            d_tol = d_tol * tolerance_scale;
+            score_distance = self.robust_score(d_error, d_tol);
+
+            v_rel_measured = (d_curr - d_prev) / dt;
+            v_error = v_rel_now - v_rel_measured;
+            v_tol = max(self.acceleration_rel_velocity_tolerance, 0.75 * self.velocity_tolerance) + ...
+                0.2 * combined_yaw_rate * max(d_curr, 0.5);
+            v_tol = v_tol * tolerance_scale;
+            score_rel_velocity = self.robust_score(v_error, v_tol);
+
+            combined = 0.45 * score_temporal + 0.35 * score_distance + 0.20 * score_rel_velocity;
+            score = self.clamp_unit(combined ^ max(min(self.py_weight_acceleration, 3.0), 0.1));
+        end
+
+        function score = evaluate_heading_python(self, host_state, target_entry, previous_target, previous_host, current_host, default_dt)
+            if isempty(previous_target)
+                score = 1.0;
+                return;
+            end
+
+            target_state = target_entry.state;
+            theta_reported = target_state(3);
+            theta_host = host_state(3);
+
+            delta_x = target_state(1) - previous_target.state(1);
+            delta_y = target_state(2) - previous_target.state(2);
+            movement = hypot(delta_x, delta_y);
+
+            heading_delta_deadband = 0.25 * self.heading_base_tolerance_rad;
+            dt_target = self.local_entry_dt(previous_target, target_entry, default_dt);
+            target_heading_delta = self.wrap_angle(target_state(3) - previous_target.state(3));
+            target_yaw_rate = max(abs(target_heading_delta) - heading_delta_deadband, 0.0) / dt_target;
+            host_yaw_rate = 0.0;
+            if ~isempty(previous_host) && ~isempty(current_host)
+                dt_host = self.local_entry_dt(previous_host, current_host, default_dt);
+                host_heading_delta = self.wrap_angle(current_host.state(3) - previous_host.state(3));
+                host_yaw_rate = max(abs(host_heading_delta) - heading_delta_deadband, 0.0) / dt_host;
+            end
+            turn_context = max(target_yaw_rate, host_yaw_rate);
+            turn_factor = self.clamp_unit(turn_context / 0.8);
+            tolerance_scale = max(1.0, self.active_trust_tolerance_scale);
+
+            heading_tol = (self.heading_base_tolerance_rad + self.heading_turn_tolerance_gain * turn_factor) * tolerance_scale;
+            score_abs = self.robust_score(self.wrap_angle(theta_reported - theta_host), heading_tol);
+
+            motion_heading_min_distance = max(self.heading_min_movement_m, 1.0);
+            if movement >= motion_heading_min_distance
+                theta_from_motion = atan2(delta_y, delta_x);
+                motion_tol = (self.heading_base_tolerance_rad + 0.5 * self.heading_turn_tolerance_gain * turn_factor) * tolerance_scale;
+                score_motion = self.robust_score(self.wrap_angle(theta_reported - theta_from_motion), motion_tol);
+            else
+                score_motion = 1.0;
+            end
+
+            yaw_rate_tol = self.heading_yaw_rate_tolerance * (1.0 + 0.5 * turn_factor) * tolerance_scale;
+            score_path = self.robust_score(target_yaw_rate - host_yaw_rate, yaw_rate_tol);
+
+            w_abs = 0.45 - 0.30 * turn_factor;
+            w_motion = 0.35;
+            w_path = 1.0 - w_abs - w_motion;
+            combined = w_abs * score_abs + w_motion * score_motion + w_path * score_path;
+            score = self.clamp_unit(combined ^ max(min(self.py_weight_heading, 3.0), 0.2));
+        end
+
+        function [v_score, d_score, a_score, h_score, severe_local_pose_mismatch] = evaluate_python_local_scores(self, host_state, target_state, leader_state, target_id, measured_distance, instant_idx, default_dt)
+            host_state = self.normalize_local_state(host_state);
+            target_state = self.normalize_local_state(target_state);
+            self.update_local_host_score_state(host_state, instant_idx);
+
+            [previous_target, has_previous_target] = self.get_local_score_previous_target(target_id);
+            if ~has_previous_target
+                previous_target = [];
+            end
+
+            [distance_current, distance_is_measured] = self.resolve_relative_distance(host_state, target_state, measured_distance);
+            relative_velocity_current = self.resolve_relative_velocity(host_state, target_state, NaN);
+            current_target = self.make_local_score_entry( ...
+                target_state, instant_idx, distance_current, relative_velocity_current, distance_is_measured);
+
+            current_host = self.local_score_current_host_state;
+            previous_host = self.local_score_previous_host_state;
+
+            v_score = self.evaluate_velocity_python(host_state, current_target, leader_state, previous_target, default_dt);
+            [distance_score, ~] = self.evaluate_distance_python(host_state, current_target, previous_target, previous_host, default_dt);
+            [pose_distance_score, severe_local_pose_mismatch] = self.evaluate_local_pose_distance_python(host_state, current_target);
+            d_score = min(distance_score, pose_distance_score);
+            a_score = self.evaluate_acceleration_python(host_state, current_target, previous_target, previous_host, current_host, default_dt);
+            h_score = self.evaluate_heading_python(host_state, current_target, previous_target, previous_host, current_host, default_dt);
+
+            self.store_local_score_target_state(target_id, current_target);
+        end
+
+        %%% Python-style global trust scoring helpers %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        function value = get_config_bool(~, cfg, field_name, default_value)
+            value = default_value;
+            if isempty(cfg)
+                return;
+            end
+
+            has_value = false;
+            raw_value = [];
+            if isstruct(cfg) && isfield(cfg, field_name)
+                raw_value = cfg.(field_name);
+                has_value = true;
+            elseif isobject(cfg) && isprop(cfg, field_name)
+                raw_value = cfg.(field_name);
+                has_value = true;
+            end
+
+            if ~has_value
+                return;
+            end
+
+            if islogical(raw_value)
+                value = raw_value;
+            elseif isnumeric(raw_value)
+                value = raw_value ~= 0;
+            elseif isstring(raw_value) || ischar(raw_value)
+                value = any(strcmpi(string(raw_value), ["true", "1", "yes", "on"]));
+            end
+        end
+
+        function value = get_config_numeric(~, cfg, field_name, default_value)
+            value = default_value;
+            if isempty(cfg)
+                return;
+            end
+
+            has_value = false;
+            raw_value = [];
+            if isstruct(cfg) && isfield(cfg, field_name)
+                raw_value = cfg.(field_name);
+                has_value = true;
+            elseif isobject(cfg) && isprop(cfg, field_name)
+                raw_value = cfg.(field_name);
+                has_value = true;
+            end
+
+            if ~has_value || isempty(raw_value) || ~isnumeric(raw_value) || ~isfinite(raw_value(1))
+                return;
+            end
+
+            value = raw_value(1);
+        end
+
+        function use_python = should_use_python_global_trust(self, host_vehicle)
+            use_python = self.use_python_global_trust;
+            if isprop(host_vehicle, 'scenarios_config')
+                use_python = self.get_config_bool( ...
+                    host_vehicle.scenarios_config, ...
+                    'Use_python_global_trust', ...
+                    use_python);
+            end
+        end
+
+        function gamma = distance_to_gamma_python(self, distance_value, ~)
+            if ~isfinite(distance_value)
+                gamma = 0.0;
+                return;
+            end
+
+            distance_value = max(double(distance_value), 0.0);
+            gamma = exp(-distance_value);
+            gamma = self.clamp_unit(gamma);
+        end
+
+        function state = state_to_vector_python(self, state)
+            if isempty(state)
+                state = [];
+                return;
+            end
+
+            state = double(state(:));
+            if isempty(state)
+                return;
+            end
+
+            if length(state) < 5
+                state = [state; zeros(5 - length(state), 1)];
+            elseif length(state) > 5
+                state = state(1:5);
+            end
+        end
+
+        function valid = is_valid_state_vector(self, state)
+            state = self.state_to_vector_python(state);
+            valid = ~isempty(state) && length(state) >= 5 && all(isfinite(state));
+        end
+
+        function y = compute_relative_measurement_python(self, host_state, target_state, measured_distance, measured_relative_velocity)
+            host_state = self.normalize_local_state(host_state);
+            target_state = self.normalize_local_state(target_state);
+
+            [relative_distance, ~] = self.resolve_relative_distance(host_state, target_state, measured_distance);
+            if ~self.use_relative_velocity_in_relative_trust
+                y = relative_distance;
+                return;
+            end
+
+            relative_velocity = self.resolve_relative_velocity(host_state, target_state, measured_relative_velocity);
+            y = [relative_distance; relative_velocity];
+        end
+
+        function y = compute_relative_from_estimates_python(self, est_host, est_target)
+            est_host = self.state_to_vector_python(est_host);
+            est_target = self.state_to_vector_python(est_target);
+
+            relative_distance = max(norm(est_target(1:2) - est_host(1:2)), 0.1);
+            if ~self.use_relative_velocity_in_relative_trust
+                y = relative_distance;
+                return;
+            end
+
+            relative_velocity = self.estimate_radial_relative_velocity(est_host, est_target);
+            y = [relative_distance; relative_velocity];
+        end
+
+        function values = pad_or_trim_vector(~, values, n, default_value)
+            values = double(values(:));
+            if isempty(values)
+                values = default_value * ones(n, 1);
+                return;
+            end
+
+            if length(values) < n
+                values = [values; values(end) * ones(n - length(values), 1)];
+            elseif length(values) > n
+                values = values(1:n);
+            end
+        end
+
+        function [diff_vec, inv_diag] = prepare_mahalanobis_terms_python(self, x1, x2, yaw_rate)
+            x1 = self.state_to_vector_python(x1);
+            x2 = self.state_to_vector_python(x2);
+            n = min(length(x1), length(x2));
+            x1 = x1(1:n);
+            x2 = x2(1:n);
+
+            diff_vec = x1 - x2;
+            if n >= 3
+                diff_vec(3) = self.wrap_angle(diff_vec(3));
+            end
+
+            diag_values = self.pad_or_trim_vector(self.distributed_trust_covariance_diag, n, 1.0);
+
+            if n >= 3
+                xy_distance = norm(diff_vec(1:min(2, n)));
+                if n >= 4
+                    velocity_diff = abs(diff_vec(4));
+                else
+                    velocity_diff = 0.0;
+                end
+
+                d_scale = max(self.theta_similarity_distance_scale, 1e-3);
+                v_scale = max(self.theta_similarity_velocity_scale, 1e-3);
+                similarity = exp(-((xy_distance / d_scale)^2 + (velocity_diff / v_scale)^2));
+                theta_gain = 1.0 ...
+                    + self.theta_similarity_gain * similarity ...
+                    + self.theta_turn_gain * max(yaw_rate, 0.0);
+                diag_values(3) = max(diag_values(3) * theta_gain, 1e-6);
+            end
+
+            inv_diag = 1.0 ./ max(diag_values, 1e-6);
+        end
+
+        function [total_distance, contributions] = mahalanobis_components_python(self, x1, x2, yaw_rate)
+            [diff_vec, inv_diag] = self.prepare_mahalanobis_terms_python(x1, x2, yaw_rate);
+            n = length(diff_vec);
+            contributions = zeros(n, 1);
+
+            active_indices = self.distributed_trust_state_indices;
+            if isempty(active_indices)
+                active_indices = 1:n;
+            end
+
+            for idx = active_indices
+                idx = round(idx);
+                if idx >= 1 && idx <= n
+                    contributions(idx) = (diff_vec(idx)^2) * inv_diag(idx);
+                end
+            end
+
+            if n >= 5
+                accel_weight = max(0.0, min(1.0, self.distributed_trust_accel_weight));
+                contributions(5) = contributions(5) * accel_weight;
+            end
+
+            caps = self.pad_or_trim_vector(self.distributed_trust_contribution_caps, n, Inf);
+            for idx = 1:n
+                if isfinite(caps(idx)) && caps(idx) >= 0.0
+                    contributions(idx) = min(contributions(idx), caps(idx));
+                end
+            end
+
+            if n >= 3 && self.theta_contribution_cap > 0.0
+                contributions(3) = min(contributions(3), self.theta_contribution_cap);
+            end
+
+            total_distance = sum(contributions);
+        end
+
+        function distance_value = relative_mahalanobis_python(self, y_measured, y_estimated, yaw_rate, distance_turn_gain, velocity_turn_gain)
+            y_measured = double(y_measured(:));
+            y_estimated = double(y_estimated(:));
+            n = min(length(y_measured), length(y_estimated));
+            if n <= 0
+                distance_value = 0.0;
+                return;
+            end
+
+            y_measured = y_measured(1:n);
+            y_estimated = y_estimated(1:n);
+
+            tau2_diag = self.pad_or_trim_vector(self.distributed_local_tau2_diag, n, 1.0);
+            yaw_rate = max(yaw_rate, 0.0);
+            if n >= 1 && distance_turn_gain > 0.0 && yaw_rate > 0.0
+                tau2_diag(1) = tau2_diag(1) * (1.0 + distance_turn_gain * yaw_rate);
+            end
+            if n >= 2 && velocity_turn_gain > 0.0 && yaw_rate > 0.0
+                tau2_diag(2) = tau2_diag(2) * (1.0 + velocity_turn_gain * yaw_rate);
+            end
+
+            residual = y_estimated - y_measured;
+            distance_value = sum((residual .^ 2) ./ max(tau2_diag, 1e-9));
+        end
+
+        function penalty = compute_gamma_self_penalty(self, gamma_self, threshold)
+            gamma_self = self.clamp_unit(gamma_self);
+            threshold = max(threshold, 1e-6);
+            floor_value = self.clamp_unit(self.gamma_self_penalty_floor);
+            exponent_value = max(self.gamma_self_penalty_exponent, 1e-6);
+
+            if gamma_self >= threshold
+                penalty = 1.0;
+                return;
+            end
+
+            ratio = gamma_self / threshold;
+            penalty = floor_value + (1.0 - floor_value) * (ratio ^ exponent_value);
+            penalty = max(floor_value, min(1.0, penalty));
+        end
+
+        function turn_context = compute_turn_context_python(self, host_vehicle)
+            turn_context = 0.0;
+            if isempty(self.local_score_previous_host_state) || isempty(self.local_score_current_host_state)
+                return;
+            end
+
+            previous_host = self.local_score_previous_host_state;
+            current_host = self.local_score_current_host_state;
+            if ~isfield(previous_host, 'state') || ~isfield(current_host, 'state')
+                return;
+            end
+
+            if isfield(previous_host, 'instant_idx') && isfield(current_host, 'instant_idx') && isprop(host_vehicle, 'dt')
+                dt = (current_host.instant_idx - previous_host.instant_idx) * host_vehicle.dt;
+            elseif isprop(host_vehicle, 'dt')
+                dt = host_vehicle.dt;
+            else
+                dt = 0.01;
+            end
+            dt = max(dt, 0.01);
+
+            theta_delta = self.wrap_angle(current_host.state(3) - previous_host.state(3));
+            turn_context = abs(theta_delta) / dt;
+        end
+
+        function [global_trust_sample, gamma_cross, gamma_local, gamma_local_our_self, D_pos, D_vel, D_acc, D_theta, D_total] = ...
+                compute_global_trust_sample_python(self, host_vehicle, target_vehicle, target_state, host_state, measured_distance, target_global_state)
+            fallback = self.clamp_unit(self.distributed_trust_fallback);
+            gamma_cross = fallback;
+            gamma_local = fallback;
+            gamma_local_our_self = fallback;
+            global_trust_sample = fallback * fallback;
+            D_pos = NaN;
+            D_vel = NaN;
+            D_acc = NaN;
+            D_theta = NaN;
+            D_total = NaN;
+
+            host_id = host_vehicle.vehicle_number;
+            target_id = target_vehicle.vehicle_number;
+
+            if nargin < 7 || isempty(target_global_state)
+                target_global_state = host_vehicle.center_communication.get_global_state(target_id, host_id);
+            end
+
+            if isempty(target_global_state) || any(~isfinite(target_global_state(:)))
+                gamma_cross = 0.0;
+                gamma_local = 0.0;
+                gamma_local_our_self = 0.0;
+                global_trust_sample = 0.0;
+                return;
+            end
+
+            host_fleet_estimates = host_vehicle.observer.est_global_state_current;
+            if isempty(host_fleet_estimates) || any(~isfinite(host_fleet_estimates(:)))
+                return;
+            end
+
+            host_state = self.normalize_local_state(host_state);
+            target_state = self.normalize_local_state(target_state);
+            y_local = self.compute_relative_measurement_python(host_state, target_state, measured_distance, NaN);
+            local_relative_dof = max(1, length(y_local));
+            turn_context = self.compute_turn_context_python(host_vehicle);
+
+            if target_id <= size(host_fleet_estimates, 2)
+                host_target_estimate = host_fleet_estimates(:, target_id);
+                if self.is_valid_state_vector(host_target_estimate)
+                    y_self_est = self.compute_relative_measurement_python(host_state, host_target_estimate, NaN, NaN);
+                    d_self = self.relative_mahalanobis_python( ...
+                        y_local, y_self_est, turn_context, ...
+                        self.distributed_self_turn_distance_gain, ...
+                        self.distributed_self_turn_velocity_gain);
+                    gamma_local_our_self = self.distance_to_gamma_python(d_self, local_relative_dof);
+                end
+            end
+
+            d_host_total = 0.0;
+            n_host_valid = 0;
+            component_sum = zeros(5, 1);
+            num_vehicles = min(size(host_fleet_estimates, 2), size(target_global_state, 2));
+            for vehicle_idx = 1:num_vehicles
+                if vehicle_idx == target_id
+                    continue;
+                end
+
+                host_vec = self.state_to_vector_python(host_fleet_estimates(:, vehicle_idx));
+                target_vec = self.state_to_vector_python(target_global_state(:, vehicle_idx));
+                if isempty(host_vec) || isempty(target_vec) || any(~isfinite(host_vec)) || any(~isfinite(target_vec))
+                    continue;
+                end
+                if all(abs(host_vec) < 1e-12)
+                    continue;
+                end
+
+                [vehicle_distance, contributions] = self.mahalanobis_components_python(host_vec, target_vec, turn_context);
+                d_host_total = d_host_total + vehicle_distance;
+                n_host_valid = n_host_valid + 1;
+                component_sum(1:length(contributions)) = component_sum(1:length(contributions)) + contributions;
+            end
+
+            if n_host_valid > 0
+                D_total = d_host_total / n_host_valid;
+                component_mean = component_sum / n_host_valid;
+                D_pos = sum(component_mean(1:2));
+                D_theta = component_mean(3);
+                D_vel = component_mean(4);
+                D_acc = component_mean(5);
+                gamma_cross = self.distance_to_gamma_python(D_total, 5);
+            end
+
+            if host_id <= size(target_global_state, 2) && target_id <= size(target_global_state, 2)
+                est_host = target_global_state(:, host_id);
+                est_target = target_global_state(:, target_id);
+                if self.is_valid_state_vector(est_host) && self.is_valid_state_vector(est_target)
+                    y_target_relative = self.compute_relative_from_estimates_python(est_host, est_target);
+                    d_local = self.relative_mahalanobis_python(y_local, y_target_relative, 0.0, 0.0, 0.0);
+                    gamma_local = self.distance_to_gamma_python(d_local, local_relative_dof);
+                end
+            end
+
+            global_trust_sample = gamma_cross * gamma_local;
+            if gamma_local_our_self < self.self_trust_threshold
+                global_trust_sample = global_trust_sample * self.compute_gamma_self_penalty( ...
+                    gamma_local_our_self, self.self_trust_threshold);
+            end
+
+            global_trust_sample = self.clamp_unit(global_trust_sample);
+        end
+
         %%% Score Filtering System %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
         function [filtered_v_score, filtered_d_score, filtered_a_score, filtered_beacon_score, filtered_h_score] = filter_all_scores(self, v_score, d_score, a_score, beacon_score, h_score)
             % filter_all_scores - Apply configurable filters to all trust scores
@@ -955,15 +1878,61 @@ classdef TriPTrustModel < handle
             end
         end
 
+        function trust_sample = calculate_trust_sample_python(self, v_score, d_score, a_score, beacon_score, h_score, quality_factor)
+            if nargin < 7
+                quality_factor = beacon_score;
+            end
+
+            scores = [v_score, d_score, a_score, h_score, beacon_score, quality_factor];
+            clamped_scores = zeros(size(scores));
+            for idx = 1:length(scores)
+                clamped_scores(idx) = self.clamp_unit(scores(idx));
+            end
+
+            fusion_mode = char(lower(strtrim(string(self.local_trust_fusion_mode))));
+            switch fusion_mode
+                case {'product', 'direct_product', 'multiply'}
+                    trust_sample = prod(clamped_scores);
+
+                case {'equal', 'equal_geometric', 'equal_geomean'}
+                    safe_scores = max(clamped_scores, 0.01);
+                    trust_sample = prod(safe_scores) ^ (1.0 / length(safe_scores));
+
+                otherwise
+                    weights = [ ...
+                        self.local_weight_velocity, ...
+                        self.local_weight_distance, ...
+                        self.local_weight_acceleration, ...
+                        self.local_weight_heading, ...
+                        self.local_weight_beacon, ...
+                        self.local_weight_quality];
+
+                    weighted_product = 1.0;
+                    total_weight = 0.0;
+                    for idx = 1:length(clamped_scores)
+                        safe_score = max(clamped_scores(idx), 0.01);
+                        weighted_product = weighted_product * (safe_score ^ weights(idx));
+                        total_weight = total_weight + weights(idx);
+                    end
+
+                    if total_weight > 0
+                        trust_sample = weighted_product ^ (1.0 / total_weight);
+                    else
+                        trust_sample = 0.5;
+                    end
+            end
+            trust_sample = self.clamp_unit(trust_sample);
+        end
+
         function trust_sample = calculate_trust_sample(self, v_score, d_score, a_score, beacon_score,h_score,is_nearby)
-            % Calculate trust sample based on the provided scores and beacon status
-            trust_sample =  (v_score) * (d_score) * (a_score) ; 
+            % Local beacon quality has no separate MATLAB channel, so it is
+            % reused for both beacon and quality terms.
+            trust_sample = self.calculate_trust_sample_python(v_score, d_score, a_score, beacon_score, h_score, beacon_score);
         end
         function trust_sample = calculate_trust_sample_weighted_based(self, v_score, d_score, a_score, beacon_score,h_score,is_nearby)
-            % Calculate trust sample based on the provided scores and beacon status
-            trust_sample =  self.w_lt_v*(v_score) + self.w_lt_d*(d_score) + self.w_lt_a*(a_score) ;
-
-            
+            % Kept for configuration compatibility; the live local trust formula
+            % is selected by local_trust_fusion_mode.
+            trust_sample = self.calculate_trust_sample_python(v_score, d_score, a_score, beacon_score, h_score, beacon_score);
         end
         
         function trust_sample = calculate_trust_sample_with_filtering(self, v_score, d_score, a_score, beacon_score, h_score, is_nearby)
@@ -985,24 +1954,9 @@ classdef TriPTrustModel < handle
             [filtered_v_score, filtered_d_score, filtered_a_score, filtered_beacon_score, filtered_h_score] = ...
                 self.filter_all_scores(v_score, d_score, a_score, beacon_score, h_score);
             
-            % Calculate trust sample using filtered scores
-            if is_nearby
-                % For nearby vehicles, use all score types with nearby weights
-                trust_sample = filtered_beacon_score * ...
-                              (filtered_v_score^self.wv_nearby) * ...
-                              (filtered_d_score^self.wd_nearby) * ...
-                              (filtered_a_score^self.wa_nearby) * ...
-                              (filtered_h_score^self.wh_nearby);
-            else
-                % For distant vehicles, simplified calculation
-                trust_sample = filtered_beacon_score * ...
-                              (filtered_v_score^self.wv) * ...
-                              (filtered_d_score^self.wd) * ...
-                              (filtered_a_score^self.wa);
-            end
-            
-            % Ensure trust sample is within valid bounds
-            trust_sample = max(0, min(1, trust_sample));
+            trust_sample = self.calculate_trust_sample_python( ...
+                filtered_v_score, filtered_d_score, filtered_a_score, ...
+                filtered_beacon_score, filtered_h_score, filtered_beacon_score);
         end
         
         function trust_sample = calculate_trust_sample_filtered_weighted(self, v_score, d_score, a_score, beacon_score, h_score, ~)
@@ -1024,15 +1978,9 @@ classdef TriPTrustModel < handle
             [filtered_v_score, filtered_d_score, filtered_a_score, filtered_beacon_score, filtered_h_score] = ...
                 self.filter_all_scores(v_score, d_score, a_score, beacon_score, h_score);
             
-            % Calculate weighted trust sample using filtered scores
-            trust_sample = filtered_beacon_score * ...
-                          (self.w_lt_v * filtered_v_score + ...
-                           self.w_lt_d * filtered_d_score + ...
-                           self.w_lt_a * filtered_a_score + ...
-                           (1 - self.w_lt_v - self.w_lt_d - self.w_lt_a) * filtered_h_score);
-            
-            % Ensure trust sample is within valid bounds
-            trust_sample = max(0, min(1, trust_sample));
+            trust_sample = self.calculate_trust_sample_python( ...
+                filtered_v_score, filtered_d_score, filtered_a_score, ...
+                filtered_beacon_score, filtered_h_score, filtered_beacon_score);
         end
         
         %%% Trust decay implementation (Separate Local and Global) %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
@@ -1128,14 +2076,19 @@ classdef TriPTrustModel < handle
         end
         
         %%% Temporal consistency evaluation %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
-        function temporal_score = evaluate_temporal_consistency(self, target_id, current_state, dt)
+        function temporal_score = evaluate_temporal_consistency(self, target_id, current_state, dt, tolerance_scale)
             % Evaluate temporal consistency of reported state with previous state
             % Inputs:
             %   target_id: ID of target vehicle
             %   current_state: [pos_x, pos_y, heading, velocity, acceleration]
             %   dt: time step
+            %   tolerance_scale: warm-up multiplier for transient tolerance
             % Output:
             %   temporal_score: consistency score (0 to 1)
+            if nargin < 5
+                tolerance_scale = 1.0;
+            end
+            tolerance_scale = max(1.0, tolerance_scale);
             
             % Check if we have previous state for this vehicle
             if ~isKey(self.previous_states_map, target_id)
@@ -1168,8 +2121,8 @@ classdef TriPTrustModel < handle
             vel_error = abs(current_velocity - expected_velocity);
             
             % Normalize errors and compute score
-            pos_tolerance = 2.0; % meters
-            vel_tolerance = 1.0; % m/s
+            pos_tolerance = 2.0 * tolerance_scale; % meters
+            vel_tolerance = 1.0 * tolerance_scale; % m/s
             
             pos_score = max(1 - pos_error / pos_tolerance, 0);
             vel_score = max(1 - vel_error / vel_tolerance, 0);
@@ -1248,9 +2201,26 @@ classdef TriPTrustModel < handle
 
             host_id = host_vehicle.vehicle_number;
             target_id = target_vehicle.vehicle_number;
-            
+            trust_warmup_time = max(0, self.get_config_numeric( ...
+                host_vehicle.scenarios_config, 'trust_warmup_time', 0));
+            trust_warmup_tolerance_scale = max(1.0, self.get_config_numeric( ...
+                host_vehicle.scenarios_config, 'trust_warmup_tolerance_scale', 1.0));
+            local_flag_threshold = self.clamp_unit(self.get_config_numeric( ...
+                host_vehicle.scenarios_config, 'local_trust_flag_threshold', 0.5));
+            local_flag_required_samples = max(1, round(self.get_config_numeric( ...
+                host_vehicle.scenarios_config, 'local_trust_flag_required_samples', 1)));
+            is_trust_warmup = instant_idx * host_vehicle.dt < trust_warmup_time;
+            if is_trust_warmup
+                self.active_trust_tolerance_scale = trust_warmup_tolerance_scale;
+            else
+                self.active_trust_tolerance_scale = 1.0;
+            end
+            if isprop(host_vehicle.scenarios_config, 'local_trust_fusion_mode')
+                self.local_trust_fusion_mode = string(host_vehicle.scenarios_config.local_trust_fusion_mode);
+            end
+             
 
-            
+             
             % Reported data for trust evaluation
 
             % half_lenght_vehicle = target_vehicle.param.l_r; % distance between vehicle's c.g. and rear axle
@@ -1272,8 +2242,10 @@ classdef TriPTrustModel < handle
 
             % Measurement part host (radar, lidar  )
             host_pos_X = host_vehicle.observer.est_local_state_current(1);
+            host_pos_Y = host_vehicle.observer.est_local_state_current(2);
             host_velocity = host_vehicle.observer.est_local_state_current(4);
             host_acceleration = host_vehicle.observer.est_local_state_current(5);
+            host_state_for_local_trust = host_vehicle.observer.est_local_state_current;
 
             %%
 
@@ -1324,6 +2296,12 @@ classdef TriPTrustModel < handle
                 end
             end
 
+            if is_nearby || host_vehicle.scenarios_config.is_know_data_not_nearby == true
+                local_measured_distance = hypot(target_vehicle.state(1) - host_pos_X, target_vehicle.state(2) - host_pos_Y);
+            else
+                local_measured_distance = NaN;
+            end
+
 
 
 
@@ -1338,9 +2316,11 @@ classdef TriPTrustModel < handle
                 d_score = 0;
                 a_score = 0;
                 h_score = 0;
+                quality_factor = 0;
                 local_trust_sample = 0;
             else
                 beacon_score_local = 1;  % Local channel beacon received
+                quality_factor = beacon_score_local; % Match Python q_factor with local beacon quality in MATLAB
                 % target_input = host_vehicle.center_communication.get_input(target_id);
 
                 target_pos_X = target_state(1);
@@ -1364,29 +2344,16 @@ classdef TriPTrustModel < handle
 
 
 
-                % Trust evaluation
+                % Python-style local component trust evaluation
+                [v_score, d_score, a_score, h_score, severe_local_pose_mismatch] = ...
+                    self.evaluate_python_local_scores( ...
+                    host_state_for_local_trust, target_state, leader_state, ...
+                    target_id, local_measured_distance, instant_idx, host_vehicle.dt);
 
-                v_score = self.evaluate_velocity( host_id , target_id , target_reported_velocity, host_velocity  , leader_velocity, leader_acceleration, leader_beacon_interval,is_nearby,0.1);
-                % Evaluate distance
-                d_score = self.evaluate_distance(target_reported_distance, host_distance_measurement,is_nearby);
-                % Evaluate acceleration
-                a_score_raw = self.evaluate_acceleration(host_vehicle, host_id, target_id, target_reported_acceleration, host_acceleration, [host_distance_measurement, self.last_d], host_vehicle.dt, is_nearby);
-                
-                % Apply real-time filtering to acceleration score (independent of master filtering switch)
-                if self.enable_realtime_acceleration_filter
-                    a_score = self.apply_single_score_filter(a_score_raw, 'acceleration');
-                else
-                    a_score = a_score_raw; % No filtering
-                end
                 % if instant_idx - self.last_time_d == self.Period_a_score_distane
                 %     self.last_time_d = instant_idx;
                 % end
                 self.last_d = host_distance_measurement;
-
-
-                % Evaluate heading
-                target_reported_heading = target_state(3); % Reported heading (radians)
-                h_score = self.evaluate_heading( target_pos_X, target_pos_Y, target_reported_heading, instant_idx);
 
 
 
@@ -1410,7 +2377,9 @@ classdef TriPTrustModel < handle
                 
                 if host_vehicle.scenarios_config.Use_temporal_consistency_check
                     % Temporal consistency evaluation
-                    temporal_score = self.evaluate_temporal_consistency(target_id, target_state, host_vehicle.dt);
+                    temporal_score = self.evaluate_temporal_consistency( ...
+                        target_id, target_state, host_vehicle.dt, ...
+                        self.active_trust_tolerance_scale);
                     self.temporal_score_log = [self.temporal_score_log, temporal_score];
                     
                     % Apply temporal consistency penalty
@@ -1423,14 +2392,15 @@ classdef TriPTrustModel < handle
                     self.temporal_score_log = [self.temporal_score_log, 1.0];
                 end
 
-                % Compute trust sample for local estimation using local beacon score
-                if (host_vehicle.scenarios_config.Use_weight_local_trust == true)
-                    local_trust_sample = self.calculate_trust_sample_weighted_based(v_score, d_score, a_score, beacon_score_local , h_score , is_nearby);
-                else
-                    local_trust_sample = self.calculate_trust_sample(v_score, d_score, a_score, beacon_score_local , h_score , is_nearby);
-                end 
+                % Compute Python-style local trust sample using local beacon as quality.
+                local_trust_sample = self.calculate_trust_sample_python( ...
+                    v_score, d_score, a_score, beacon_score_local, h_score, quality_factor);
+                if severe_local_pose_mismatch
+                    local_trust_sample = min(local_trust_sample, d_score);
+                end
                
             end
+            local_trust_sample_raw = local_trust_sample;
 
             % Evaluate self-consistency of distributed estimation first - how trustworthy is our own global state?
             gamma_local_our_self = self.compute_self_consistency_factor(host_vehicle, neighbors);
@@ -1449,6 +2419,12 @@ classdef TriPTrustModel < handle
 
 
             %% ---------- Global channel evaluation
+            D_pos = NaN;
+            D_vel = NaN;
+            D_acc = NaN;
+            D_theta = NaN;
+            D_total = NaN;
+
             target_global_state = target_vehicle.center_communication.get_global_state(target_id,host_id);
             if any(isnan(target_global_state(:)))
                 % Global channel beacon not received
@@ -1459,8 +2435,16 @@ classdef TriPTrustModel < handle
             else
                 % Global channel beacon received
                 beacon_score_global = 1;
-                % Compute trust factors using raw calculation
-                [gamma_cross, D_pos, D_vel, D_acc] = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
+                if self.should_use_python_global_trust(host_vehicle)
+                    [global_trust_sample, gamma_cross, gamma_local, gamma_local_our_self, ...
+                        D_pos, D_vel, D_acc, D_theta, D_total] = ...
+                        self.compute_global_trust_sample_python( ...
+                        host_vehicle, target_vehicle, target_state, ...
+                        host_state_for_local_trust, local_measured_distance, ...
+                        target_global_state);
+                else
+                % Compute trust factors using the legacy MATLAB calculation
+                [gamma_cross, D_pos, D_vel, D_acc, D_theta, D_total] = self.compute_cross_host_target_factor(host_id,host_vehicle, target_id,target_vehicle);
                 gamma_local = self.compute_local_consistency_factor(host_vehicle, target_vehicle, neighbors);
                 
                 if is_in_prediction_mode
@@ -1496,6 +2480,7 @@ classdef TriPTrustModel < handle
                         gamma_cross = gamma_cross * gamma_local_our_self;
                     end
                 end
+                end
             end
 
 
@@ -1503,7 +2488,12 @@ classdef TriPTrustModel < handle
                 beta = self.monitor_sudden(gamma_cross , D_pos,D_vel,D_acc);
             else
                 beta = 1; % Default value
+                self.D_pos_log = [self.D_pos_log, D_pos];
+                self.D_vel_log = [self.D_vel_log, D_vel];
+                self.D_acc_log = [self.D_acc_log, D_acc];
             end
+            self.D_theta_log = [self.D_theta_log, D_theta];
+            self.D_total_log = [self.D_total_log, D_total];
 
             % %% Apply self-consistency factor before trust calculation
             % % If our own global state is not trustworthy, reduce confidence in global estimates
@@ -1537,48 +2527,56 @@ classdef TriPTrustModel < handle
             else % "Dual"
                 % Apply trust decay to local trust
                 local_trust_sample_decayed = self.apply_trust_decay(target_id, local_trust_sample, beacon_received_local, 'local');
-                self.update_rating_vector(local_trust_sample_decayed , "local");
-                local_trust_sample = self.calculate_trust_score(self.rating_vector);
                 
                 % Apply trust decay to global trust
                 global_trust_sample_decayed = self.apply_trust_decay(target_id, global_trust_sample, beacon_received_global, 'global');
-                self.update_rating_vector(global_trust_sample_decayed , "global");
-                global_trust_sample = self.calculate_trust_score(self.rating_vector_global);
 
                 % Log decayed trust values
                 self.local_trust_decayed_log = [self.local_trust_decayed_log, local_trust_sample_decayed];
                 self.global_trust_decayed_log = [self.global_trust_decayed_log, global_trust_sample_decayed];
 
+                self.update_rating_vector(local_trust_sample_decayed , "local");
+                local_trust_sample = self.calculate_trust_score(self.rating_vector);
+
+                self.update_rating_vector(global_trust_sample_decayed , "global");
+                global_trust_sample = self.calculate_trust_score(self.rating_vector_global);
+
                 final_score = local_trust_sample * global_trust_sample;
             end
-
             final_score = final_score * beta;
 
 
             
             % Only trust attack detection if our own state is trustworthy
-            if (gamma_local_our_self > 0.6)
-                if (gamma_local > 0.5 && gamma_cross < 0.5)
-                    self.flag_taget_attk = true;
+            if ~is_trust_warmup
+                if (gamma_local_our_self > 0.6)
+                    if (gamma_local > 0.5 && gamma_cross < 0.5)
+                        self.flag_taget_attk = true;
+                    end
+                    if (gamma_local < 0.5 && gamma_cross > 0.5)
+                        self.flag_local_est_check = true;
+                    end
+                else
+                    % If our own global state is not trustworthy, flag it
+                    self.flag_glob_est_check = true; % Our global estimate needs checking
                 end
-                if (gamma_local < 0.5 && gamma_cross > 0.5)
-                    self.flag_glob_est_check = true;
-                end
-            else
-                % If our own global state is not trustworthy, flag it
-                self.flag_glob_est_check = true; % Our global estimate needs checking
-            end
 
-            %% importance
-            if (local_trust_sample < 0.5 )
-                self.flag_local_est_check = true;
+                %% importance
+                current_log_idx = length(self.local_trust_decayed_log);
+                first_flag_idx = max(1, floor(trust_warmup_time / host_vehicle.dt) + 1);
+                recent_start_idx = max([1, current_log_idx - local_flag_required_samples + 1, first_flag_idx]);
+                recent_local_trust = self.local_trust_decayed_log(recent_start_idx:current_log_idx);
+                if numel(recent_local_trust) >= local_flag_required_samples && ...
+                        all(recent_local_trust < local_flag_threshold)
+                    self.flag_local_est_check = true;
+                end
             end
 
 
             % final_score = trust_sample_ext ;
 
             % Log data for analysis
-            self.trust_sample_log = [self.trust_sample_log, local_trust_sample];
+            self.trust_sample_log = [self.trust_sample_log, local_trust_sample_raw];
             self.gamma_cross_log = [self.gamma_cross_log, gamma_cross];
             self.gamma_local_log = [self.gamma_local_log, gamma_local];
             self.gamma_local_our_self_log = [self.gamma_local_our_self_log, gamma_local_our_self];
@@ -1687,7 +2685,7 @@ classdef TriPTrustModel < handle
 
 
         % Only compare with the directed neighbor (not all neighbors) , or more specific is the target vehicle
-        function [gamma_cross, D_pos, D_vel, D_acc] = compute_cross_host_target_factor(self, host_id,host_vehicle, target_id,target_vehicle)
+        function [gamma_cross, D_pos, D_vel, D_acc, D_theta, D_total] = compute_cross_host_target_factor(self, host_id,host_vehicle, target_id,target_vehicle)
             % Inputs:
             %   host_vehicle: The vehicle evaluating trust
             %   target_vehicle: The neighbor whose global estimate is being evaluated
@@ -1707,6 +2705,7 @@ classdef TriPTrustModel < handle
             D_pos = 0;
             D_vel = 0;
             D_acc = 0;
+            D_theta = 0;
             num_vehicles = size(target_global_estimate,2);
             for j = 1:num_vehicles
 
@@ -1722,6 +2721,10 @@ classdef TriPTrustModel < handle
                 acc_diff = target_global_estimate(5, j) - host_global_estimate(5, j);
                 D_acc = D_acc + acc_diff' * inv(self.sigma2_matrix_gamma_cross(5,5)) * acc_diff;
 
+                % Heading difference
+                theta_diff = target_global_estimate(3, j) - host_global_estimate(3, j);
+                D_theta = D_theta + theta_diff' * inv(self.sigma2_matrix_gamma_cross(3,3)) * theta_diff;
+
 
                 % that is in the paper
                 x_diff = target_global_estimate(:, j) - host_global_estimate(:, j);
@@ -1729,6 +2732,7 @@ classdef TriPTrustModel < handle
             end
 
             % Compute trust factor
+            D_total = D;
             gamma_cross = exp(-D);
         end
 
@@ -2264,22 +3268,39 @@ classdef TriPTrustModel < handle
         end
 
 
-        function plot_trust_log(self,nb_host_car , nb_target_car)
-            figure("Name", num2str(nb_host_car) +  " Trust for " + num2str(nb_target_car), "NumberTitle", "off");
+        function plot_trust_log(self,nb_host_car , nb_target_car, dt_config)
+            if nargin < 4
+                dt_config = 0.01; % Default dt from Config.m
+            end
 
-            % Create time vector for plotting
-            num_time_steps = length(self.gamma_cross_log);
-            dt_config = 0.01; % Default dt from Config.m
-            time_vector = 0:dt_config:(num_time_steps-1)*dt_config;
+            [time_vector, local_most_impacted, local_impact_idx, ...
+                global_most_impacted, global_impact_idx, local_trust, ...
+                global_trust, local_component_names, global_component_names] = ...
+                self.get_most_impacted_score_traces(dt_config);
 
-            % hold on;
-            global_trust = self.gamma_local_log.*self.gamma_cross_log;
-            subplot(3,1,1);
+            if isempty(time_vector)
+                warning('No trust logs available for %d -> %d.', nb_host_car, nb_target_car);
+                return;
+            end
 
-            plot(time_vector, self.gamma_cross_log, 'DisplayName', 'Gamma Cross', 'LineWidth', 1);
+            num_time_steps = length(time_vector);
+            gamma_cross = self.plot_log_row(self.gamma_cross_log, num_time_steps);
+            gamma_local = self.plot_log_row(self.gamma_local_log, num_time_steps);
+            gamma_self = self.plot_log_row(self.gamma_local_our_self_log, num_time_steps);
+            v_score = self.plot_log_row(self.v_score_log, num_time_steps);
+            d_score = self.plot_log_row(self.d_score_log, num_time_steps);
+            a_score = self.plot_log_row(self.a_score_log, num_time_steps);
+            h_score = self.plot_log_row(self.h_score_log, num_time_steps);
+            final_score = self.plot_log_row(self.final_score_log, num_time_steps);
+
+            figure("Name", num2str(nb_host_car) +  " Trust for " + num2str(nb_target_car), ...
+                "NumberTitle", "off", "Position", [120, 60, 1250, 950]);
+
+            subplot(5,1,1);
+            plot(time_vector, gamma_cross, 'DisplayName', 'Gamma Cross', 'LineWidth', 1);
             hold on;
-            plot(time_vector, self.gamma_local_log, 'DisplayName', 'Gamma Local','LineWidth', 1);
-            plot(time_vector, self.gamma_local_our_self_log, 'DisplayName', 'Gamma Self','LineWidth', 1, 'LineStyle', '--');
+            plot(time_vector, gamma_local, 'DisplayName', 'Gamma Local','LineWidth', 1);
+            plot(time_vector, gamma_self, 'DisplayName', 'Gamma Self','LineWidth', 1, 'LineStyle', '--');
             plot(time_vector, global_trust, 'DisplayName', 'Global Trust','LineWidth', 1.5);
             grid on;
             legend show;
@@ -2288,19 +3309,29 @@ classdef TriPTrustModel < handle
             % plot(time_vector, self.gamma_expected_log, 'DisplayName', 'Gamma expect', 'LineWidth', 1);
 
 
-            subplot(3,1,2);
-            plot(time_vector, self.a_score_log, 'DisplayName', 'A Score', 'LineWidth', 1);
+            subplot(5,1,2);
+            plot(time_vector, a_score, 'DisplayName', 'A Score', 'LineWidth', 1);
             hold on;
-            plot(time_vector, self.v_score_log, 'DisplayName', 'V Score', 'LineWidth', 1);
-            plot(time_vector, self.d_score_log, 'DisplayName', 'D Score', 'LineWidth', 1);
-            plot(time_vector, self.trust_sample_log, 'DisplayName', 'Local Trust', 'LineWidth', 1.5);
+            plot(time_vector, v_score, 'DisplayName', 'V Score', 'LineWidth', 1);
+            plot(time_vector, d_score, 'DisplayName', 'D Score', 'LineWidth', 1);
+            plot(time_vector, h_score, 'DisplayName', 'H Score', 'LineWidth', 1);
+            plot(time_vector, local_trust, 'DisplayName', 'Local Trust', 'LineWidth', 1.5);
             grid on;
 
             legend show;
 
+            subplot(5,1,3);
+            self.plot_most_impacted_subplot(time_vector, local_trust, local_most_impacted, ...
+                local_impact_idx, local_component_names, 'Local Trust', ...
+                'Most impacted local trust score');
 
-            subplot(3,1,3);
-            plot(time_vector, self.final_score_log, 'DisplayName', 'Final Score' , 'LineWidth', 1.5);
+            subplot(5,1,4);
+            self.plot_most_impacted_subplot(time_vector, global_trust, global_most_impacted, ...
+                global_impact_idx, global_component_names, 'Global Trust', ...
+                'Most impacted global trust score');
+
+            subplot(5,1,5);
+            plot(time_vector, final_score, 'DisplayName', 'Final Score' , 'LineWidth', 1.5);
 
             % plot(time_vector, self.beacon_score_log, 'DisplayName', 'Beacon Score');
 
@@ -2311,6 +3342,138 @@ classdef TriPTrustModel < handle
             grid on;
 
             hold off;
+        end
+
+        function [time_vector, local_most_impacted, local_impact_idx, ...
+                global_most_impacted, global_impact_idx, local_trust, ...
+                global_trust, local_component_names, global_component_names] = ...
+                get_most_impacted_score_traces(self, dt_config)
+            if nargin < 2
+                dt_config = 0.01;
+            end
+
+            local_component_names = {'Velocity', 'Distance', 'Acceleration', 'Heading', 'Local Beacon'};
+            global_component_names = {'Gamma Cross', 'Gamma Local', 'Gamma Self', 'Global Beacon'};
+            fusion_mode = char(lower(strtrim(string(self.local_trust_fusion_mode))));
+            if any(strcmp(fusion_mode, {'product', 'direct_product', 'multiply', 'equal', 'equal_geometric', 'equal_geomean'}))
+                local_component_weights = [1, 1, 1, 1, 2];
+            else
+                local_component_weights = [ ...
+                    self.local_weight_velocity, ...
+                    self.local_weight_distance, ...
+                    self.local_weight_acceleration, ...
+                    self.local_weight_heading, ...
+                    self.local_weight_beacon + self.local_weight_quality];
+            end
+            global_component_weights = ones(1, numel(global_component_names));
+
+            num_time_steps = max([ ...
+                length(self.v_score_log), ...
+                length(self.d_score_log), ...
+                length(self.a_score_log), ...
+                length(self.h_score_log), ...
+                length(self.beacon_score_local_log), ...
+                length(self.gamma_cross_log), ...
+                length(self.gamma_local_log), ...
+                length(self.gamma_local_our_self_log), ...
+                length(self.beacon_score_global_log), ...
+                length(self.trust_sample_log), ...
+                length(self.final_score_log)]);
+
+            if num_time_steps == 0
+                time_vector = [];
+                local_most_impacted = [];
+                local_impact_idx = [];
+                global_most_impacted = [];
+                global_impact_idx = [];
+                local_trust = [];
+                global_trust = [];
+                return;
+            end
+
+            time_vector = (0:(num_time_steps - 1)) * dt_config;
+            local_trust = self.plot_log_row(self.trust_sample_log, num_time_steps);
+
+            gamma_cross = self.plot_log_row(self.gamma_cross_log, num_time_steps);
+            gamma_local = self.plot_log_row(self.gamma_local_log, num_time_steps);
+            gamma_self = self.plot_log_row(self.gamma_local_our_self_log, num_time_steps);
+            global_trust = gamma_cross .* gamma_local;
+
+            local_components = [
+                self.plot_log_row(self.v_score_log, num_time_steps);
+                self.plot_log_row(self.d_score_log, num_time_steps);
+                self.plot_log_row(self.a_score_log, num_time_steps);
+                self.plot_log_row(self.h_score_log, num_time_steps);
+                self.plot_log_row(self.beacon_score_local_log, num_time_steps)];
+
+            global_components = [
+                gamma_cross;
+                gamma_local;
+                gamma_self;
+                self.plot_log_row(self.beacon_score_global_log, num_time_steps)];
+
+            [local_most_impacted, local_impact_idx] = ...
+                self.most_impacted_from_components(local_components, local_component_weights);
+            [global_most_impacted, global_impact_idx] = ...
+                self.most_impacted_from_components(global_components, global_component_weights);
+        end
+
+        function row = plot_log_row(~, values, n)
+            row = NaN(1, n);
+            if isempty(values) || n == 0
+                return;
+            end
+            values = double(values(:))';
+            m = min(numel(values), n);
+            row(1:m) = values(1:m);
+        end
+
+        function [impact_score, impact_idx] = most_impacted_from_components(~, component_matrix, component_weights)
+            if nargin < 3 || isempty(component_weights) || numel(component_weights) ~= size(component_matrix, 1)
+                component_weights = ones(1, size(component_matrix, 1));
+            end
+
+            finite_scores = isfinite(component_matrix);
+            safe_scores = max(min(component_matrix, 1), 0.01);
+            component_impact = -log(safe_scores) .* component_weights(:);
+            component_impact(~finite_scores) = -Inf;
+
+            [~, impact_idx] = max(component_impact, [], 1);
+            impact_score = NaN(1, size(component_matrix, 2));
+
+            valid_columns = any(finite_scores, 1);
+            if any(valid_columns)
+                columns = find(valid_columns);
+                selected_rows = impact_idx(columns);
+                selected_indices = sub2ind(size(component_matrix), selected_rows, columns);
+                impact_score(columns) = component_matrix(selected_indices);
+            end
+            impact_idx(~valid_columns) = NaN;
+        end
+
+        function plot_most_impacted_subplot(~, time_vector, trust_trace, impact_score, impact_idx, ...
+                component_names, trust_label, plot_title)
+            plot(time_vector, trust_trace, 'k-', 'DisplayName', trust_label, 'LineWidth', 1.5);
+            hold on;
+            plot(time_vector, impact_score, 'Color', [0.80, 0.15, 0.10], ...
+                'DisplayName', 'Most impacted score', 'LineWidth', 1.1);
+
+            colors = lines(max(1, numel(component_names)));
+            for component_idx = 1:numel(component_names)
+                marker_idx = impact_idx == component_idx & isfinite(impact_score);
+                if any(marker_idx)
+                    scatter(time_vector(marker_idx), impact_score(marker_idx), 12, ...
+                        colors(component_idx, :), 'filled', ...
+                        'DisplayName', component_names{component_idx});
+                end
+            end
+
+            hold off;
+            title(plot_title);
+            ylabel('Score');
+            ylim([0, 1.05]);
+            grid on;
+            legend('show', 'Location', 'eastoutside');
         end
 
         function plot_validation_metrics(self, host_vehicle_number, target_vehicle_number)
@@ -2509,80 +3672,6 @@ classdef TriPTrustModel < handle
             gamma_cross_expected = exp(-D);
         end
 
-
-
-        % function gamma_cross_expected = compute_cross_host_expected_factor(self, host_id, host_vehicle, target_id, target_vehicle)
-        %     % Get target vehicle's global estimate
-        %     target_global_estimate = target_vehicle.center_communication.get_global_state(target_id, host_id);
-
-        %     % Define expected differences
-        %     expected_diff_x = 20;      % Expected X-spacing (m)
-        %     expected_diff_y = 0;       % Expected Y-offset (m)
-        %     expected_diff_angle = 0;   % Expected angle difference (rad)
-        %     expected_diff_velocity = 0; % Expected velocity difference (m/s)
-        %     mu_diff = [expected_diff_x; expected_diff_y; expected_diff_angle; expected_diff_velocity];
-
-        %     % Define variances for covariance matrix
-        %     var_x = 1;         % Variance for X-difference
-        %     var_y = 1;         % Variance for Y-difference
-        %     var_angle = 0.01;  % Variance for angle-difference
-        %     var_velocity = 1;  % Variance for velocity-difference
-        %     sigma2_matrix = diag([var_x, var_y, var_angle, var_velocity]);
-
-        %     % Compute total discrepancy
-        %     D = 0;
-        %     num_vehicles = size(target_global_estimate, 2);
-        %     for j = 1:num_vehicles - 1
-        %         x_diff = target_global_estimate(:, j) - target_global_estimate(:, j+1);
-        %         diff_from_expected = x_diff - mu_diff;
-        %         D = D + diff_from_expected' * inv(sigma2_matrix) * diff_from_expected; % Mahalanobis distance
-        %     end
-
-        %     % Compute trust factor
-        %     gamma_cross_expected = exp(-D);
-        % end
-
-
-
-        % function sigma2_matrix = get_adaptive_covariance(self, host_vehicle, target_vehicle)
-        %     % Compute adaptive covariance matrix based on past estimation differences
-        %     history_length = min(length(self.trust_history), 50); % Use the last 50 time steps
-        %     if history_length < 2
-        %         sigma2_matrix = eye(size(host_vehicle.observer.est_global_state_current, 1)); % Default to identity matrix
-        %         return;
-        %     end
-
-        %     diff_history = []; % Store state differences
-        %     for t = length(self.trust_history) - history_length + 1 : length(self.trust_history)
-        %         diff_t = self.trust_history{t}.(target_vehicle.vehicle_number) - self.trust_history{t}.(host_vehicle.vehicle_number);
-        %         diff_history = [diff_history, diff_t];
-        %     end
-
-        %     sigma2_matrix = cov(diff_history'); % Compute covariance from history
-
-        %     % Ensure it's positive definite
-        %     if rcond(sigma2_matrix) < 1e-6
-        %         sigma2_matrix = sigma2_matrix + 1e-3 * eye(size(sigma2_matrix));
-        %     end
-        % end
-
-        % function beta = compute_dynamic_weight(self, host_vehicle, target_vehicle)
-        %     % Compute dynamic weight beta based on trust history
-        %     history_length = min(length(self.trust_history), 50);
-        %     if history_length < 2
-        %         beta = 0.5; % Default equal weighting
-        %         return;
-        %     end
-
-        %     error_sum = 0;
-        %     for t = length(self.trust_history) - history_length + 1 : length(self.trust_history)
-        %         error_t = norm(self.trust_history{t}.(target_vehicle.vehicle_number) - self.trust_history{t}.(host_vehicle.vehicle_number));
-        %         error_sum = error_sum + error_t;
-        %     end
-
-        %     avg_error = error_sum / history_length;
-        %     beta = exp(-avg_error); % Higher error -> lower trust in global estimate
-        % end
 
 
         % Only compare with the directed neighbor (not all neighbors) , or more specific is the target vehicle

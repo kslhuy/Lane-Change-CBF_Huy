@@ -138,7 +138,7 @@ classdef Vehicle < handle
 
             % Weight trust update
             if (self.scenarios_config.using_weight_trust_observer && instant_index * self.dt >= 3)
-                weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number, self.trust_log(1, instant_index, :), "equal");
+                weights_Dis = self.weight_module.calculate_weights_Trust(self.vehicle_number, self.trust_log(1, instant_index, :), "trust_based");
             else
                 weights_Dis = self.weight_module.calculate_weights_Defaut(self.vehicle_number);
             end

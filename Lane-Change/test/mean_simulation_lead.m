@@ -43,7 +43,7 @@ function [global_dist_err, global_theta_err, global_vel_err] = mean_simulation_l
         1 1 1 0];
 
     trust_threshold = 0.5; % for cut the communication in the graph
-    kappa = 1; % parameter in the design weigts matrix
+    kappa = 3; % parameter in the design weigts matrix
     Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 
 

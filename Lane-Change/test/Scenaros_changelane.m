@@ -45,7 +45,7 @@ graph = [0 1 1 0;  % Adjacency matrix
          0 1 1 0];
 
 trust_threshold = 0.5; % for cutting communication in the graph
-kappa = 1; % parameter in the design weights matrix
+kappa = 3; % parameter in the design weights matrix
 Weight_Trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 
 %% Log and Debug related
@@ -175,5 +175,4 @@ car4.observer.plot_error_local_estimated();
 % car2.plot_trust_log()
 % car3.plot_trust_log()
 % car4.plot_trust_log()
-
 

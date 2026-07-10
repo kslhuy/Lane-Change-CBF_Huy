@@ -19,12 +19,35 @@ classdef Scenarios_config < handle
         noise_probability = 0.3; % Probability of adding measurement noise
         Use_smooth_filter = true; % if using smooth filtering for noise mesurement 
         Use_smooth_filter_in_local_observer = true; % if using smooth filtering in local observer
+        measurement_noise_variance = [0.15, 0.005, 0.003, 0.01, 0.0003]; % R diagonal for noisy measurement [x, y, theta, v, a]
+        process_noise_variance = [0.01, 0.001, 0.0005, 0.02, 0.0005]; % Q diagonal for noisy process [x, y, theta, v, a]
+        no_noise_measurement_variance = [0.01, 0.005, 0.0001, 0.005, 0.0002]; % R diagonal when Is_noise_mesurement is false
+        no_noise_process_variance = [0.01, 0.001, 0.005, 0.02, 0.0005]; % Q diagonal when Is_noise_mesurement is false
+        measurement_noise_correlation = 0.8; % Temporal correlation for smooth measurement noise
+        noise_filter_alpha = 0.7; % Measurement-noise smoothing alpha
+        local_observer_output_filter_alpha = 0.3; % Local observer output smoothing alpha
 
         Dichiret_type = "Single"; % "Single" , "Dual"
         Monitor_sudden_change = false; % if the sudden change is monitored
         use_local_data_from_other = true; % if the local data from other vehicles is used
 
         rollback_enabled = false; % Enable/disable rollback functionality
+        trust_warmup_time = 0; % Seconds to relax scoring and suppress trust flags/rollback
+        trust_warmup_tolerance_scale = 1.0; % Multiplier for local trust tolerances during warm-up
+        local_trust_flag_required_samples = 1; % Consecutive low local samples needed before flagging
+        local_trust_flag_threshold = 0.5; % Local trust threshold for local-estimate check flag
+        rollback_start_time = 0; % Earliest simulation time in seconds when rollback can trigger
+        rollback_required_bad_steps = 1; % Consecutive bad trust/flag steps before rollback
+        rollback_window_size = 15;
+        rollback_trusted_state_history_size = 15;
+        rollback_trusted_state_guard_steps = 0;
+        rollback_rewrite_history_log = false; % Keep paper plots causal by default.
+        rollback_on_final_trust = true;
+        rollback_on_local_est_check = true;
+        rollback_on_global_est_check = true;
+        rollback_recovery_good_steps = 1; % Clean steps required before a flagged target can leave rollback-active state
+        rollback_cooldown_steps = 0; % Minimum steps between actual rollback replays
+        local_bad_zero_w0_neighbor_total_cap = 0.01;
 
         %%%% Attack related
 
@@ -35,6 +58,8 @@ classdef Scenarios_config < handle
         using_weight_trust_observer = true; % if using weight trust
         Use_weight_local_trust = true; % if using weight trust for local data
         Use_weight_global_trust = true; % if using weight trust for global data
+        Use_python_global_trust = true; % Use Python-compatible global trust calculation in TriPTrustModel
+        local_trust_fusion_mode = "product"; % "product", "equal_geometric", or "weighted_geometric"
         
         is_know_data_not_nearby = true ; % just for test purpose, Use that we have better Trust score , meaning that we know the data all of the other vehicles
         
@@ -110,42 +135,33 @@ classdef Scenarios_config < handle
         end
 
         function lead_input = get_LeadInput(self , instant_index)
+            lead_input = 0;
+
             if self.lead_senario == "constant"
-                lead_input = 0;
+                return;
+            end
 
-                % time = self.dt * instant_index;
-                % lead_input = 1*sin(4 * pi * time / 10) ; % Example sinusoidal input for testing
+            time = self.dt * instant_index;
 
-            else
-                time = self.dt * instant_index;
-                if time >= 10 && time < 15
-                    if self.lead_senario == "Acceleration"
-                        lead_input = 2;
-                    elseif self.lead_senario == "Deceleration"
-                        lead_input = -5;
-                    elseif self.lead_senario == "Lane_change"
-                        lead_input = 0;
-                    end
-                else
+            % Use a short smooth pulse instead of a long constant command.
+            % This keeps the lead vehicle in a realistic highway speed range.
+            maneuver_start = 10;
+            maneuver_duration = 2;
+            maneuver_end = maneuver_start + maneuver_duration;
+
+            if time >= maneuver_start && time < maneuver_end
+                phase = (time - maneuver_start) / maneuver_duration;
+                smooth_pulse = sin(pi * phase);
+
+                if self.lead_senario == "Acceleration"
+                    lead_input = 1.5 * smooth_pulse;
+                elseif self.lead_senario == "Deceleration"
+                    lead_input = -3.0 * smooth_pulse;
+                elseif self.lead_senario == "Lane_change"
                     lead_input = 0;
-                    % lead_input = 2*sin(2 * pi * time / 10) ; % Example sinusoidal input for testing
                 end
             end
 
-        % if (self.is_lead_input_change)
-        %     time = self.dt * instant_index;
-        %     if (time >= 0 && time < 5)
-        %         lead_input = 0;
-        %     elseif (time >= 5 && time < 9)
-        %         lead_input = 2;
-        %     elseif (time >= 10 && time < 15)
-        %         lead_input = -5;
-        %     else
-        %         lead_input = 0;
-        %     end
-        % else
-        %     lead_input = 0;
-        % end
         end
 
         function set_CACC_bidirectional(self, CACC_bidirectional)

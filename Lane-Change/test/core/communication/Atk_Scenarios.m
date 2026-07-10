@@ -12,15 +12,12 @@ switch attack_type
             case 1
                 scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -5, data_type, {'X'});
             case 2
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 10, 'probability', 0.3), data_type, {'X'});
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 10, 'probability', 0.5), data_type, {'X'});
             case 3
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -2, data_type, {'velocity'});
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', -2.5, data_type, {'velocity'});
             case 4
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 2.5, 'probability', 0.3), data_type, {'velocity'});
-                % Random faulty acceleration - low fault probability (stealthy)
+                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 2.5, 'probability', 0.5), data_type, {'velocity'});
             case 5
-                scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'faulty', struct('intensity', 1, 'probability', 0.3), data_type, {'acceleration'});
-            case 6
                 % scenario = makeScenario(attacker_id, victim_id, t_star, t_end, 'bias', 2, data_type, {'velocity'});
                 scenario = struct('attacker_id', attacker_id, ...
                 'victim_id', victim_id, ...
@@ -29,7 +26,7 @@ switch attack_type
                 'attack_type', 'drop', ...
                 'fault_intensity', 0.5, ... %  percentage to drop no data
                 'data_type', data_type, ...
-                'attack_row', {'global'}); % Block all data
+                'attack_row', {'all'}); % Block all data
             otherwise
                 disp("Invalid Mix_test case number"); return;
         end

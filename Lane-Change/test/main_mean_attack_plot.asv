@@ -22,9 +22,9 @@ end
 t_star = 10;
 t_end = 15;
 rmse_time_window = [t_star, t_end];
-attacker_vehicle_id = 1;
+attacker_vehicle_id = 5;
 victim_id = -1;
-data_type_attack = "local"; % "local" , "global","both"
+data_type_attack = "both"; % "local" , "global","both"
 attack_type = "Mix_test"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus" , "POS" , "VEL" , "ACC" , "Mix_test"
 
 

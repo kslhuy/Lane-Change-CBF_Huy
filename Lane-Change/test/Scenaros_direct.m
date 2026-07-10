@@ -55,7 +55,12 @@ simulator0 = Simulator(straightLanes, [] , platton_vehicles, Scenarios_config.dt
 
 Plot_all
 
+%% Extra trust impact plot for this direct scenario
+plot_trust_control_impact = true;
+if plot_trust_control_impact
+    plot_observer_weight_diagnostics(platton_vehicles, attacker_vehicle_id, ...
+        t_star, t_end, trust_threshold, case_nb_attack, attacker_vehicle_id);
+end
+
 %% Save configuration to CSV file
 % save_config_csv();
-
-

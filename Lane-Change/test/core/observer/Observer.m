@@ -28,6 +28,8 @@ classdef Observer < handle
         P_pred_dist; % Predicted error covariance for distributed observer
         S_log_dist; % Innovation covariance log for distributed observer
         self_belief_log; % Log for self-belief
+        target_weights_log; % Actual per-target observer weights [source/channel x time x target]
+        target_weights_current; % Latest actual per-target weights [source/channel x target]
         u_j_last_predict = [0; 0]; % Last predicted control input for vehicle j
 
         predict_only_counter = []; % Counter for consecutive good steps in prediction-only mode
@@ -39,6 +41,7 @@ classdef Observer < handle
         previous_noise = []; % Store previous noise for smoothing
         output_filter_alpha = 0.3; % Low-pass filter parameter for observer output
         previous_local_output = []; % Store previous local observer output for smoothing
+        measurement_noise_correlation = 0.8; % Temporal correlation for generated measurement noise
         correlated_noise_state = []; % State for correlated noise generation
         
         % Properties for contamination rollback system
@@ -50,6 +53,21 @@ classdef Observer < handle
         malicious_vehicles = []; % List of currently flagged malicious vehicles
         trust_threshold = 0.5; % Threshold below which vehicle is considered malicious
         rollback_stats = struct('total_rollbacks', 0, 'vehicles_flagged', [], 'rollback_times', []); % Statistics
+        rollback_trusted_state_history = {};
+        rollback_trusted_state_history_size = 15;
+        rollback_trusted_state_guard_steps = 0;
+        rollback_rewrite_history_log = false;
+        rollback_on_final_trust = true;
+        rollback_on_local_est_check = true;
+        rollback_on_global_est_check = true;
+        rollback_start_time = 0;
+        rollback_required_bad_steps = 1;
+        rollback_bad_counters = [];
+        rollback_recovery_good_steps = 1;
+        rollback_recovery_counters = [];
+        rollback_cooldown_steps = 0;
+        rollback_last_trigger_step = -Inf;
+        local_bad_zero_w0_neighbor_total_cap = 0.01;
     end
     methods
         function self = Observer( vehicle , veh_param, inital_global_state, inital_local_state)
@@ -87,12 +105,34 @@ classdef Observer < handle
             self.reputation_scores = ones(self.num_vehicles, 1); % Initial reputation = 1
             self.P_pred_dist = eye(self.num_states); % Initial covariance
             self.S_log_dist = zeros(self.num_states, self.num_states, Nt); % Log innovation covariance
+            self.target_weights_log = NaN(self.num_vehicles + 1, Nt, self.num_vehicles);
+            self.target_weights_current = NaN(self.num_vehicles + 1, self.num_vehicles);
             
             % Initialize smoothing properties
+            self.noise_filter_alpha = self.config_unit_interval(self.vehicle.scenarios_config.noise_filter_alpha, 'noise_filter_alpha');
+            self.output_filter_alpha = self.config_unit_interval(self.vehicle.scenarios_config.local_observer_output_filter_alpha, 'local_observer_output_filter_alpha');
+            self.measurement_noise_correlation = self.config_unit_interval(self.vehicle.scenarios_config.measurement_noise_correlation, 'measurement_noise_correlation');
             self.previous_noise = zeros(self.num_states, 1);
             self.previous_local_output = inital_local_state;
             self.correlated_noise_state = zeros(self.num_states, 1);
             self.rollback_enabled = self.vehicle.scenarios_config.rollback_enabled;
+            self.rollback_window_size = max(1, round(self.scenario_value('rollback_window_size', self.rollback_window_size)));
+            self.rollback_trusted_state_history_size = max(1, round(self.scenario_value('rollback_trusted_state_history_size', self.rollback_window_size)));
+            self.rollback_trusted_state_guard_steps = max(0, round(self.scenario_value('rollback_trusted_state_guard_steps', 0)));
+            self.rollback_rewrite_history_log = logical(self.scenario_value('rollback_rewrite_history_log', false));
+            self.rollback_on_final_trust = logical(self.scenario_value('rollback_on_final_trust', true));
+            self.rollback_on_local_est_check = logical(self.scenario_value('rollback_on_local_est_check', true));
+            self.rollback_on_global_est_check = logical(self.scenario_value('rollback_on_global_est_check', true));
+            self.rollback_start_time = max(0, self.scenario_value('rollback_start_time', 0));
+            self.rollback_required_bad_steps = max(1, round(self.scenario_value('rollback_required_bad_steps', 1)));
+            self.rollback_recovery_good_steps = max(1, round(self.scenario_value('rollback_recovery_good_steps', 1)));
+            self.rollback_cooldown_steps = max(0, round(self.scenario_value('rollback_cooldown_steps', 0)));
+            self.local_bad_zero_w0_neighbor_total_cap = self.config_unit_interval( ...
+                self.scenario_value('local_bad_zero_w0_neighbor_total_cap', 0.01), ...
+                'local_bad_zero_w0_neighbor_total_cap');
+            self.rollback_trusted_state_history = cell(self.num_vehicles, 1);
+            self.rollback_bad_counters = zeros(self.num_vehicles, 1);
+            self.rollback_recovery_counters = zeros(self.num_vehicles, 1);
             
             % Initialize rollback system
             if self.rollback_enabled
@@ -101,13 +141,18 @@ classdef Observer < handle
                 self.rollback_buffer_index = 1;
                 self.rollback_buffer_full = false;
                 self.malicious_vehicles = [];
+                self.rollback_bad_counters = zeros(self.num_vehicles, 1);
+                self.rollback_recovery_counters = zeros(self.num_vehicles, 1);
+                self.rollback_last_trigger_step = -Inf;
                 
                 % Initialize rollback statistics
                 self.rollback_stats.total_rollbacks = 0;
                 self.rollback_stats.vehicles_flagged = [];
                 self.rollback_stats.rollback_times = [];
                 
-                fprintf('[Observer] Contamination rollback system initialized with window size %d\n', self.rollback_window_size);
+                fprintf('[Observer V%d] Contamination rollback system initialized with window size %d, cooldown %d steps, recovery %d clean steps, start %.2fs, confirm %d steps\n', ...
+                    self.vehicle.vehicle_number, self.rollback_window_size, self.rollback_cooldown_steps, ...
+                    self.rollback_recovery_good_steps, self.rollback_start_time, self.rollback_required_bad_steps);
             end
 
 
@@ -124,18 +169,12 @@ classdef Observer < handle
 
             if self.vehicle.scenarios_config.Is_noise_mesurement == true % if the measurement is noisy
                 %% Noise Covariances
-                % These are example values; adjust based on your system/sensor characteristics.
-                % Measurement noise covariance R (variances on sensor measurements)
-                self.R = diag([0.15, 0.005, 0.003, 0.01 ,0.0003]);  % variance for [x, y, theta, v,a]
-
-                % Process noise covariance Q (model uncertainties)
-                % self.Q = diag([0.005, 0.005, 0.001, 0.01,0.001]);
-                self.Q = diag([0.01, 0.001, 0.0005, 0.02, 0.0005]); % More realistic process noise
+                self.R = self.config_covariance(self.vehicle.scenarios_config.measurement_noise_variance, 'measurement_noise_variance');
+                self.Q = self.config_covariance(self.vehicle.scenarios_config.process_noise_variance, 'process_noise_variance');
 
             else
-                % Make noise covariances more realistic even for "no noise" case
-                self.Q = diag([0.01, 0.001, 0.005, 0.02, 0.0005]); % More realistic process noise
-                self.R = diag([0.01, 0.005, 0.0001, 0.005, 0.0002]); % More realistic measurement noise
+                self.Q = self.config_covariance(self.vehicle.scenarios_config.no_noise_process_variance, 'no_noise_process_variance');
+                self.R = self.config_covariance(self.vehicle.scenarios_config.no_noise_measurement_variance, 'no_noise_measurement_variance');
             end
         end
 
@@ -145,45 +184,35 @@ classdef Observer < handle
             Big_X_hat_1_tempo = zeros(size(self.est_global_state_current)); % Initialize the variable to store the results
             host_id = self.vehicle.vehicle_number; % The vehicle that is estimating the state of other vehicles
             confidence_scores = zeros(self.num_vehicles, 1); % Store per-vehicle confidence
+            trust_scores = self.get_current_trust_scores(instant_index);
 
             % Initialize rollback data collection
             if self.rollback_enabled
                 pre_update_states = self.est_global_state_current; % Store states before update
-                neighbor_deltas = cell(self.num_vehicles, 1); % Store neighbor deltas for each vehicle
-                anchor_deltas = zeros(self.num_states, self.num_vehicles); % Store anchor deltas
-                input_deltas = zeros(self.num_states, self.num_vehicles); % Store input deltas
                 weights_used = cell(self.num_vehicles, 1); % Store weights used for each vehicle
-                trust_scores = zeros(1, self.num_vehicles); % Store current trust scores
-
-                % Get current trust scores from vehicle
-                for v = 1:self.num_vehicles
-                    if instant_index > 0 && instant_index <= size(self.vehicle.trust_log, 2)
-                        trust_scores(v) = self.vehicle.trust_log(1, instant_index, v);
-                    else
-                        trust_scores(v) = 1; % Default trust
-                    end
-                end
+                target_components = cell(self.num_vehicles, 1); % Replayable source-state components
             end
 
             % j is the vehicle we want to estimate
             for j = 1:self.num_vehicles
                 weights_new = self.get_weights_for_vehicle(j, host_id, weights, instant_index);
-                [x_bar_j, weights_new] = self.get_local_state_for_vehicle(j, host_id, weights_new);
-                [x_hat_i_j, weights_new] = self.get_global_states_for_vehicle(j, self.num_vehicles, host_id, weights_new, instant_index);
+                [x_bar_j, weights_new, direct_available] = self.get_local_state_for_vehicle(j, host_id, weights_new);
+                [x_hat_i_j, weights_new, source_available] = self.get_global_states_for_vehicle(j, self.num_vehicles, host_id, weights_new, instant_index);
+                weights_new = self.get_python_target_weights_if_enabled( ...
+                    j, host_id, weights_new, trust_scores, source_available, ...
+                    direct_available, x_bar_j, instant_index);
                 u_j = self.Get_controller(j);
                 weights_new = self.adjust_weights_for_attacker(j, host_id, weights_new);
+                self.record_target_weights(instant_index, j, weights_new);
                 use_local_data_from_other = self.vehicle.scenarios_config.use_local_data_from_other;
                 
                 % Capture deltas for rollback before computing output
                 if self.rollback_enabled
-                    [output, step_neighbor_deltas, step_anchor_delta, step_input_delta] = ...
+                    [output, ~, ~, ~, replay_component] = ...
                         self.distributed_Observer_each_with_deltas(self.vehicle.vehicle_number, j, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, false);
                     
-                    % Store deltas for this vehicle
-                    neighbor_deltas{j} = step_neighbor_deltas;
-                    anchor_deltas(:, j) = step_anchor_delta;
-                    input_deltas(:, j) = step_input_delta;
                     weights_used{j} = weights_new;
+                    target_components{j} = replay_component;
                 else
                     output = self.distributed_Observer_each(self.vehicle.vehicle_number, j, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, false);
                 end
@@ -220,15 +249,17 @@ classdef Observer < handle
 
 
             %% Store rollback data and check for contamination
-            if self.rollback_enabled && instant_index*self.param_sys.dt >= 3
+            if self.rollback_enabled && instant_index*self.param_sys.dt >= self.rollback_start_time
                 % Store step data in rollback buffer
-                self.create_step_data(instant_index, pre_update_states, neighbor_deltas, anchor_deltas, input_deltas, weights_used, trust_scores);
+                self.create_step_data(instant_index, pre_update_states, weights_used, trust_scores, target_components);
                 
                 % Check for newly malicious vehicles based on trust threshold
-                [rollback_applied, corrected_states] = self.check_and_trigger_rollback(instant_index, trust_scores);
+                [rollback_applied, corrected_states] = self.check_and_trigger_rollback(instant_index, trust_scores, Big_X_hat_1_tempo);
                 if rollback_applied
                     Big_X_hat_1_tempo = corrected_states;
                 end
+
+                self.update_rollback_trusted_state_history(instant_index, trust_scores, Big_X_hat_1_tempo);
             end
 
             %% Save the global state estmate to log
@@ -237,36 +268,179 @@ classdef Observer < handle
         end
 
         function weights_new = get_weights_for_vehicle(self, j, host_id, weights, instant_index)
-            % Determine weights for a given vehicle based on local data/trust
-            if abs(host_id - j) == 1 && (self.vehicle.trip_models{j}.flag_local_est_check)
-                weights_new = weights;
+            % Copy the shared row before target-specific trust edits.
+            weights_new = double(weights(:)');
+            if self.get_trip_flag(j, 'flag_local_est_check')
                 weights_new(1) = 0;
-            else
-                weights_new = weights;
+                weights_new = self.cap_neighbor_influence_to_self(weights_new, host_id, self.local_bad_zero_w0_neighbor_total_cap);
+            end
+            weights_new = self.normalize_observer_weights(weights_new, host_id);
+        end
+
+        function record_target_weights(self, instant_index, target_id, weights)
+            weights = double(weights(:));
+            expected_len = self.num_vehicles + 1;
+            if length(weights) < expected_len
+                weights(end + 1:expected_len) = NaN;
+            elseif length(weights) > expected_len
+                weights = weights(1:expected_len);
+            end
+
+            self.target_weights_current(:, target_id) = weights;
+            if instant_index > 0 && instant_index <= size(self.target_weights_log, 2)
+                self.target_weights_log(:, instant_index, target_id) = weights;
             end
         end
 
-        function [x_bar_j , weights_new] = get_local_state_for_vehicle(self, j, host_id, weights_new)
+        function [x_bar_j , weights_new, direct_available] = get_local_state_for_vehicle(self, j, host_id, weights_new)
             % Get local state for vehicle j, handle missing data
             x_bar_j = self.vehicle.center_communication.get_local_state(j, host_id);
+            direct_available = true;
             if any(isnan(x_bar_j(:)))
                 x_bar_j = zeros(size(self.est_local_state_current));
                 weights_new(1) = 0;
+                direct_available = false;
+                weights_new = self.normalize_observer_weights(weights_new, host_id);
             end
         end
 
-        function [x_hat_i_j , weights_new] = get_global_states_for_vehicle(self, j, num_vehicles, host_id, weights_new, instant_index)
+        function [x_hat_i_j , weights_new, source_available] = get_global_states_for_vehicle(self, j, num_vehicles, host_id, weights_new, instant_index)
             % Get global state estimates for all vehicles (PREVIOUS estimates, not current)
             x_hat_i_j = zeros(self.num_states, num_vehicles);
+            source_available = false(1, num_vehicles);
             for k = 1:num_vehicles
                 x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k, self.vehicle.vehicle_number);
                 if any(isnan(x_hat_i_j_full(:)))
                     x_hat_i_j_full = zeros(size(self.est_global_state_current));
                     weights_new(k+1) = 0;
+                else
+                    source_available(k) = true;
                 end
                 x_hat_i_j(:, k) = x_hat_i_j_full(:, j);
             end
+            weights_new = self.normalize_observer_weights(weights_new, host_id);
 
+        end
+
+        function trust_scores = get_current_trust_scores(self, instant_index)
+            trust_scores = ones(1, self.num_vehicles);
+            if isempty(self.vehicle) || isempty(self.vehicle.trust_log)
+                return;
+            end
+            for v = 1:self.num_vehicles
+                if instant_index > 0 && instant_index <= size(self.vehicle.trust_log, 2)
+                    trust_value = self.vehicle.trust_log(1, instant_index, v);
+                    if isfinite(trust_value)
+                        trust_scores(v) = trust_value;
+                    end
+                end
+            end
+        end
+
+        function weights_new = get_python_target_weights_if_enabled(self, j, host_id, weights_new, trust_scores, source_available, direct_available, x_bar_j, instant_index)
+            if ~self.should_use_python_target_weights()
+                weights_new = self.normalize_observer_weights(weights_new, host_id);
+                return;
+            end
+
+            direct_measurement = [];
+            if direct_available
+                direct_measurement = x_bar_j;
+            end
+            if isprop(self.vehicle.weight_module, 'vehicle_id')
+                self.vehicle.weight_module.vehicle_id = host_id;
+            end
+
+            target_trust_model = [];
+            if ~isempty(self.vehicle.trip_models) && j <= length(self.vehicle.trip_models)
+                target_trust_model = self.vehicle.trip_models{j};
+            end
+
+            if self.use_startup_fixed_target_weights(instant_index)
+                weights_new = self.vehicle.weight_module.calculate_startup_weights_for_target( ...
+                    host_id, j, source_available, direct_measurement);
+            else
+                if ~self.is_direct_measurement_allowed_for_target(j, trust_scores, target_trust_model)
+                    direct_measurement = [];
+                end
+                weights_new = self.vehicle.weight_module.calculate_weights_for_target( ...
+                    host_id, j, trust_scores, source_available, direct_measurement, target_trust_model);
+            end
+            weights_new = self.normalize_observer_weights(weights_new, host_id);
+        end
+
+        function use_target_weights = should_use_python_target_weights(self)
+            use_target_weights = false;
+            if isempty(self.vehicle) || isempty(self.vehicle.scenarios_config)
+                return;
+            end
+            if ~logical(self.scenario_value('using_weight_trust_observer', false))
+                return;
+            end
+            if isempty(self.vehicle.weight_module) || ~ismethod(self.vehicle.weight_module, 'calculate_weights_for_target')
+                return;
+            end
+            use_target_weights = true;
+        end
+
+        function use_startup = use_startup_fixed_target_weights(self, instant_index)
+            use_startup = false;
+            if isempty(self.vehicle) || isempty(self.vehicle.weight_module) || ~isprop(self.vehicle.weight_module, 'startup_fixed_duration_s')
+                return;
+            end
+            duration_s = max(0, double(self.vehicle.weight_module.startup_fixed_duration_s));
+            if duration_s <= 0
+                return;
+            end
+            use_startup = instant_index * self.param_sys.dt < duration_s;
+        end
+
+        function allowed = is_direct_measurement_allowed_for_target(self, target_id, trust_scores, target_trust_model)
+            % Match Python estimator gating: only local-channel failure suppresses w0.
+            allowed = true;
+            if self.get_trip_flag(target_id, 'flag_local_est_check')
+                allowed = false;
+                return;
+            end
+
+            local_trust = self.read_latest_trip_unit(target_trust_model, ...
+                {'local_trust_sample', 'trust_sample_log', 'local_trust_decayed_log'}, NaN);
+            if ~isfinite(local_trust)
+                if target_id >= 1 && target_id <= numel(trust_scores)
+                    local_trust = trust_scores(target_id);
+                else
+                    return;
+                end
+            end
+
+            allowed = local_trust >= self.trust_threshold;
+        end
+
+        function value = read_latest_trip_unit(~, model, names, default_value)
+            value = default_value;
+            if isempty(model)
+                return;
+            end
+            for idx = 1:length(names)
+                name = names{idx};
+                if isstruct(model) && isfield(model, name)
+                    candidate = model.(name);
+                elseif isobject(model) && isprop(model, name)
+                    candidate = model.(name);
+                else
+                    continue;
+                end
+                if isempty(candidate)
+                    continue;
+                end
+                candidate = double(candidate(:));
+                candidate = candidate(isfinite(candidate));
+                if isempty(candidate)
+                    continue;
+                end
+                value = min(1.0, max(0.0, candidate(end)));
+                return;
+            end
         end
 
         function weights_new = adjust_weights_for_attacker(self, j, host_id, weights_new)
@@ -277,6 +451,7 @@ classdef Observer < handle
                     weights_new(1) = 1; % Keep the local state weight
                 end
             end
+            weights_new = self.normalize_observer_weights(weights_new, host_id);
         end
 
         function [output_final, confidence_scores] = handle_predict_only_switch(self, j, num_vehicles, output, x_bar_j, x_hat_i_j, u_j, weights_new, use_local_data_from_other, instant_index, confidence_scores)
@@ -425,10 +600,13 @@ classdef Observer < handle
             end
         end
 
-        function [output, neighbor_deltas, anchor_delta, input_delta] = distributed_Observer_each_with_deltas(self, host_id, j, x_bar_j, x_hat_i_j, u_j, weights, use_local, predict_only)
-            % Same as distributed_Observer_each but also returns the deltas used in the update
-            if nargin < 8
+        function [output, neighbor_deltas, anchor_delta, input_delta, replay_component] = distributed_Observer_each_with_deltas(self, host_id, j, x_bar_j, x_hat_i_j, u_j, weights, use_local, predict_only)
+            % Same as distributed_Observer_each, plus replayable source-state terms.
+            if nargin < 9
                 use_local = true; % Default value
+            end
+            if nargin < 10
+                predict_only = false;
             end
 
             [A, B] = self.matrix();
@@ -437,12 +615,16 @@ classdef Observer < handle
             neighbor_deltas = {}; % Cell array for each neighbor's delta
             anchor_delta = zeros(self.num_states, 1);
             input_delta = zeros(self.num_states, 1);
+            replay_component = self.build_replay_component(j, host_id, x_bar_j, x_hat_i_j, u_j, weights, use_local, predict_only);
             
             % Calculate consensus term and store individual neighbor deltas
             Sig = zeros(self.num_states, 1);
             neighbor_count = 0;
             for L = 2:length(weights)
                 neighbor_idx = L - 1; % Convert to vehicle index
+                if neighbor_idx == host_id || weights(L) == 0
+                    continue;
+                end
                 delta_neighbor = weights(L) * (x_hat_i_j(:, neighbor_idx) - x_hat_i_j(:, host_id));
                 neighbor_deltas{neighbor_count + 1} = struct('vehicle_idx', neighbor_idx, 'delta', delta_neighbor, 'weight', weights(L));
                 Sig = Sig + delta_neighbor;
@@ -496,6 +678,117 @@ classdef Observer < handle
             end
         end
 
+
+        function replay_component = build_replay_component(self, target_id, host_id, x_bar_j, x_hat_i_j, u_j, weights, use_local, predict_only)
+            replay_component = struct();
+            replay_component.direct = struct( ...
+                'source', target_id, ...
+                'state', x_bar_j, ...
+                'weight', double(weights(1)), ...
+                'enabled', logical(use_local || host_id == target_id));
+            replay_component.neighbors = {};
+            replay_component.prediction = struct( ...
+                'control', u_j, ...
+                'predict_only', logical(predict_only), ...
+                'use_local', logical(use_local));
+
+            neighbor_count = 0;
+            for L = 2:length(weights)
+                source_id = L - 1;
+                if source_id == host_id || weights(L) <= 0
+                    continue;
+                end
+                neighbor_count = neighbor_count + 1;
+                replay_component.neighbors{neighbor_count} = struct( ...
+                    'source', source_id, ...
+                    'state', x_hat_i_j(:, source_id), ...
+                    'weight', double(weights(L)));
+            end
+        end
+
+        function weights = normalize_observer_weights(self, weights, host_id)
+            weights = double(weights(:)');
+            expected_len = self.num_vehicles + 1;
+            if length(weights) < expected_len
+                weights(end + 1:expected_len) = 0;
+            elseif length(weights) > expected_len
+                weights = weights(1:expected_len);
+            end
+
+            weights(~isfinite(weights)) = 0;
+            weights = max(weights, 0);
+
+            self_idx = host_id + 1;
+            non_self = true(1, expected_len);
+            non_self(self_idx) = false;
+            external_sum = sum(weights(non_self));
+            if external_sum > 1
+                weights(non_self) = weights(non_self) / external_sum;
+                external_sum = 1;
+            end
+
+            weights(self_idx) = max(0, 1 - external_sum);
+            residual = 1 - sum(weights);
+            if abs(residual) > 1e-12
+                weights(self_idx) = max(0, weights(self_idx) + residual);
+            end
+
+            if sum(weights) <= eps
+                weights = zeros(1, expected_len);
+                weights(1) = 1;
+            else
+                weights = weights / sum(weights);
+            end
+        end
+
+        function weights = cap_neighbor_influence_to_self(self, weights, host_id, total_cap)
+            weights = double(weights(:)');
+            neighbor_indices = 2:length(weights);
+            neighbor_indices(neighbor_indices == host_id + 1) = [];
+            neighbor_total = sum(weights(neighbor_indices));
+            total_cap = max(0, min(1, total_cap));
+            if neighbor_total > total_cap && neighbor_total > eps
+                weights(neighbor_indices) = weights(neighbor_indices) * (total_cap / neighbor_total);
+            end
+        end
+
+        function value = scenario_value(self, property_name, default_value)
+            value = default_value;
+            if isempty(self.vehicle) || isempty(self.vehicle.scenarios_config)
+                return;
+            end
+            cfg = self.vehicle.scenarios_config;
+            if isstruct(cfg) && isfield(cfg, property_name)
+                value = cfg.(property_name);
+            elseif isobject(cfg) && isprop(cfg, property_name)
+                value = cfg.(property_name);
+            end
+        end
+
+        function flag = get_trip_flag(self, vehicle_id, flag_name)
+            flag = false;
+            if isempty(self.vehicle.trip_models) || vehicle_id > length(self.vehicle.trip_models)
+                return;
+            end
+            model = self.vehicle.trip_models{vehicle_id};
+            candidates = {flag_name};
+            if strcmp(flag_name, 'flag_target_attack')
+                candidates{end + 1} = 'flag_taget_attk';
+            elseif strcmp(flag_name, 'flag_global_est_check')
+                candidates{end + 1} = 'flag_glob_est_check';
+            end
+
+            for idx = 1:length(candidates)
+                prop_name = candidates{idx};
+                if isstruct(model) && isfield(model, prop_name)
+                    flag = logical(model.(prop_name));
+                    return;
+                elseif isobject(model) && isprop(model, prop_name)
+                    flag = logical(model.(prop_name));
+                    return;
+                end
+            end
+        end
 
         function [is_ok, log_element, confidence] = check_elementwise_similarity(self, output1, output2, instant_index, vehicle_id)
             is_ok = true;
@@ -581,7 +874,7 @@ classdef Observer < handle
                     if self.vehicle.scenarios_config.Use_smooth_filter == true
                         % Apply smoother, correlated measurement noise
                         % Generate correlated noise using first-order Markov process
-                        correlation_factor = 0.8; % Controls noise correlation (0 = white noise, 1 = fully correlated)
+                        correlation_factor = self.measurement_noise_correlation; % 0 = white noise, 1 = fully correlated
                         white_noise = self.sample_gaussian(self.R);
                         
                         % First-order Markov noise model: x[k] = correlation_factor * x[k-1] + sqrt(1-correlation_factor^2) * w[k]
@@ -675,6 +968,36 @@ classdef Observer < handle
             [V, D] = eig(self.P);
             D = max(D, 1e-8 * eye(self.num_states)); % Ensure positive eigenvalues
             self.P = V * D * V';
+        end
+
+        function covariance = config_covariance(self, value, property_name)
+            if ~isnumeric(value) || isempty(value)
+                error('Scenarios_config.%s must be a numeric covariance vector or matrix.', property_name);
+            end
+
+            if isvector(value)
+                if numel(value) ~= self.num_states
+                    error('Scenarios_config.%s must have %d entries for [x, y, theta, v, a].', property_name, self.num_states);
+                end
+                covariance = diag(double(value(:)));
+            else
+                if ~isequal(size(value), [self.num_states, self.num_states])
+                    error('Scenarios_config.%s must be a %dx%d covariance matrix.', property_name, self.num_states, self.num_states);
+                end
+                covariance = double(value);
+            end
+
+            covariance = (covariance + covariance') / 2;
+            if any(~isfinite(covariance(:)))
+                error('Scenarios_config.%s must contain only finite values.', property_name);
+            end
+        end
+
+        function value = config_unit_interval(~, value, property_name)
+            if ~isnumeric(value) || ~isscalar(value) || isnan(value) || value < 0 || value > 1
+                error('Scenarios_config.%s must be a scalar in [0, 1].', property_name);
+            end
+            value = double(value);
         end
 
         function sample = sample_gaussian(~, covariance)
@@ -866,19 +1189,20 @@ classdef Observer < handle
             self.rollback_buffer = cell(self.rollback_window_size, 1);
             self.rollback_buffer_index = 1;
             self.rollback_buffer_full = false;
-            fprintf('[Observer] Rollback buffer cleared\n');
+            fprintf('[Observer V%d] Rollback buffer cleared\n', self.vehicle.vehicle_number);
         end
         
-        function create_step_data(self, instant_index, pre_update_states, neighbor_deltas, anchor_deltas, input_deltas, weights_used, trust_scores)
-            % Create a step data structure for the rollback buffer
+        function create_step_data(self, instant_index, pre_update_states, weights_used, trust_scores, target_components)
+            % Create a replayable step data structure for the rollback buffer
+            if nargin < 6
+                target_components = cell(self.num_vehicles, 1);
+            end
             step_data = struct();
             step_data.instant_index = instant_index;
             step_data.pre_update_states = pre_update_states; % [num_states x num_vehicles]
-            step_data.neighbor_deltas = neighbor_deltas; % Cell array: {vehicle_j}{neighbor_l} = delta
-            step_data.anchor_deltas = anchor_deltas; % [num_states x num_vehicles] 
-            step_data.input_deltas = input_deltas; % [num_states x num_vehicles]
             step_data.weights_used = weights_used; % Cell array: {vehicle_j} = weights vector
             step_data.trust_scores = trust_scores; % [1 x num_vehicles]
+            step_data.target_components = target_components; % Cell array of replayable source-state terms
             
             % Store prediction-only mode flags for proper rollback handling
             step_data.is_predict_only_mode = self.is_in_prediction_mode; % [1 x num_vehicles] boolean array
@@ -887,9 +1211,7 @@ classdef Observer < handle
             step_data.exclude_virtual_node0_flags = false(1, self.num_vehicles); % [1 x num_vehicles]
             host_id = self.vehicle.vehicle_number;
             for j = 1:self.num_vehicles
-                if abs(host_id - j) == 1 && length(self.vehicle.trip_models) >= j && ...
-                   isprop(self.vehicle.trip_models{j}, 'flag_local_est_check') && ...
-                   self.vehicle.trip_models{j}.flag_local_est_check
+                if abs(host_id - j) == 1 && self.get_trip_flag(j, 'flag_local_est_check')
                     step_data.exclude_virtual_node0_flags(j) = true;
                 end
             end
@@ -897,100 +1219,138 @@ classdef Observer < handle
             self.add_to_rollback_buffer(step_data);
         end
         
-        function [rollback_applied, corrected_states] = check_and_trigger_rollback(self, instant_index, trust_scores)
+        function [rollback_applied, corrected_states] = check_and_trigger_rollback(self, instant_index, trust_scores, current_states)
             % Check for newly malicious vehicles and trigger rollback if needed
             rollback_applied = false;
             corrected_states = [];
             if ~self.rollback_enabled
                 return;
             end
+            if nargin < 4 || isempty(current_states)
+                current_states = self.est_global_state_current;
+            end
             
-            newly_malicious = [];
+            previous_malicious = self.malicious_vehicles;
+            active_malicious = [];
             
-            % Check each vehicle's trust score
             for vehicle_id = 1:length(trust_scores)
                 current_trust = trust_scores(vehicle_id);
-                
-                % Skip self-vehicle (trust in own vehicle should always be high)
                 if vehicle_id == self.vehicle.vehicle_number
                     continue;
                 end
-                
-                % Check if vehicle is newly flagged as malicious
-                if current_trust < self.trust_threshold
-                    if ~ismember(vehicle_id, self.malicious_vehicles)
-                        newly_malicious = [newly_malicious, vehicle_id];
-                        self.malicious_vehicles = [self.malicious_vehicles, vehicle_id];
-                        % fprintf('[Observer] Vehicle %d flagged as malicious (trust=%.3f < threshold=%.3f) at time %d\n', ...
-                        %        vehicle_id, current_trust, self.trust_threshold, instant_index);
+
+                should_flag = false;
+                if self.rollback_on_final_trust && isfinite(current_trust) && current_trust < self.trust_threshold
+                    should_flag = true;
+                end
+                if self.rollback_on_local_est_check && self.get_trip_flag(vehicle_id, 'flag_local_est_check')
+                    should_flag = true;
+                end
+                if self.rollback_on_global_est_check && self.get_trip_flag(vehicle_id, 'flag_global_est_check')
+                    should_flag = true;
+                end
+
+                if should_flag
+                    self.rollback_bad_counters(vehicle_id) = self.rollback_bad_counters(vehicle_id) + 1;
+                    is_confirmed_bad = self.rollback_bad_counters(vehicle_id) >= self.rollback_required_bad_steps;
+                    if is_confirmed_bad || ismember(vehicle_id, previous_malicious)
+                        active_malicious = [active_malicious, vehicle_id]; %#ok<AGROW>
+                    end
+                    self.rollback_recovery_counters(vehicle_id) = 0;
+                elseif ismember(vehicle_id, previous_malicious)
+                    self.rollback_bad_counters(vehicle_id) = 0;
+                    self.rollback_recovery_counters(vehicle_id) = self.rollback_recovery_counters(vehicle_id) + 1;
+                    if self.rollback_recovery_counters(vehicle_id) < self.rollback_recovery_good_steps
+                        active_malicious = [active_malicious, vehicle_id]; %#ok<AGROW>
+                    else
+                        self.rollback_recovery_counters(vehicle_id) = 0;
                     end
                 else
-                    % Vehicle trust recovered - remove from malicious list
-                    if ismember(vehicle_id, self.malicious_vehicles)
-                        self.malicious_vehicles(self.malicious_vehicles == vehicle_id) = [];
-                        % fprintf('[Observer] Vehicle %d trust recovered (trust=%.3f >= threshold=%.3f) at time %d\n', ...
-                        %        vehicle_id, current_trust, self.trust_threshold, instant_index);
-                    end
+                    self.rollback_bad_counters(vehicle_id) = 0;
+                    self.rollback_recovery_counters(vehicle_id) = 0;
                 end
             end
+
+            active_malicious = unique(active_malicious);
+            newly_malicious = setdiff(active_malicious, previous_malicious);
+            self.malicious_vehicles = active_malicious;
             
-            % Trigger rollback for newly discovered malicious vehicles
             if ~isempty(newly_malicious)
-                [rollback_applied, corrected_states] = self.trigger_contamination_rollback(newly_malicious(1), instant_index);
+                if instant_index - self.rollback_last_trigger_step < self.rollback_cooldown_steps
+                    return;
+                end
+                [rollback_applied, corrected_states] = self.trigger_contamination_rollback(active_malicious, instant_index, current_states);
+                if rollback_applied
+                    self.rollback_last_trigger_step = instant_index;
+                end
             end
         end
         
-        function [rollback_applied, corrected_states] = trigger_contamination_rollback(self, malicious_vehicle_id, current_time)
-            % Trigger rollback to remove contamination from a malicious vehicle
+        function [rollback_applied, corrected_states] = trigger_contamination_rollback(self, malicious_vehicle_ids, current_time, current_states)
+            % Trigger rollback to remove contamination from active malicious vehicles
             rollback_applied = false;
-            corrected_states = [];
+            if nargin < 4 || isempty(current_states)
+                current_states = self.est_global_state_current;
+            end
+            corrected_states = current_states;
+            malicious_vehicle_ids = unique(malicious_vehicle_ids(:)');
             buffer_size = self.get_buffer_size();
             if buffer_size == 0
-                fprintf('[Observer] No rollback data available for vehicle %d\n', malicious_vehicle_id);
+                fprintf('[Observer V%d] No rollback data available for vehicles [%s]\n', ...
+                    self.vehicle.vehicle_number, num2str(malicious_vehicle_ids));
                 return;
             end
             
             % Determine rollback window
             rollback_steps = min(self.rollback_window_size, buffer_size);
-            rollback_start_time = max(1, current_time - rollback_steps + 1);
+            rollback_start_buffer_index = max(1, buffer_size - rollback_steps + 1);
+            oldest_available_step = self.get_buffer_step(rollback_start_buffer_index);
+            newest_available_step = self.get_buffer_step(buffer_size);
+            rollback_start_step = oldest_available_step.instant_index;
+            rollback_end_time = newest_available_step.instant_index;
             
-            fprintf('[Observer] Starting contamination rollback for vehicle %d from time %d to %d (%d steps)\n', ...
-                   malicious_vehicle_id, rollback_start_time, current_time-1, rollback_steps);
+            fprintf('[Observer V%d] Starting contamination rollback for vehicles [%s] from time %d to %d (%d steps)\n', ...
+                   self.vehicle.vehicle_number, num2str(malicious_vehicle_ids), rollback_start_step, rollback_end_time, rollback_steps);
             
-            % Fix 3: Always base clean_states on the oldest step's pre_update_states in the window
-            if buffer_size > 0
-                % Always use the pre-update states from the oldest available step as clean starting point
-                oldest_available_step = self.get_buffer_step(1); % Get the oldest step in buffer
-                clean_states = oldest_available_step.pre_update_states;
-                if rollback_steps >= buffer_size
-                    fprintf('[Observer] Warning: Using all available buffer data from oldest step\n');
+            corrected_states = oldest_available_step.pre_update_states;
+            current_self_state = current_states(:, self.vehicle.vehicle_number);
+            replay_start_time_by_vehicle = nan(1, self.num_vehicles);
+
+            for idx = 1:length(malicious_vehicle_ids)
+                target_id = malicious_vehicle_ids(idx);
+                if target_id < 1 || target_id > self.num_vehicles
+                    continue;
                 end
-            else
-                % Emergency fallback - should not happen if buffer_size check passes
-                clean_states = self.est_global_state_current;
-                fprintf('[Observer] Error: No buffer data available for rollback\n');
+                [trusted_state, trusted_time, has_trusted_state] = self.get_rollback_trusted_state_entry(target_id);
+                if has_trusted_state
+                    corrected_states(:, target_id) = trusted_state;
+                    replay_start_time_by_vehicle(target_id) = trusted_time;
+                end
             end
             
-            % Replay trajectory without malicious vehicle
-            corrected_states = clean_states;
-            
-            for step_idx = max(1, buffer_size - rollback_steps + 1):buffer_size
+            for step_idx = rollback_start_buffer_index:buffer_size
                 step_data = self.get_buffer_step(step_idx);
                 step_time = step_data.instant_index;
                 
-                % Process each vehicle's estimate
                 for j = 1:self.num_vehicles
+                    if j == self.vehicle.vehicle_number
+                        continue;
+                    end
+                    if ~isnan(replay_start_time_by_vehicle(j)) && step_time <= replay_start_time_by_vehicle(j)
+                        continue;
+                    end
                     corrected_states(:, j) = self.replay_step_without_malicious(...
-                        step_data, j, malicious_vehicle_id, corrected_states(:, j));
+                        step_data, j, malicious_vehicle_ids, corrected_states(:, j));
                 end
                 
-                % Fix 2: Update the corrected trajectory in the log with proper 3D assignment
-                if step_time > 0 && step_time <= size(self.est_global_state_log, 2)
+                if self.rollback_rewrite_history_log && step_time > 0 && step_time <= size(self.est_global_state_log, 2)
                     for v = 1:self.num_vehicles
                         self.est_global_state_log(:, step_time, v) = corrected_states(:, v);
                     end
                 end
             end
+
+            corrected_states(:, self.vehicle.vehicle_number) = current_self_state;
             
             % Update current state estimates
             self.est_global_state_current = corrected_states;
@@ -1001,57 +1361,127 @@ classdef Observer < handle
             
             % Update rollback statistics
             self.rollback_stats.total_rollbacks = self.rollback_stats.total_rollbacks + 1;
-            self.rollback_stats.vehicles_flagged = [self.rollback_stats.vehicles_flagged, malicious_vehicle_id];
+            self.rollback_stats.vehicles_flagged = unique([self.rollback_stats.vehicles_flagged, malicious_vehicle_ids]);
             self.rollback_stats.rollback_times = [self.rollback_stats.rollback_times, current_time];
             
-            fprintf('[Observer] Contamination rollback completed for vehicle %d, buffer cleared\n', malicious_vehicle_id);
+            fprintf('[Observer V%d] Contamination rollback completed for vehicles [%s], buffer cleared\n', ...
+                self.vehicle.vehicle_number, num2str(malicious_vehicle_ids));
         end
         
-        function corrected_state = replay_step_without_malicious(self, step_data, vehicle_j, malicious_vehicle_id, previous_state)
-            % Replay a single step for vehicle j, excluding contributions from malicious vehicle
-            
-            % Start with the previous corrected state
+        function corrected_state = replay_step_without_malicious(self, step_data, vehicle_j, malicious_vehicle_ids, previous_state)
+            % Replay one target update while excluding active malicious sources.
             base_state = previous_state;
-            
-            % Get system matrices using the corrected state for vehicle_j
-            % This is crucial because A and B depend on theta and velocity of the specific vehicle
-            % Using base_state ensures we use the corrected trajectory, not the original contaminated one
             [A, ~] = self.matrix(base_state);
-            
-            % Apply consensus term (excluding malicious vehicle)
+
+            if isfield(step_data, 'target_components') && length(step_data.target_components) >= vehicle_j && ...
+                    ~isempty(step_data.target_components{vehicle_j})
+                component = step_data.target_components{vehicle_j};
+                correction = zeros(self.num_states, 1);
+                prediction = component.prediction;
+                predict_only = isfield(prediction, 'predict_only') && prediction.predict_only;
+
+                direct = component.direct;
+                use_direct = direct.enabled && direct.weight > 0 && ~ismember(direct.source, malicious_vehicle_ids);
+                if use_direct && (~predict_only || self.vehicle.vehicle_number == vehicle_j)
+                    correction = correction + direct.weight * (direct.state - base_state);
+                end
+
+                if ~predict_only
+                    for neighbor_idx = 1:length(component.neighbors)
+                        neighbor_data = component.neighbors{neighbor_idx};
+                        if ismember(neighbor_data.source, malicious_vehicle_ids)
+                            continue;
+                        end
+                        correction = correction + neighbor_data.weight * (neighbor_data.state - base_state);
+                    end
+                end
+
+                control = prediction.control;
+                [A, B] = self.matrix(base_state);
+                corrected_state = A * (base_state + correction) + B * control;
+                corrected_state = self.apply_replay_state_constraints(corrected_state);
+                return;
+            end
+
+            % Backward-compatible fallback for older buffered delta payloads.
             consensus_delta = zeros(self.num_states, 1);
-            if ~isempty(step_data.neighbor_deltas{vehicle_j})
+            if isfield(step_data, 'neighbor_deltas') && ~isempty(step_data.neighbor_deltas{vehicle_j})
                 for neighbor_idx = 1:length(step_data.neighbor_deltas{vehicle_j})
                     neighbor_data = step_data.neighbor_deltas{vehicle_j}{neighbor_idx};
-                    if neighbor_data.vehicle_idx ~= malicious_vehicle_id
-                        % Include this neighbor's contribution
+                    if ~ismember(neighbor_data.vehicle_idx, malicious_vehicle_ids)
                         consensus_delta = consensus_delta + neighbor_data.delta;
-                    else
-                        % Skip malicious vehicle's contribution
-                        continue;
-                        % fprintf('[Observer] Excluding malicious vehicle %d contribution for vehicle %d\n', ...
-                        %        malicious_vehicle_id, vehicle_j);
                     end
                 end
             end
-            
-            % Apply anchor term with special handling for virtual node 0
-            anchor_delta = step_data.anchor_deltas(:, vehicle_j);
-            
-            % Check if we should exclude virtual node 0 (anchor term) using stored flag
-            if isfield(step_data, 'exclude_virtual_node0_flags') && ...
-               length(step_data.exclude_virtual_node0_flags) >= vehicle_j && ...
-               step_data.exclude_virtual_node0_flags(vehicle_j)
-                % Exclude anchor term (virtual node 0) when local estimation check had failed
-                anchor_delta = zeros(self.num_states, 1);
-                fprintf('[Observer] Excluding virtual node 0 (anchor term) for vehicle %d due to stored local estimation check failure flag\n', vehicle_j);
+            anchor_delta = zeros(self.num_states, 1);
+            if isfield(step_data, 'anchor_deltas')
+                anchor_delta = step_data.anchor_deltas(:, vehicle_j);
             end
-            
-            % Apply input term
-            input_delta = step_data.input_deltas(:, vehicle_j);
-            
-            % Reconstruct the update equation without malicious contributions
+            input_delta = zeros(self.num_states, 1);
+            if isfield(step_data, 'input_deltas')
+                input_delta = step_data.input_deltas(:, vehicle_j);
+            end
             corrected_state = A * base_state + consensus_delta + anchor_delta + input_delta;
+            corrected_state = self.apply_replay_state_constraints(corrected_state);
+        end
+
+        function update_rollback_trusted_state_history(self, instant_index, trust_scores, states)
+            if ~self.rollback_enabled
+                return;
+            end
+
+            for vehicle_id = 1:min(length(trust_scores), self.num_vehicles)
+                if vehicle_id == self.vehicle.vehicle_number
+                    continue;
+                end
+                if trust_scores(vehicle_id) < self.trust_threshold
+                    continue;
+                end
+                if self.get_trip_flag(vehicle_id, 'flag_local_est_check') || self.get_trip_flag(vehicle_id, 'flag_global_est_check')
+                    continue;
+                end
+
+                entry = struct('state', states(:, vehicle_id), 'instant_index', instant_index);
+                history = self.rollback_trusted_state_history{vehicle_id};
+                if isempty(history)
+                    history = entry;
+                else
+                    history(end + 1) = entry; %#ok<AGROW>
+                end
+                if length(history) > self.rollback_trusted_state_history_size
+                    history = history(end - self.rollback_trusted_state_history_size + 1:end);
+                end
+                self.rollback_trusted_state_history{vehicle_id} = history;
+            end
+        end
+
+        function [trusted_state, trusted_time, has_trusted_state] = get_rollback_trusted_state_entry(self, target_id)
+            trusted_state = [];
+            trusted_time = NaN;
+            has_trusted_state = false;
+            if target_id < 1 || target_id > length(self.rollback_trusted_state_history)
+                return;
+            end
+
+            history = self.rollback_trusted_state_history{target_id};
+            if isempty(history)
+                return;
+            end
+
+            guard = min(self.rollback_trusted_state_guard_steps, length(history) - 1);
+            entry = history(end - guard);
+            trusted_state = entry.state;
+            trusted_time = entry.instant_index;
+            has_trusted_state = true;
+        end
+
+        function state = apply_replay_state_constraints(self, state)
+            state(3) = atan2(sin(state(3)), cos(state(3)));
+            if isstruct(self.param_sys) && isfield(self.param_sys, 'max_acceleration') && isfield(self.param_sys, 'min_acceleration')
+                state(5) = max(self.param_sys.min_acceleration, min(self.param_sys.max_acceleration, state(5)));
+            elseif isobject(self.param_sys) && isprop(self.param_sys, 'max_acceleration') && isprop(self.param_sys, 'min_acceleration')
+                state(5) = max(self.param_sys.min_acceleration, min(self.param_sys.max_acceleration, state(5)));
+            end
         end
         
         function print_rollback_statistics(self)
