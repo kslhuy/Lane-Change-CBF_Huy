@@ -135,6 +135,9 @@ min_attacker_trust_attack_by_case = NaN(1, total_num_attack_cases);
 mean_trust_degradation_by_case = NaN(1, total_num_attack_cases);
 detection_rate_by_case = NaN(1, total_num_attack_cases);
 mean_detection_time_by_case = NaN(1, total_num_attack_cases);
+false_positive_rejection_full_by_case = NaN(1, total_num_attack_cases);
+false_positive_rejection_pre_by_case = NaN(1, total_num_attack_cases);
+false_positive_rejection_attack_by_case = NaN(1, total_num_attack_cases);
 
 mean_attacker_weight_pre_by_case = NaN(1, total_num_attack_cases);
 mean_attacker_weight_attack_by_case = NaN(1, total_num_attack_cases);
@@ -311,12 +314,23 @@ for case_idx = 1:total_num_attack_cases
         attacker_direct_weight_traces = NaN(length(vehicles_to_evaluate), num_trust_steps);
         attacker_source_weight_traces = NaN(length(vehicles_to_evaluate), num_trust_steps);
         trusted_neighbor_count_traces = NaN(length(vehicles_to_evaluate), num_trust_steps);
+        benign_trust_traces = NaN(0, num_trust_steps);
 
         for ev_idx = 1:length(vehicles_to_evaluate)
             evaluator = vehicles_to_evaluate(ev_idx);
             evaluator_id = evaluator.vehicle_number;
             attacker_trust_trace = squeeze(evaluator.trust_log(1, :, attacker_vehicle_id));
             attacker_trust_traces(ev_idx, :) = attacker_trust_trace(:).';
+
+            benign_vehicle_ids = setdiff(all_vehicle_ids, [attacker_vehicle_id, evaluator_id]);
+            for benign_id = benign_vehicle_ids
+                benign_trust_trace = squeeze(evaluator.trust_log(1, :, benign_id));
+                benign_trust_trace = benign_trust_trace(:).';
+                trace_len = min(numel(benign_trust_trace), num_trust_steps);
+                if trace_len > 0
+                    benign_trust_traces(end + 1, 1:trace_len) = benign_trust_trace(1:trace_len); %#ok<AGROW>
+                end
+            end
 
             for time_idx = 1:num_trust_steps
                 trust_scores_now = squeeze(evaluator.trust_log(1, time_idx, :));
@@ -375,6 +389,12 @@ for case_idx = 1:total_num_attack_cases
         mean_attacker_trust_pre_by_case(case_idx) = mean(mean_attacker_trust_time(pre_attack_indices), 'omitnan');
         mean_attacker_trust_attack_by_case(case_idx) = mean(mean_attacker_trust_time(attack_indices), 'omitnan');
         mean_trust_degradation_by_case(case_idx) = mean(trust_degradation, 'omitnan');
+        false_positive_rejection_full_by_case(case_idx) = ...
+            finite_fraction_below(benign_trust_traces(:), trust_threshold);
+        false_positive_rejection_pre_by_case(case_idx) = ...
+            finite_fraction_below(benign_trust_traces(:, pre_attack_indices), trust_threshold);
+        false_positive_rejection_attack_by_case(case_idx) = ...
+            finite_fraction_below(benign_trust_traces(:, attack_indices), trust_threshold);
 
         attack_mean_trust = mean_attacker_trust_time(attack_indices);
         attack_mean_trust = attack_mean_trust(~isnan(attack_mean_trust));
@@ -561,7 +581,7 @@ end
 
 % Define Mix_test attack case descriptions for better labeling (complete list)
 all_attack_descriptions = {
-    'P Bias -5m', 'P Faulty 10m', 'V Bias -2m/s', 'V Faulty 2.5m/s', ...
+    'X Bias -5m', 'X Faulty 10m', 'V Bias -2.5m/s', 'V Faulty 2.5m/s', ...
     'DoS Attack'
 };
 
@@ -886,6 +906,7 @@ trust_weight_stats_headers = {'AttackType','AttackerVehicle','Case', ...
     'TrustDrop_PreMinusAttack','DetectionRate','MeanDetectionTime', ...
     'MeanAttackerSourceInfluence_PreAttack','MeanAttackerSourceInfluence_AttackWindow','AttackerSourceInfluenceDrop_PreMinusAttack', ...
     'AttackerSourceInfluenceZeroRate_AttackWindow','MeanTrustedNeighborCount_AttackWindow', ...
+    'FalsePositiveTrustRejection_Full','FalsePositiveTrustRejection_PreAttack','FalsePositiveTrustRejection_AttackWindow', ...
     'RMSE_Window_Start','RMSE_Window_End'};
 trust_weight_stats_rows = trust_weight_stats_headers;
 
@@ -907,6 +928,9 @@ for case_idx = 1:total_num_attack_cases
         attacker_weight_reduction_by_case(case_idx), ...
         attacker_weight_zero_rate_attack_by_case(case_idx), ...
         mean_trusted_neighbor_count_attack_by_case(case_idx), ...
+        false_positive_rejection_full_by_case(case_idx), ...
+        false_positive_rejection_pre_by_case(case_idx), ...
+        false_positive_rejection_attack_by_case(case_idx), ...
         rmse_time_window(1), ...
         rmse_time_window(2)};
 end
@@ -1229,7 +1253,8 @@ for case_idx = 1:total_num_attack_cases
     fprintf(['Case %d (%s): Trust pre %.3f -> attack %.3f (drop %.3f), ', ...
         'direct w0 pre %.3f -> attack %.3f, ', ...
         'global-source pre %.3f -> attack %.3f (drop %.3f), ', ...
-        'global-source zero-weight %.1f%%, trusted neighbors %.2f, detection %.1f%%'], ...
+        'global-source zero-weight %.1f%%, benign false rejection %.1f%%, ', ...
+        'trusted neighbors %.2f, detection %.1f%%'], ...
         case_idx, attack_descriptions{case_idx}, ...
         mean_attacker_trust_pre_by_case(case_idx), ...
         mean_attacker_trust_attack_by_case(case_idx), ...
@@ -1240,6 +1265,7 @@ for case_idx = 1:total_num_attack_cases
         mean_attacker_source_weight_attack_by_case(case_idx), ...
         attacker_source_weight_reduction_by_case(case_idx), ...
         100 * attacker_source_weight_zero_rate_attack_by_case(case_idx), ...
+        100 * false_positive_rejection_attack_by_case(case_idx), ...
         mean_trusted_neighbor_count_attack_by_case(case_idx), ...
         100 * detection_rate_by_case(case_idx));
     if isnan(mean_detection_time_by_case(case_idx))
@@ -1746,6 +1772,15 @@ function out = csv_quote(value)
         value_text = char(string(value));
     end
     out = ['"', strrep(value_text, '"', '""'), '"'];
+end
+
+function rate = finite_fraction_below(values, threshold)
+    values = values(isfinite(values));
+    if isempty(values)
+        rate = NaN;
+    else
+        rate = mean(values < threshold);
+    end
 end
 
 function safe_name = sanitize_result_filename(raw_name)

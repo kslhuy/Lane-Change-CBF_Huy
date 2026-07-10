@@ -1217,7 +1217,7 @@ This section reports three validation layers. The numerical campaign uses a five
 
 \subsection{Numerical Simulation Setup}
 
-The numerical simulation uses five vehicles with all-to-all V2V communication; each vehicle runs the observer, and small modeling variations are treated as uncertainties. The main parameters are $N=5$, $T_s=0.01$~s, wheelbase $L_w=2.8$~m, local-trust exponents $(\omega_p,\omega_v,\omega_\psi,\omega_u)=(1.4,1.0,1.2,0.8)$, class-filter decay $\beta_{\text{trust}}=0.5$, class confidence $C_{\mathrm{tr}}=0.2$, $q=5$ trust classes, heading tolerance $\psi_{\mathrm{th}}=0.15$~rad, $\theta_{\min}=0.5$, and observer-weight budgets $(\eta_0,\eta_N)=(0.4,0.4)$, leaving at least $0.2$ self-prediction mass.
+The numerical simulation uses five vehicles with all-to-all V2V communication; each vehicle runs the observer, and small modeling variations are treated as uncertainties. The main parameters are $N=5$, $T_s=0.01$~s, nominal geometry $l_f=1.11$~m and $l_r=1.74$~m, giving $L_w=2.85$~m, local-trust product-fusion exponents $(\omega_p,\omega_v,\omega_\psi,\omega_u)=(2.0,3.0,1.0,1.0)$ for position/distance, velocity, heading, and acceleration/input consistency, single-rating aging weight $\beta_{\text{trust}}=0.45$, class confidence $C_{\mathrm{tr}}=0.2$, $q=5$ trust classes, heading tolerance $\psi_{\mathrm{th}}=0.35$~rad, and trust threshold $\theta_{\min}=0.5$. The observer-weight module uses base gains $w_{0,\mathrm{base}}=0.4$ and $w_{\mathrm{self,base}}=0.2$, with nominal neighbor budget $0.4$ and per-neighbor cap $0.4$.
 
 For the direct-anchor case of Theorem~\ref{thm_observer}, the contraction check uses the scaled infinity norm $\|z\|_* = \|D_x z\|_\infty$, $D_x=\mathrm{diag}(0.01,0.01,1,0.2)$, to account for mixed state units. On $v\le33$~m/s and $|\delta|\le0.35$~rad, the induced one-step bicycle gain is $L_{x,\max}=1.066$. With accepted anchor mass $\underline w_0=\eta_0\theta_{\min}=0.20$, Lemma~\ref{lem_anchor_contraction} gives $\alpha=L_{x,\max}(1-\underline w_0)=0.853<1$ for the all-to-all accepted-anchor topology. If a target anchor is rejected, no reconstruction from communication alone is claimed; the implementation holds or marks the estimate as temporarily unreachable until an accepted anchored path returns.
 
@@ -1242,21 +1242,22 @@ The validation reports estimation accuracy, trust response, source-weight suppre
 % \end{tabular}
 % \end{table*}
 
-The main estimation metrics are RMSE, peak error, trust detection/recovery delay, and attacker-source influence. For state channel $q\in\{X,Y,\psi,v\}$ and vehicle $i$,
+The main numerical metrics are channel-wise RMSE, trust detection/recovery delay, attacker-source influence, and source suppression delay. The saved workbooks report longitudinal position $X$ (labeled distance in the MATLAB output), yaw $\psi$, speed $v$, and acceleration $a$. For reported channel $q\in\{X,\psi,v,a\}$ and vehicle $i$,
 \begin{equation}
 \operatorname{RMSE}_{q,i}=
 \sqrt{\frac{1}{|\mathcal{T}|}\sum_{t\in\mathcal{T}}
 \left(q_i(t)-\hat q_i(t)\right)^2}.
 \end{equation}
-For yaw, the error is $\mathrm{wrap}_{\pi}(\psi_i-\hat\psi_i)$. Saved-run attack-window RMSE is computed over $[10,15]$~s for non-attacker entries. Detection delay is measured from $10$~s until the mean trust assigned to the attacker falls below $\theta_{\mathrm{op}}=0.70$, and recovery delay is measured from $15$~s until the same trace remains above $\theta_{\mathrm{op}}$ for $0.5$~s. Attacker-source influence is the neighbor or global-source weight assigned to the attacker, excluding direct self-weight; suppression delay is the first attack-window time at which this influence remains below $10\%$ of its pre-attack mean for $0.5$~s. The raw combined RMSE used for ranking is
+For yaw, the error is $\mathrm{wrap}_{\pi}(\psi_i-\hat\psi_i)$. Saved-run attack-window RMSE is computed over $[10,15]$~s for non-attacker entries. Detection delay is measured from $10$~s until the mean trust assigned to the attacker falls below $\theta_{\mathrm{op}}=0.70$, and recovery delay is measured from $15$~s until the same trace remains above $\theta_{\mathrm{op}}$ for $0.5$~s. Attacker-source influence is the neighbor or global-source weight assigned to the attacker, excluding direct self-weight; suppression delay is the first attack-window time at which this influence remains below $10\%$ of its pre-attack mean for $0.5$~s. The raw combined RMSE used for ranking in the saved analysis is
 \begin{equation}
 \begin{aligned}
 \operatorname{RMSE}_{\mathrm{raw},i}
-&=\operatorname{RMSE}_{X,i}+\operatorname{RMSE}_{Y,i}\\
-&\quad+\operatorname{RMSE}_{\psi,i}+\operatorname{RMSE}_{v,i}.
+&=\operatorname{RMSE}_{X,i}
++\operatorname{RMSE}_{v,i}
++\operatorname{RMSE}_{a,i}.
 \end{aligned}
 \end{equation}
-Because this sum mixes physical units, it is used only as a relative severity index within the same setup. False-positive trust rejection is the fraction of benign source-target samples below the selected trust threshold. The saved data do not contain the full post-attack state/input histories needed for estimation-error recovery, so recovery is reported only for trust and source-weight traces. The closed-loop check is limited to positive path-projected spacing during the attack interval.
+Because this sum mixes physical units, it is used only as a relative severity index within the same setup; yaw is reported separately and is not included in this combined ranking score. False-positive trust rejection is computed separately as the fraction of benign non-self source trust samples with $\VT_{i,l}<\theta_{\min}$ over the reported window. The saved data do not contain the full post-attack state/input histories needed for estimation-error recovery, so recovery is reported only for trust and source-weight traces. The closed-loop check is limited to positive path-projected spacing during the attack interval.
 
 % \begin{table*}[!t]
 % \centering
@@ -1282,7 +1283,7 @@ Because this sum mixes physical units, it is used only as a relative severity in
 % Additional validation beyond the present five-vehicle all-to-all case can include sparse-topology tests, coordinated attacks from two vehicles, delayed trust decisions with rollback, and Monte Carlo runs with sensor noise, packet loss, and model mismatch. Sensitivity can be evaluated over $\theta_{\min}$, $\beta_{\text{trust}}$, rollback horizon $K$, and platoon sizes $N\in\{5,8,12\}$.
 
 \subsection{Attack Scenarios}\label{sec:attack_scenarios}
-The numerical campaign is organized around five bicycle-state attack cases, summarized in Table~\ref{tab:attack_mix}. Each attack is active on the interval $[10,15]$~s. The campaign contains 15 saved run files: local-channel corruption, global-channel corruption, and simultaneous local--global corruption, each crossed with attacker identities V1--V5. Within each file, the five attack IDs are evaluated as separate cases. Common random seeds are used for intermittent faults and packet drops, and the nominal true-state trajectory is fixed across runs. Unless stated otherwise, the summaries below aggregate over state channels, attacker locations, attack cases, corruption channels, and non-attacker target vehicles.
+The numerical campaign is organized around five bicycle-state attack cases, summarized in Table~\ref{tab:attack_mix}. Each attack is active on the interval $[10,15]$~s. The campaign contains 15 saved run files: local-channel corruption, global-channel corruption, and simultaneous local--global corruption, each crossed with attacker identities V1--V5. Within each file, the five attack IDs are evaluated as separate cases. The lead scenario, initial platoon state, and fixed parameter spread are reused across runs; intermittent faults, packet drops, and measurement noise use the random draws stored in each saved run, so the results should be interpreted as one saved stochastic campaign rather than Monte Carlo averages. Unless stated otherwise, the summaries below aggregate over state channels, attacker locations, attack cases, corruption channels, and non-attacker target vehicles.
 
 \begin{table}[!ht]
 \centering
@@ -1293,10 +1294,10 @@ The numerical campaign is organized around five bicycle-state attack cases, summ
 \toprule
 \textbf{Case} & \textbf{Type} & \textbf{Target} & \textbf{Parameters} \\
 \midrule
-1 & Bias & Planar position $(X,Y)$ & bias = $[-5,\,1]^\top$~m \\
-2 & Faulty & Planar position $(X,Y)$ & int. = 10~m, $p = 0.3$ \\
+1 & Bias & Longitudinal position $X$ & bias = $-5$~m \\
+2 & Faulty & Longitudinal position $X$ & std. = 10~m, $p = 0.5$ \\
 3 & Bias & Speed $v$ & bias = $-2.5$~m/s \\
-4 & Faulty & Speed $v$ & int. = 2.5~m/s, $p = 0.3$ \\
+4 & Faulty & Speed $v$ & std. = 2.5~m/s, $p = 0.5$ \\
 5 & Drop & All bicycle-state packets & $p_\text{drop} = 0.5$ \\
 \bottomrule
 \end{tabular}
@@ -1338,7 +1339,7 @@ The numerical campaign is organized around five bicycle-state attack cases, summ
 %     \label{fig:trust_Dos}
 % \end{figure}
 
-The trust layer detected every injected attack. On the $T_s=0.01$~s grid, the mean detection delay is $0.0146$~s, with case-level averages from $0.0075$~s to $0.0500$~s. Mean attacker trust decreases from $0.822$ before attack to $0.207$ during attack, a $0.615$ drop or about $74.8\%$, and returns above $\theta_{\mathrm{op}}=0.70$ after $0.324$~s on average. At the observer input, mean attacker-source influence decreases from $0.1386$ to $0.0095$, a $93.1\%$ reduction, and is exactly zero in $88.5\%$ of attack-window samples.
+The trust layer detected every injected attack. On the $T_s=0.01$~s grid, the mean detection delay is $0.0146$~s, with case-level averages from $0.0075$~s to $0.0500$~s. Mean attacker trust decreases from $0.822$ before attack to $0.207$ during attack, a $0.615$ drop or about $74.8\%$, and returns above $\theta_{\mathrm{op}}=0.70$ after $0.324$~s on average. At the observer input, mean attacker-source influence decreases from $0.1386$ to $0.0095$, a $93.1\%$ reduction, and is exactly zero in $88.5\%$ of attack-window samples. False-positive trust rejection, measured over benign non-self source samples against $\theta_{\min}=0.5$, averages $7.94\%$ during the attack window; the corresponding local, combined local--global, and global rates are $11.88\%$, $11.86\%$, and $0.08\%$.
 
 Table~\ref{tab:attack_mode_rmse_summary} compares the three corruption channels. Global-channel corruption is most damaging, with mean raw combined RMSE $0.1666$, about $22.0\%$ above local-only corruption and $18.7\%$ above simultaneous local--global corruption.
 
@@ -1360,7 +1361,7 @@ Global & $0.1666$ & $0.3175$ \\
 
 The both-channel case remains closer to local-only than to global-only corruption because the added local inconsistency makes the compromised source easier to classify and quarantine, limiting its effective observer weight.
 
-Table~\ref{tab:case_ranking} ranks the five attack cases by mean raw combined RMSE over all channels and attackers. Case~2, the intermittent $10$~m position fault, is most severe with mean raw combined RMSE $0.1737$. The largest single vehicle-level impact also occurs in Case~2: global corruption from attacker V5 drives target V4 to raw combined RMSE $0.3175$.
+Table~\ref{tab:case_ranking} ranks the five attack cases by mean raw combined RMSE over all channels and attackers. Case~2, the intermittent $10$~m longitudinal-position fault, is most severe with mean raw combined RMSE $0.1737$. The largest single vehicle-level impact also occurs in Case~2: global corruption from attacker V5 drives target V4 to raw combined RMSE $0.3175$.
 
 \begin{table}[!t]
 \centering
@@ -1371,16 +1372,16 @@ Table~\ref{tab:case_ranking} ranks the five attack cases by mean raw combined RM
 \toprule
 \textbf{Case} & \textbf{Meaning} & \textbf{Mean RMSE} & \textbf{Attack trust} \\
 \midrule
-2 & P Faulty $10$~m        & $0.1737$ & $0.301$ \\
+2 & X Faulty $10$~m        & $0.1737$ & $0.301$ \\
 4 & V Faulty $2.5$~m/s     & $0.1481$ & $0.313$ \\
 5 & DoS                    & $0.1418$ & $0.374$ \\
 3 & V Bias $-2.5$~m/s      & $0.1403$ & $0.034$ \\
-1 & P Bias $-5$~m          & $0.1355$ & $0.013$ \\
+1 & X Bias $-5$~m          & $0.1355$ & $0.013$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Fault-type attacks, especially the $10$~m position fault, create the largest estimation degradation. Bias attacks produce smaller RMSE but stronger trust suppression because their persistent offsets are easier to recognize. Thus, low attacker trust confirms detection, whereas RMSE measures residual damage before and during weight suppression. The worst cell is used only as a campaign maximum, not as evidence that one attacker location is intrinsically more harmful; the robust conclusion is that global position-fault corruption dominates residual estimation error.
+Fault-type attacks, especially the $10$~m longitudinal-position fault, create the largest estimation degradation. Bias attacks produce smaller RMSE but stronger trust suppression because their persistent offsets are easier to recognize. Thus, low attacker trust confirms detection, whereas RMSE measures residual damage before and during weight suppression. The worst cell is used only as a campaign maximum, not as evidence that one attacker location is intrinsically more harmful; the robust conclusion is that global longitudinal-position-fault corruption dominates residual estimation error.
 
 Table~\ref{tab:source_suppression_by_channel} reports attacker-as-source influence, excluding direct self-weight, so the values measure how much the corrupted vehicle can affect other distributed observers.
 
@@ -1402,7 +1403,7 @@ Global & $0.0159$ & $82.6\%$ & $0.990$~s \\
 
 The both-channel case has the smallest residual source influence, with average attack-window source weight $0.0008$ and zero-weight rate $99.1\%$, explaining why its RMSE remains close to local-only corruption. Global-only corruption is more damaging because it can remain partially trusted longer, with a larger attack-window source weight and slower suppression delay.
 
-Overall, the trust layer identifies all saved attacks with mean delay $0.0146$~s, reduces attacker-source influence by $93.1\%$ on average, and assigns zero source weight in most attack-window samples. The remaining limitation is residual damage from global position-fault corruption before the source weight has fully collapsed, especially in Case~2; this condition should guide future tuning of trust thresholds, source suppression, and rollback activation.
+Overall, the trust layer identifies all saved attacks with mean delay $0.0146$~s, reduces attacker-source influence by $93.1\%$ on average, and assigns zero source weight in most attack-window samples. The remaining limitation is residual damage from global longitudinal-position-fault corruption before the source weight has fully collapsed, especially in Case~2; this condition should guide future tuning of trust thresholds, source suppression, and rollback activation.
 
 % Figure~\ref{fig:trust_Dos} shows the trust evolution for the DoS case. During $[10, 15]$~s, the trust scores of V2, V3, and V4 drop below the threshold $\theta_{\min}=0.5$ and recover after the attack ends, showing that the proposed mechanism detects and isolates unreliable data online.
 
@@ -1559,7 +1560,7 @@ The planar bicycle states are first projected onto the road tangent,
 \end{align}
 where $p_i=[X_i,Y_i]^\top$. For follower $i\ge2$, let $\mathcal{P}_i=\{1,\ldots,i-1\}$ denote the cooperative predecessors. The equations use one-based platoon indexing; the experimental table keeps platform labels, where V0 corresponds to vehicle $1$, V1 to vehicle $2$, and so on.
 
-The closed-loop validation uses the dominant Case~2 intermittent position-fault family, instantiated on the platform as a V0 attack schedule. This is a check of the dominant attack family, not a repeat of the exact worst attacker--target cell. Safety is evaluated by the minimum projected bumper-to-bumper spacing
+The closed-loop validation uses the dominant Case~2 intermittent longitudinal-position-fault family, instantiated on the platform as a V0 attack schedule. This is a check of the dominant attack family, not a repeat of the exact worst attacker--target cell. Safety is evaluated by the minimum projected bumper-to-bumper spacing
 \begin{equation}
     s_{\min}=\min_{k\in\mathcal{T}_{\mathrm{att}}}\min_{i=2,\ldots,N}
     \left((p_{i-1}(k)-p_i(k))^\top e_{\parallel}(k)-L\right).

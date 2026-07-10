@@ -12,14 +12,25 @@ if ~exist(index_file, 'file')
     error('Missing results index: %s', index_file);
 end
 
-attack_descriptions = {'P Bias -5m', 'P Faulty 10m', 'V Bias -2m/s', ...
+attack_descriptions = {'X Bias -5m', 'X Faulty 10m', 'V Bias -2.5m/s', ...
     'V Faulty 2.5m/s', 'DoS Attack'};
-trust_threshold = 0.7;
+trust_detection_threshold = 0.7;
+observer_rejection_threshold = 0.5;
 recovery_fraction = 0.90;
 sustain_seconds = 0.5;
 
 run_index = readtable(index_file, 'TextType', 'string', ...
     'Delimiter', ',', 'VariableNamingRule', 'preserve');
+
+% Keep the paper campaign to one saved run per attack channel and attacker.
+% This protects the 15-run analysis if results_index.csv contains later reruns.
+run_keys = string(run_index.DataTypeAttack) + "|" + string(run_index.AttackerVehicle);
+[~, unique_run_idx] = unique(run_keys, 'stable');
+if numel(unique_run_idx) < height(run_index)
+    warning('Found %d duplicate channel/attacker run(s); using the first saved run for each pair.', ...
+        height(run_index) - numel(unique_run_idx));
+    run_index = run_index(sort(unique_run_idx), :);
+end
 
 case_rows = {};
 run_rows = {};
@@ -58,6 +69,9 @@ for run_idx = 1:height(run_index)
     all_case_raw = [];
     all_case_detection_delay = [];
     all_case_trust_recovery_delay = [];
+    all_case_false_positive_rejection_full = [];
+    all_case_false_positive_rejection_pre = [];
+    all_case_false_positive_rejection_attack = [];
     all_case_source_suppression_delay = [];
     all_case_combined_suppression_delay = [];
     all_case_source_recovery_delay = [];
@@ -87,8 +101,8 @@ for run_idx = 1:height(run_index)
 
         non_attacker_ids = unique_vehicle_ids(unique_vehicle_ids ~= attacker_id);
         case_log = logs.all_case_trust_logs{case_idx};
-        [time_vec, mean_trust, mean_source_influence, mean_combined_influence] = ...
-            extract_trust_weight_traces(case_log, non_attacker_ids, attacker_id, dt);
+        [time_vec, mean_trust, mean_source_influence, mean_combined_influence, benign_trust_traces] = ...
+            extract_trust_weight_traces(case_log, non_attacker_ids, attacker_id, unique_vehicle_ids, dt);
 
         pre_idx = 1:max(1, attack_start_idx - 1);
         attack_idx = attack_start_idx:min(attack_end_idx, numel(time_vec));
@@ -98,6 +112,12 @@ for run_idx = 1:height(run_index)
         trust_attack = mean(mean_trust(attack_idx), 'omitnan');
         trust_post = mean(mean_trust(post_idx), 'omitnan');
         trust_final_1s = final_window_mean(mean_trust, dt, 1.0);
+        false_positive_rejection_full = false_positive_rejection_rate( ...
+            benign_trust_traces, 1:numel(time_vec), observer_rejection_threshold);
+        false_positive_rejection_pre = false_positive_rejection_rate( ...
+            benign_trust_traces, pre_idx, observer_rejection_threshold);
+        false_positive_rejection_attack = false_positive_rejection_rate( ...
+            benign_trust_traces, attack_idx, observer_rejection_threshold);
 
         source_pre = mean(mean_source_influence(pre_idx), 'omitnan');
         source_attack = mean(mean_source_influence(attack_idx), 'omitnan');
@@ -109,7 +129,7 @@ for run_idx = 1:height(run_index)
         combined_post = mean(mean_combined_influence(post_idx), 'omitnan');
         combined_final_1s = final_window_mean(mean_combined_influence, dt, 1.0);
 
-        detection_time = first_sustained_time(time_vec, mean_trust < trust_threshold, ...
+        detection_time = first_sustained_time(time_vec, mean_trust < trust_detection_threshold, ...
             attack_start_idx, min(attack_end_idx, numel(time_vec)), 1);
         if isnan(detection_time)
             detection_delay = NaN;
@@ -117,7 +137,7 @@ for run_idx = 1:height(run_index)
             detection_delay = detection_time - t_start;
         end
 
-        trust_recovery_time = first_sustained_time(time_vec, mean_trust >= trust_threshold, ...
+        trust_recovery_time = first_sustained_time(time_vec, mean_trust >= trust_detection_threshold, ...
             min(attack_end_idx + 1, numel(time_vec)), numel(time_vec), sustain_steps);
         if isnan(trust_recovery_time)
             trust_recovery_delay = NaN;
@@ -182,6 +202,7 @@ for run_idx = 1:height(run_index)
             mean(dist_rmse, 'omitnan'), mean(orient_rmse, 'omitnan'), ...
             mean(vel_rmse, 'omitnan'), mean(acc_rmse, 'omitnan'), ...
             trust_pre, trust_attack, trust_pre - trust_attack, trust_post, trust_final_1s, ...
+            false_positive_rejection_full, false_positive_rejection_pre, false_positive_rejection_attack, ...
             detection_rate, workbook_detection_time, workbook_detection_delay, detection_delay, ...
             trust_recovery_time, trust_recovery_delay, ...
             source_pre, source_attack, source_pre - source_attack, source_zero_rate, source_post, source_final_1s, ...
@@ -193,6 +214,9 @@ for run_idx = 1:height(run_index)
         all_case_raw = [all_case_raw; raw_combined(:)];
         all_case_detection_delay = [all_case_detection_delay; workbook_detection_delay];
         all_case_trust_recovery_delay = [all_case_trust_recovery_delay; trust_recovery_delay];
+        all_case_false_positive_rejection_full = [all_case_false_positive_rejection_full; false_positive_rejection_full];
+        all_case_false_positive_rejection_pre = [all_case_false_positive_rejection_pre; false_positive_rejection_pre];
+        all_case_false_positive_rejection_attack = [all_case_false_positive_rejection_attack; false_positive_rejection_attack];
         all_case_source_suppression_delay = [all_case_source_suppression_delay; source_suppression_delay];
         all_case_combined_suppression_delay = [all_case_combined_suppression_delay; combined_suppression_delay];
         all_case_source_recovery_delay = [all_case_source_recovery_delay; source_recovery_delay];
@@ -219,6 +243,9 @@ for run_idx = 1:height(run_index)
         min(all_case_raw, [], 'omitnan'), max(all_case_raw, [], 'omitnan'), ...
         mean(all_case_detection_delay, 'omitnan'), ...
         mean(all_case_trust_recovery_delay, 'omitnan'), ...
+        mean(all_case_false_positive_rejection_full, 'omitnan'), ...
+        mean(all_case_false_positive_rejection_pre, 'omitnan'), ...
+        mean(all_case_false_positive_rejection_attack, 'omitnan'), ...
         mean(all_case_source_suppression_delay, 'omitnan'), ...
         mean(all_case_combined_suppression_delay, 'omitnan'), ...
         mean(all_case_source_recovery_delay, 'omitnan'), ...
@@ -229,6 +256,7 @@ case_headers = {'DataTypeAttack','AttackerVehicle','Case','AttackDescription', .
     'MeanRawCombinedRMSE','StdRawCombinedRMSE','MinRawCombinedRMSE','MaxRawCombinedRMSE', ...
     'MeanDistanceRMSE','MeanOrientationRMSE','MeanVelocityRMSE','MeanAccelerationRMSE', ...
     'MeanTrustPre','MeanTrustAttack','TrustDrop','MeanTrustPost','Final1sTrust', ...
+    'FalsePositiveRejectionFull','FalsePositiveRejectionPre','FalsePositiveRejectionAttack', ...
     'DetectionRate','MeanDetectionTime_s','WorkbookDetectionDelay_s','MeanTraceDetectionDelay_s', ...
     'TrustRecoveryTime_s','TrustRecoveryDelay_s', ...
     'MeanSourceInfluencePre','MeanSourceInfluenceAttack','SourceInfluenceDrop', ...
@@ -244,6 +272,7 @@ case_tbl = cell2table(case_rows, 'VariableNames', case_headers);
 run_headers = {'DataTypeAttack','AttackerVehicle','RunTimestamp', ...
     'MeanRawCombinedRMSE','StdRawCombinedRMSE','MinRawCombinedRMSE','MaxRawCombinedRMSE', ...
     'MeanDetectionDelay_s','MeanTrustRecoveryDelay_s', ...
+    'MeanFalsePositiveRejectionFull','MeanFalsePositiveRejectionPre','MeanFalsePositiveRejectionAttack', ...
     'MeanSourceSuppressionDelay10pctPre_s','MeanCombinedSuppressionDelay10pctPre_s', ...
     'MeanSourceRecoveryDelay90pctPre_s','MeanCombinedRecoveryDelay90pctPre_s'};
 run_tbl = cell2table(run_rows, 'VariableNames', run_headers);
@@ -262,7 +291,7 @@ writetable(vehicle_tbl, vehicle_csv);
 
 report_file = fullfile(results_root, 'paper_analysis_summary.md');
 write_report(report_file, case_tbl, run_tbl, vehicle_tbl, attack_descriptions, ...
-    trust_threshold, recovery_fraction, sustain_seconds, case_csv, run_csv, vehicle_csv);
+    trust_detection_threshold, observer_rejection_threshold, recovery_fraction, sustain_seconds, case_csv, run_csv, vehicle_csv);
 
 fprintf('Wrote %s\n', case_csv);
 fprintf('Wrote %s\n', run_csv);
@@ -276,10 +305,11 @@ function ids = extract_vehicle_ids(labels)
     end
 end
 
-function [time_vec, mean_trust, mean_source, mean_combined] = extract_trust_weight_traces(case_log, evaluator_ids, attacker_id, dt)
+function [time_vec, mean_trust, mean_source, mean_combined, benign_trust_traces] = extract_trust_weight_traces(case_log, evaluator_ids, attacker_id, all_vehicle_ids, dt)
     trust_traces = [];
     source_traces = [];
     combined_traces = [];
+    benign_trust_traces = [];
 
     for evaluator_id = evaluator_ids
         vehicle_field = sprintf('vehicle_%d', evaluator_id);
@@ -291,6 +321,16 @@ function [time_vec, mean_trust, mean_source, mean_combined] = extract_trust_weig
         trust_log = case_log.(vehicle_field);
         trust_trace = squeeze(trust_log(1, :, attacker_id));
         trust_traces(end + 1, 1:numel(trust_trace)) = trust_trace(:).'; %#ok<AGROW>
+
+        benign_ids = setdiff(all_vehicle_ids, [attacker_id, evaluator_id]);
+        for benign_id = benign_ids
+            if benign_id <= size(trust_log, 3)
+                benign_trace = squeeze(trust_log(1, :, benign_id));
+                if ~isempty(benign_trace)
+                    benign_trust_traces(end + 1, 1:numel(benign_trace)) = benign_trace(:).'; %#ok<AGROW>
+                end
+            end
+        end
 
         observer = case_log.(observer_field);
         if ~isfield(observer, 'target_weights') || isempty(observer.target_weights)
@@ -327,11 +367,12 @@ function [time_vec, mean_trust, mean_source, mean_combined] = extract_trust_weig
         combined_traces(end + 1, 1:n_steps) = combined; %#ok<AGROW>
     end
 
-    n = max([size(trust_traces, 2), size(source_traces, 2), size(combined_traces, 2)]);
+    n = max([size(trust_traces, 2), size(source_traces, 2), size(combined_traces, 2), size(benign_trust_traces, 2)]);
     time_vec = (1:n) * dt;
     mean_trust = mean(pad_to_width(trust_traces, n), 1, 'omitnan');
     mean_source = mean(pad_to_width(source_traces, n), 1, 'omitnan');
     mean_combined = mean(pad_to_width(combined_traces, n), 1, 'omitnan');
+    benign_trust_traces = pad_to_width(benign_trust_traces, n);
 end
 
 function X = pad_to_width(X, n)
@@ -341,6 +382,24 @@ function X = pad_to_width(X, n)
     end
     if size(X, 2) < n
         X(:, end + 1:n) = NaN;
+    end
+end
+
+function rate = false_positive_rejection_rate(trust_traces, indices, threshold)
+    rate = NaN;
+    if isempty(trust_traces) || isempty(indices)
+        return;
+    end
+
+    indices = indices(indices >= 1 & indices <= size(trust_traces, 2));
+    if isempty(indices)
+        return;
+    end
+
+    values = trust_traces(:, indices);
+    values = values(isfinite(values));
+    if ~isempty(values)
+        rate = mean(values < threshold);
     end
 end
 
@@ -393,7 +452,7 @@ function out = pct(x, precision)
 end
 
 function write_report(report_file, case_tbl, run_tbl, vehicle_tbl, attack_descriptions, ...
-    trust_threshold, recovery_fraction, sustain_seconds, case_csv, run_csv, vehicle_csv)
+    trust_detection_threshold, observer_rejection_threshold, recovery_fraction, sustain_seconds, case_csv, run_csv, vehicle_csv)
     fid = fopen(report_file, 'w');
     if fid < 0
         error('Could not open report for writing: %s', report_file);
@@ -401,10 +460,11 @@ function write_report(report_file, case_tbl, run_tbl, vehicle_tbl, attack_descri
     cleanup = onCleanup(@() fclose(fid));
 
     fprintf(fid, '# Paper Analysis Summary\n\n');
-    fprintf(fid, 'Source data: 15 saved runs under `test/results` covering local, global, and both attack channels, attackers V1-V5, and five Mix_test cases. Attack and RMSE window: 10-15 s.\n\n');
+    fprintf(fid, 'Source data: %d saved runs under `test/results` covering local, global, and both attack channels, attackers V1-V5, and five Mix_test cases. Attack and RMSE window: 10-15 s.\n\n', height(run_tbl));
     fprintf(fid, 'Metric definitions used here:\n\n');
-    fprintf(fid, '- Detection delay: first time after 10 s when mean trust in the attacker falls below %.2f; workbook detection is also reported as `MeanDetectionTime - 10`.\n', trust_threshold);
-    fprintf(fid, '- Trust recovery delay: first time after 15 s when mean trust in the attacker stays above %.2f for %.1f s.\n', trust_threshold, sustain_seconds);
+    fprintf(fid, '- Detection delay: first time after 10 s when mean trust in the attacker falls below %.2f; workbook detection is also reported as `MeanDetectionTime - 10`.\n', trust_detection_threshold);
+    fprintf(fid, '- Trust recovery delay: first time after 15 s when mean trust in the attacker stays above %.2f for %.1f s.\n', trust_detection_threshold, sustain_seconds);
+    fprintf(fid, '- False-positive trust rejection: fraction of benign non-self source trust samples with trust below the observer rejection threshold %.2f.\n', observer_rejection_threshold);
     fprintf(fid, '- Source influence: attacker-as-neighbor/global-source weight, excluding direct self-weight.\n');
     fprintf(fid, '- Combined influence: max of direct attacker target weight and attacker source influence. The workbook columns named `MeanAttackerSourceInfluence_*` are mislabeled and contain this combined influence.\n');
     fprintf(fid, '- Suppression delay: first time during 10-15 s when influence stays below 10%% of its pre-attack mean for %.1f s.\n', sustain_seconds);
@@ -416,6 +476,7 @@ function write_report(report_file, case_tbl, run_tbl, vehicle_tbl, attack_descri
     fprintf(fid, '- Mean workbook detection delay: %s s; detection rate is %s across case-level entries.\n', ...
         fmt(mean(case_tbl.WorkbookDetectionDelay_s, 'omitnan'), 4), pct(mean(case_tbl.DetectionRate, 'omitnan'), 1));
     fprintf(fid, '- Mean trace-based trust recovery delay after attack end: %s s.\n', fmt(mean(case_tbl.TrustRecoveryDelay_s, 'omitnan'), 3));
+    fprintf(fid, '- Mean false-positive trust rejection during the attack window: %s.\n', pct(mean(case_tbl.FalsePositiveRejectionAttack, 'omitnan'), 2));
     fprintf(fid, '- Mean source-influence suppression delay: %s s; mean combined-influence suppression delay: %s s.\n', ...
         fmt(mean(case_tbl.SourceSuppressionDelay10pctPre_s, 'omitnan'), 3), ...
         fmt(mean(case_tbl.CombinedSuppressionDelay10pctPre_s, 'omitnan'), 3));
@@ -424,17 +485,18 @@ function write_report(report_file, case_tbl, run_tbl, vehicle_tbl, attack_descri
         fmt(mean(case_tbl.CombinedRecoveryDelay90pctPre_s, 'omitnan'), 3));
 
     fprintf(fid, '## By Attack Channel\n\n');
-    fprintf(fid, '| Channel | Mean raw RMSE | Max raw RMSE | Trust attack | Trust drop | Detection delay (s) | Trust recovery (s) | Source attack weight | Source zero rate | Source suppression (s) |\n');
-    fprintf(fid, '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n');
+    fprintf(fid, '| Channel | Mean raw RMSE | Max raw RMSE | Trust attack | Trust drop | FP rejection | Detection delay (s) | Trust recovery (s) | Source attack weight | Source zero rate | Source suppression (s) |\n');
+    fprintf(fid, '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n');
     channels = unique(case_tbl.DataTypeAttack, 'stable');
     for i = 1:numel(channels)
         mask = case_tbl.DataTypeAttack == channels(i);
-        fprintf(fid, '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n', ...
+        fprintf(fid, '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n', ...
             channels(i), ...
             fmt(mean(case_tbl.MeanRawCombinedRMSE(mask), 'omitnan'), 4), ...
             fmt(max(case_tbl.MaxRawCombinedRMSE(mask), [], 'omitnan'), 4), ...
             fmt(mean(case_tbl.MeanTrustAttack(mask), 'omitnan'), 3), ...
             fmt(mean(case_tbl.TrustDrop(mask), 'omitnan'), 3), ...
+            pct(mean(case_tbl.FalsePositiveRejectionAttack(mask), 'omitnan'), 2), ...
             fmt(mean(case_tbl.WorkbookDetectionDelay_s(mask), 'omitnan'), 3), ...
             fmt(mean(case_tbl.TrustRecoveryDelay_s(mask), 'omitnan'), 3), ...
             fmt(mean(case_tbl.MeanSourceInfluenceAttack(mask), 'omitnan'), 4), ...
@@ -444,15 +506,16 @@ function write_report(report_file, case_tbl, run_tbl, vehicle_tbl, attack_descri
     fprintf(fid, '\n');
 
     fprintf(fid, '## By Attack Case\n\n');
-    fprintf(fid, '| Case | Description | Mean raw RMSE | Trust attack | Trust drop | Detection delay (s) | Trust recovery (s) | Source attack weight | Source zero rate |\n');
-    fprintf(fid, '|---:|---|---:|---:|---:|---:|---:|---:|---:|\n');
+    fprintf(fid, '| Case | Description | Mean raw RMSE | Trust attack | Trust drop | FP rejection | Detection delay (s) | Trust recovery (s) | Source attack weight | Source zero rate |\n');
+    fprintf(fid, '|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|\n');
     for case_idx = 1:numel(attack_descriptions)
         mask = case_tbl.Case == "Case " + case_idx;
-        fprintf(fid, '| %d | %s | %s | %s | %s | %s | %s | %s | %s |\n', ...
+        fprintf(fid, '| %d | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n', ...
             case_idx, string(attack_descriptions{case_idx}), ...
             fmt(mean(case_tbl.MeanRawCombinedRMSE(mask), 'omitnan'), 4), ...
             fmt(mean(case_tbl.MeanTrustAttack(mask), 'omitnan'), 3), ...
             fmt(mean(case_tbl.TrustDrop(mask), 'omitnan'), 3), ...
+            pct(mean(case_tbl.FalsePositiveRejectionAttack(mask), 'omitnan'), 2), ...
             fmt(mean(case_tbl.WorkbookDetectionDelay_s(mask), 'omitnan'), 3), ...
             fmt(mean(case_tbl.TrustRecoveryDelay_s(mask), 'omitnan'), 3), ...
             fmt(mean(case_tbl.MeanSourceInfluenceAttack(mask), 'omitnan'), 4), ...
@@ -473,15 +536,17 @@ function write_report(report_file, case_tbl, run_tbl, vehicle_tbl, attack_descri
         fmt(run_tbl.MeanRawCombinedRMSE(run_idx), 4));
 
     fprintf(fid, '\n## Suggested Paper Text\n\n');
-    fprintf(fid, 'Across the 15 saved Mix_test runs, the trust layer detected all injected attacks within approximately %.3f s after attack onset. Mean trust in the attacker decreased from a pre-attack level near %.3f to %.3f during the 10-15 s attack window, while attacker source influence was strongly attenuated from %.3f to %.3f on average. After the attack ended, the mean trust trace recovered above the %.2f operational threshold after %.3f s on average, indicating that the mechanism suppresses malicious data rapidly while allowing trust to recover once the attack stops.\n\n', ...
+    fprintf(fid, 'Across the %d saved Mix_test runs, the trust layer detected all injected attacks within approximately %.3f s after attack onset. Mean trust in the attacker decreased from a pre-attack level near %.3f to %.3f during the 10-15 s attack window, while attacker source influence was strongly attenuated from %.3f to %.3f on average. After the attack ended, the mean trust trace recovered above the %.2f operational threshold after %.3f s on average. Benign-source false rejection averaged %s during the attack window at the %.2f observer threshold.\n\n', ...
+        height(run_tbl), ...
         mean(case_tbl.WorkbookDetectionDelay_s, 'omitnan'), ...
         mean(case_tbl.MeanTrustPre, 'omitnan'), ...
         mean(case_tbl.MeanTrustAttack, 'omitnan'), ...
         mean(case_tbl.MeanSourceInfluencePre, 'omitnan'), ...
         mean(case_tbl.MeanSourceInfluenceAttack, 'omitnan'), ...
-        trust_threshold, mean(case_tbl.TrustRecoveryDelay_s, 'omitnan'));
+        trust_detection_threshold, mean(case_tbl.TrustRecoveryDelay_s, 'omitnan'), ...
+        pct(mean(case_tbl.FalsePositiveRejectionAttack, 'omitnan'), 2), observer_rejection_threshold);
 
-    fprintf(fid, 'The global-channel attacks produced the largest estimation degradation, with a mean raw combined RMSE of %s compared with %s for local-only and %s for combined local+global attacks. Position-fault attacks were the most severe case family by mean raw RMSE, whereas the constant bias cases produced the strongest trust suppression. These results support the interpretation that the observer remains numerically stable under attack because the trust-weight mechanism removes the attacker as a reliable source within the attack window.\n\n', ...
+    fprintf(fid, 'The global-channel attacks produced the largest estimation degradation, with a mean raw combined RMSE of %s compared with %s for local-only and %s for combined local+global attacks. Longitudinal-position-fault attacks were the most severe case family by mean raw RMSE, whereas the constant bias cases produced the strongest trust suppression. These results support the interpretation that the observer remains numerically stable under attack because the trust-weight mechanism removes the attacker as a reliable source within the attack window.\n\n', ...
         channel_mean(case_tbl, "global"), channel_mean(case_tbl, "local"), channel_mean(case_tbl, "both"));
 
     fprintf(fid, '## Output Files\n\n');

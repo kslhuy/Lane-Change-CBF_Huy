@@ -1,5 +1,5 @@
 # Fdb version 4
-["bibtex Manuscript_Shengya"] 0 "Manuscript_Shengya.aux" "Manuscript_Shengya.bbl" "Manuscript_Shengya" 1783696429.65438 0
+["bibtex Manuscript_Shengya"] 0 "Manuscript_Shengya.aux" "Manuscript_Shengya.bbl" "Manuscript_Shengya" 1783699158.39103 0
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/bibtex/bst/ieeetran/IEEEtran.bst" 1440622569 57748 7c8250ecf02814ce6ddc0cdbb63df1dd ""
   "Manuscript_Shengya.aux" 0 -1 0 "pdflatex"
   "biblio.bib" 0 -1 0 ""
@@ -7,7 +7,7 @@
   "Manuscript_Shengya.bbl"
   "Manuscript_Shengya.blg"
   (rewritten before read)
-["pdflatex"] 1783696423.86151 "c:/Users/Quang Huy Nugyen/Desktop/PHD_paper/Simulation/HUY_ALL_TEST/Lane-Change-CBF_Huy/Lane-Change/test/python/Manuscript_Shengya.tex" "Manuscript_Shengya.pdf" "Manuscript_Shengya" 1783696429.65508 2
+["pdflatex"] 1783699152.47746 "c:/Users/Quang Huy Nugyen/Desktop/PHD_paper/Simulation/HUY_ALL_TEST/Lane-Change-CBF_Huy/Lane-Change/test/python/Manuscript_Shengya.tex" "Manuscript_Shengya.pdf" "Manuscript_Shengya" 1783699158.39184 2
   "C:/Users/Quang Huy Nugyen/AppData/Local/MiKTeX/fonts/map/pdftex/pdftex.map" 1781980141 165209 65ead702fc4d2014bae07fb962335ea7 ""
   "C:/Users/Quang Huy Nugyen/AppData/Local/MiKTeX/miktex/data/le/pdftex/pdflatex.fmt" 1708892368 24235342 323bfbfe4766a02092c40689ab514069 ""
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/base/8r.enc" 1458473887 4993 80dc9bab7f31fb78a000ccfed0e27cab ""
@@ -78,7 +78,6 @@
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmr7.pfb" 1247596667 32762 7fee39e011c23b3589931effd97b9702 ""
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmr9.pfb" 1247596666 33993 9b89b85fd2d9df0482bd47194d1d3bf3 ""
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmsy10.pfb" 1247596667 32569 5e5ddc8df908dea60932f3c484a54c0d ""
-  "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmsy5.pfb" 1247596666 32915 7bf7720c61a5b3a7ff25b0964421c9b6 ""
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmsy6.pfb" 1247596667 32587 65067f817f408bc71a7312f3d9828a9b ""
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmsy7.pfb" 1247596666 32716 08e384dc442464e7285e891af9f45947 ""
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/fonts/type1/public/amsfonts/cm/cmsy9.pfb" 1247596666 32442 c975af247b6702f7ca0c299af3616b80 ""
@@ -277,11 +276,11 @@
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/tex/latex/tools/bm.sty" 1700599895 13231 2c742011581e2bf297e33520567d9464 ""
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/tex/latex/url/url.sty" 1388490452 12796 8edb7d69a20b857904dd0ea757c14ec9 ""
   "C:/Users/Quang Huy Nugyen/AppData/Local/Programs/MiKTeX/tex/latex/xcolor/xcolor.sty" 1700127522 55487 80a65caedd3722f4c20a14a69e785d8f ""
-  "Manuscript_Shengya.aux" 1783696425 16905 715a235ac3431c1a8cb6d997bd8df33b "pdflatex"
+  "Manuscript_Shengya.aux" 1783699154 16905 9042a1bf26b6fe4e84648debd6d20c91 "pdflatex"
   "Manuscript_Shengya.bbl" 0 -1 0 "bibtex Manuscript_Shengya"
-  "Manuscript_Shengya.out" 1783696425 8980 3a45594ce74989f47cb749e56721e1f0 "pdflatex"
-  "Manuscript_Shengya.tex" 1783695030 124509 b0b0c1ed29f554c289d1ff696c9e6585 ""
-  "c:/Users/Quang Huy Nugyen/Desktop/PHD_paper/Simulation/HUY_ALL_TEST/Lane-Change-CBF_Huy/Lane-Change/test/python/Manuscript_Shengya.tex" 1783695030 124509 b0b0c1ed29f554c289d1ff696c9e6585 ""
+  "Manuscript_Shengya.out" 1783699154 8980 3a45594ce74989f47cb749e56721e1f0 "pdflatex"
+  "Manuscript_Shengya.tex" 1783699076 125487 555a92bbf8a1ea7230bdb4e757e894a2 ""
+  "c:/Users/Quang Huy Nugyen/Desktop/PHD_paper/Simulation/HUY_ALL_TEST/Lane-Change-CBF_Huy/Lane-Change/test/python/Manuscript_Shengya.tex" 1783699076 125487 555a92bbf8a1ea7230bdb4e757e894a2 ""
   "img/XY_case2_global.eps" 0 -1 0 ""
   "img/XY_case2_local.eps" 0 -1 0 ""
   "img/controller_fusion.eps" 0 -1 0 ""

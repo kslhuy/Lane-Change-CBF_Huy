@@ -354,6 +354,9 @@ INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\tex\generic\pgf\fr
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\tex\generic\pgf\frontendlayer\tikz\libraries\tikzlibraryfit.code.tex
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\tex\latex\l3backend\l3backend-pdftex.def
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\tex\latex\l3backend\l3backend-pdftex.def
+INPUT .\Manuscript_Shengya.aux
+INPUT .\Manuscript_Shengya.aux
+INPUT Manuscript_Shengya.aux
 OUTPUT Manuscript_Shengya.aux
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\tex\context\base\mkii\supp-pdf.mkii
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\tex\context\base\mkii\supp-pdf.mkii
@@ -504,8 +507,6 @@ INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\fonts\type1\public
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\fonts\type1\public\amsfonts\cm\cmr9.pfb
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\fonts\type1\public\amsfonts\cm\cmsy10.pfb
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\fonts\type1\public\amsfonts\cm\cmsy10.pfb
-INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\fonts\type1\public\amsfonts\cm\cmsy5.pfb
-INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\fonts\type1\public\amsfonts\cm\cmsy5.pfb
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\fonts\type1\public\amsfonts\cm\cmsy6.pfb
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\fonts\type1\public\amsfonts\cm\cmsy6.pfb
 INPUT C:\Users\Quang Huy Nugyen\AppData\Local\Programs\MiKTeX\fonts\type1\public\amsfonts\cm\cmsy7.pfb
