@@ -68,6 +68,57 @@ classdef Observer < handle
         rollback_cooldown_steps = 0;
         rollback_last_trigger_step = -Inf;
         local_bad_zero_w0_neighbor_total_cap = 0.01;
+
+        % Python TrustBasedFleetEstimator parity settings/state.  These are
+        % numeric arrays so a scenario can be replayed deterministically and
+        % batched without calling Python at run time.
+        fleet_estimator_parity_mode = true;
+        dynamics_prediction_mode = "model";
+        force_clean_pose_anchor = true;
+        post_rollback_anchor_enabled = false;
+        relative_host_anchor_anchor_position_weight = 1.0;
+        relative_host_anchor_estimate_position_weight = 0.0;
+        relative_host_anchor_clean_theta_weight = 0.8;
+        relative_host_anchor_host_theta_weight = 0.2;
+        relative_host_anchor_target_velocity_weight = 0.1;
+        relative_host_anchor_host_velocity_weight = 0.9;
+        relative_host_anchor_target_acceleration_weight = 0.1;
+        relative_host_anchor_host_acceleration_weight = 0.9;
+        relative_host_anchor_use_bearing = true;
+        enable_output_low_pass = false;
+        output_low_pass_alpha = 1.0;
+        attack_output_low_pass_alpha = 1.0;
+        direct_recovery_enabled = true;
+        direct_recovery_hold_steps = 15;
+        direct_recovery_required_good_steps = 10;
+        direct_recovery_ramp_steps = 30;
+        direct_recovery_min_local_trust = 0.5;
+        direct_recovery_state = [];
+        direct_recovery_initialized = [];
+        direct_trust_application_delay_steps = 0;
+        direct_trust_delay_state = [];
+        rollback_trigger_delay_steps = 0;
+        rollback_trigger_delay_counters = [];
+        rollback_startup_suppress_duration_s = 0;
+        rollback_active_trigger_reasons = [];
+        rollback_last_event_triggered = false;
+        rollback_last_newly_flagged = [];
+        rollback_trusted_relative_anchor_history = [];
+        rollback_trusted_relative_anchor_count = [];
+        % Latest independent host-relative measurement per target. Numeric
+        % layout: [distance; radial relative velocity; body bearing; source step].
+        % This mirrors TrustModel.recent_relative_measurements without maps or
+        % Python objects, so deterministic batch runs retain anchor memory.
+        relative_host_measurement_memory = [];
+        relative_host_measurement_memory_valid = [];
+        relative_host_anchor_max_message_age_s = 1.0;
+        startup_target_weights_cache = [];
+        startup_target_weights_valid = [];
+        timestamp_alignment_enabled = true;
+        timestamp_alignment_max_extrapolation_s = 0.5;
+        control_timeout_s = 1.0;
+        prediction_max_velocity = Inf;
+        prediction_max_acceleration = Inf;
     end
     methods
         function self = Observer( vehicle , veh_param, inital_global_state, inital_local_state)
@@ -116,6 +167,37 @@ classdef Observer < handle
             self.previous_local_output = inital_local_state;
             self.correlated_noise_state = zeros(self.num_states, 1);
             self.rollback_enabled = self.vehicle.scenarios_config.rollback_enabled;
+            self.fleet_estimator_parity_mode = logical(self.scenario_value('fleet_estimator_parity_mode', true));
+            self.dynamics_prediction_mode = lower(string(self.scenario_value('dynamics_prediction_mode', 'model')));
+            self.force_clean_pose_anchor = logical(self.scenario_value('force_clean_pose_anchor', true));
+            self.post_rollback_anchor_enabled = logical(self.scenario_value('post_rollback_anchor_enabled', false));
+            self.relative_host_anchor_anchor_position_weight = max(0, double(self.scenario_value('relative_host_anchor_anchor_position_weight', 1.0)));
+            self.relative_host_anchor_estimate_position_weight = max(0, double(self.scenario_value('relative_host_anchor_estimate_position_weight', 0.0)));
+            self.relative_host_anchor_clean_theta_weight = max(0, double(self.scenario_value('relative_host_anchor_clean_theta_weight', 0.8)));
+            self.relative_host_anchor_host_theta_weight = max(0, double(self.scenario_value('relative_host_anchor_host_theta_weight', 0.2)));
+            self.relative_host_anchor_target_velocity_weight = max(0, double(self.scenario_value('relative_host_anchor_target_velocity_weight', 0.1)));
+            self.relative_host_anchor_host_velocity_weight = max(0, double(self.scenario_value('relative_host_anchor_host_velocity_weight', 0.9)));
+            self.relative_host_anchor_target_acceleration_weight = max(0, double(self.scenario_value('relative_host_anchor_target_acceleration_weight', 0.1)));
+            self.relative_host_anchor_host_acceleration_weight = max(0, double(self.scenario_value('relative_host_anchor_host_acceleration_weight', 0.9)));
+            self.relative_host_anchor_use_bearing = logical(self.scenario_value('relative_host_anchor_use_bearing', true));
+            self.enable_output_low_pass = logical(self.scenario_value('enable_output_low_pass', false));
+            self.output_low_pass_alpha = self.config_unit_interval(self.scenario_value('output_low_pass_alpha', 1.0), 'output_low_pass_alpha');
+            self.attack_output_low_pass_alpha = self.config_unit_interval(self.scenario_value('attack_output_low_pass_alpha', self.output_low_pass_alpha), 'attack_output_low_pass_alpha');
+            self.direct_recovery_enabled = logical(self.scenario_value('direct_recovery_enabled', true));
+            self.direct_recovery_hold_steps = max(0, round(self.scenario_value('direct_recovery_hold_steps', 15)));
+            self.direct_recovery_required_good_steps = max(0, round(self.scenario_value('direct_recovery_required_good_steps', 10)));
+            self.direct_recovery_ramp_steps = max(0, round(self.scenario_value('direct_recovery_ramp_steps', 30)));
+            self.direct_recovery_min_local_trust = self.config_unit_interval(self.scenario_value('direct_recovery_min_local_trust', 0.5), 'direct_recovery_min_local_trust');
+            self.direct_trust_application_delay_steps = max(0, round(self.scenario_value('direct_trust_application_delay_steps', 0)));
+            self.rollback_trigger_delay_steps = max(0, round(self.scenario_value('rollback_trigger_delay_steps', 0)));
+            self.rollback_startup_suppress_duration_s = max(0, double(self.scenario_value('rollback_startup_suppress_duration_s', self.scenario_value('rollback_start_time', 0))));
+            self.timestamp_alignment_enabled = logical(self.scenario_value('timestamp_alignment_enabled', true));
+            self.timestamp_alignment_max_extrapolation_s = max(0, double(self.scenario_value('timestamp_alignment_max_extrapolation_s', 0.5)));
+            self.relative_host_anchor_max_message_age_s = max(0, double( ...
+                self.scenario_value('max_message_age_s', 1.0)));
+            self.control_timeout_s = max(0, double(self.scenario_value('control_timeout_s', 1.0)));
+            self.prediction_max_velocity = double(self.scenario_value('prediction_max_velocity', Inf));
+            self.prediction_max_acceleration = double(self.scenario_value('prediction_max_acceleration', Inf));
             self.rollback_window_size = max(1, round(self.scenario_value('rollback_window_size', self.rollback_window_size)));
             self.rollback_trusted_state_history_size = max(1, round(self.scenario_value('rollback_trusted_state_history_size', self.rollback_window_size)));
             self.rollback_trusted_state_guard_steps = max(0, round(self.scenario_value('rollback_trusted_state_guard_steps', 0)));
@@ -130,9 +212,30 @@ classdef Observer < handle
             self.local_bad_zero_w0_neighbor_total_cap = self.config_unit_interval( ...
                 self.scenario_value('local_bad_zero_w0_neighbor_total_cap', 0.01), ...
                 'local_bad_zero_w0_neighbor_total_cap');
+            has_weight_module = (isstruct(self.vehicle) && isfield(self.vehicle, 'weight_module')) || ...
+                (isobject(self.vehicle) && isprop(self.vehicle, 'weight_module'));
+            if has_weight_module && ~isempty(self.vehicle.weight_module) && ...
+                    isprop(self.vehicle.weight_module, 'trust_threshold')
+                self.trust_threshold = min(1, max(0, double(self.vehicle.weight_module.trust_threshold)));
+            end
             self.rollback_trusted_state_history = cell(self.num_vehicles, 1);
             self.rollback_bad_counters = zeros(self.num_vehicles, 1);
             self.rollback_recovery_counters = zeros(self.num_vehicles, 1);
+            % Columns: hold, good, ramp, scale.
+            self.direct_recovery_state = [zeros(self.num_vehicles, 3), ones(self.num_vehicles, 1)];
+            self.direct_recovery_initialized = false(self.num_vehicles, 1);
+            % Columns: bad_count, delay_active, configured_delay,
+            %          last_clean_local_trust, last_clean_final_trust.
+            self.direct_trust_delay_state = [zeros(self.num_vehicles, 3), ones(self.num_vehicles, 2)];
+            self.rollback_trigger_delay_counters = zeros(self.num_vehicles, 1);
+            % Reason columns: final_trust, local_est_check, global_est_check.
+            self.rollback_active_trigger_reasons = false(self.num_vehicles, 3);
+            self.rollback_trusted_relative_anchor_history = NaN(12, self.rollback_trusted_state_history_size, self.num_vehicles);
+            self.rollback_trusted_relative_anchor_count = zeros(self.num_vehicles, 1);
+            self.relative_host_measurement_memory = NaN(4, self.num_vehicles);
+            self.relative_host_measurement_memory_valid = false(self.num_vehicles, 1);
+            self.startup_target_weights_cache = NaN(self.num_vehicles + 1, self.num_vehicles);
+            self.startup_target_weights_valid = false(self.num_vehicles, 1);
             
             % Initialize rollback system
             if self.rollback_enabled
@@ -180,6 +283,11 @@ classdef Observer < handle
 
 
         function  Distributed_Observer(self,instant_index , weights)
+            if self.fleet_estimator_parity_mode
+                self.Distributed_Observer_python_parity(instant_index, weights);
+                return;
+            end
+
             % Get the number of other vehicles
             Big_X_hat_1_tempo = zeros(size(self.est_global_state_current)); % Initialize the variable to store the results
             host_id = self.vehicle.vehicle_number; % The vehicle that is estimating the state of other vehicles
@@ -196,7 +304,7 @@ classdef Observer < handle
             % j is the vehicle we want to estimate
             for j = 1:self.num_vehicles
                 weights_new = self.get_weights_for_vehicle(j, host_id, weights, instant_index);
-                [x_bar_j, weights_new, direct_available] = self.get_local_state_for_vehicle(j, host_id, weights_new);
+                [x_bar_j, weights_new, direct_available] = self.get_local_state_for_vehicle(j, host_id, weights_new, instant_index);
                 [x_hat_i_j, weights_new, source_available] = self.get_global_states_for_vehicle(j, self.num_vehicles, host_id, weights_new, instant_index);
                 weights_new = self.get_python_target_weights_if_enabled( ...
                     j, host_id, weights_new, trust_scores, source_available, ...
@@ -267,6 +375,146 @@ classdef Observer < handle
             self.est_global_state_log(:, instant_index, :) = Big_X_hat_1_tempo;
         end
 
+        function Distributed_Observer_python_parity(self, instant_index, weights)
+            % Numeric MATLAB implementation of TrustBasedFleetEstimator.update().
+            % The host column is its local estimate; every other target follows
+            % correction -> prediction -> constraints -> optional output LPF.
+            host_id = self.vehicle.vehicle_number;
+            trust_scores = self.get_current_trust_scores(instant_index);
+            self.update_direct_trust_delay_states(trust_scores);
+            self.update_direct_channel_recovery_states(trust_scores);
+
+            % Python's trust update continuously refreshes
+            % recent_relative_measurements, even before an attack needs an
+            % anchor. Keep the equivalent numeric memory warm on every step.
+            for target_id = 1:self.num_vehicles
+                if target_id ~= host_id
+                    self.refresh_relative_host_measurement_memory(target_id, instant_index);
+                end
+            end
+
+            pre_update_states = self.est_global_state_current;
+            pre_update_states(:, host_id) = self.est_local_state_current;
+            updated_states = pre_update_states;
+            updated_states(:, host_id) = self.est_local_state_current;
+
+            weights_used = cell(self.num_vehicles, 1);
+            target_components = cell(self.num_vehicles, 1);
+            host_weights = zeros(1, self.num_vehicles + 1);
+            host_weights(host_id + 1) = 1.0;
+            self.record_target_weights(instant_index, host_id, host_weights);
+
+            startup_fixed = self.use_startup_fixed_target_weights(instant_index);
+            weight_mode = "trust_based";
+            if ~isempty(self.vehicle.weight_module) && isprop(self.vehicle.weight_module, 'weight_type')
+                weight_mode = lower(string(self.vehicle.weight_module.weight_type));
+            end
+            apply_source_gating = ~startup_fixed && weight_mode ~= "equal";
+
+            for j = 1:self.num_vehicles
+                if j == host_id
+                    continue;
+                end
+
+                current_est = pre_update_states(:, j);
+                weights_new = self.get_weights_for_vehicle(j, host_id, weights, instant_index);
+                [x_bar_j, weights_new, direct_available] = ...
+                    self.get_local_state_for_vehicle(j, host_id, weights_new, instant_index);
+                [x_hat_i_j, weights_new, source_available] = ...
+                    self.get_global_states_for_vehicle(j, self.num_vehicles, host_id, weights_new, instant_index);
+
+                if apply_source_gating
+                    malicious_mask = self.get_current_malicious_source_mask(trust_scores);
+                    source_available(malicious_mask) = false;
+                end
+
+                weights_new = self.get_python_target_weights_if_enabled( ...
+                    j, host_id, weights_new, trust_scores, source_available, ...
+                    direct_available, x_bar_j, instant_index);
+                weights_new = self.apply_direct_recovery_weight_scale(j, host_id, weights_new);
+                weights_new = self.normalize_observer_weights(weights_new, host_id);
+                self.record_target_weights(instant_index, j, weights_new);
+
+                correction = zeros(self.num_states, 1);
+                if direct_available && weights_new(1) > 0
+                    correction = correction + weights_new(1) * self.state_residual(x_bar_j, current_est);
+                end
+                for source_id = 1:self.num_vehicles
+                    if source_id == host_id || ~source_available(source_id)
+                        continue;
+                    end
+                    source_weight = weights_new(source_id + 1);
+                    if source_weight <= 0
+                        continue;
+                    end
+                    correction = correction + source_weight * ...
+                        self.state_residual(x_hat_i_j(:, source_id), current_est);
+                end
+                corrected_state = self.apply_state_constraints(current_est + correction);
+
+                target_control = self.Get_controller(j, instant_index);
+                prediction_mode = self.get_prediction_mode_for_target(j);
+                attack_active = self.has_active_direct_attack(j) || self.is_target_quarantined_by_rollback(j);
+                force_clean_anchor = self.force_clean_pose_anchor && attack_active && ...
+                    any(prediction_mode == ["clean_data", "mixed_clean_data", "relative_host_anchor_mixed"]);
+                relative_anchor_active = attack_active && ...
+                    (prediction_mode == "relative_host_anchor_mixed" || ...
+                    (prediction_mode == "mixed_clean_data" && force_clean_anchor));
+
+                anchor_snapshot = [];
+                if relative_anchor_active
+                    anchor_snapshot = self.build_relative_host_anchor_snapshot(j, instant_index, corrected_state, []);
+                end
+                predicted_state = self.predict_dynamics_parity( ...
+                    corrected_state, target_control, self.param_sys.dt, j, instant_index, ...
+                    force_clean_anchor, relative_anchor_active, anchor_snapshot);
+                predicted_state = self.apply_state_constraints(predicted_state);
+
+                alpha_override = NaN;
+                if force_clean_anchor
+                    alpha_override = 1.0;
+                elseif weights_new(1) <= 1e-9 || self.get_trip_flag(j, 'flag_local_est_check')
+                    alpha_override = self.attack_output_low_pass_alpha;
+                end
+                updated_states(:, j) = self.apply_output_low_pass_filter( ...
+                    current_est, predicted_state, alpha_override);
+
+                replay_component = self.build_replay_component( ...
+                    j, host_id, x_bar_j, x_hat_i_j, target_control, weights_new, true, false);
+                replay_component.direct.enabled = logical(direct_available && weights_new(1) > 0);
+                replay_component.prediction.dt = double(self.param_sys.dt);
+                replay_component.prediction.force_clean_pose_anchor = logical(force_clean_anchor);
+                replay_component.prediction.attack_relative_host_anchor_active = logical(relative_anchor_active);
+                replay_component.prediction.host_anchor_snapshot = anchor_snapshot;
+                weights_used{j} = weights_new;
+                target_components{j} = replay_component;
+            end
+
+            rollback_applied = false;
+            if self.rollback_enabled
+                % Python records during the startup grace period; only trigger
+                % evaluation is suppressed.
+                self.create_step_data(instant_index, pre_update_states, weights_used, trust_scores, target_components);
+                [rollback_applied, corrected_states] = ...
+                    self.check_and_trigger_rollback(instant_index, trust_scores, updated_states);
+                if rollback_applied
+                    updated_states = corrected_states;
+                    if self.post_rollback_anchor_enabled
+                        updated_states = self.apply_post_rollback_anchor_correction( ...
+                            updated_states, instant_index);
+                    end
+                end
+                self.update_rollback_trusted_state_history(instant_index, trust_scores, updated_states);
+            end
+
+            updated_states(:, host_id) = self.est_local_state_current;
+            self.est_global_state_current = updated_states;
+            self.est_global_state_log(:, instant_index, :) = updated_states;
+            self.rollback_last_event_triggered = logical(rollback_applied);
+            self.self_belief = 1.0;
+            self.self_belief_log = [self.self_belief_log, self.self_belief];
+        end
+
         function weights_new = get_weights_for_vehicle(self, j, host_id, weights, instant_index)
             % Copy the shared row before target-specific trust edits.
             weights_new = double(weights(:)');
@@ -292,11 +540,27 @@ classdef Observer < handle
             end
         end
 
-        function [x_bar_j , weights_new, direct_available] = get_local_state_for_vehicle(self, j, host_id, weights_new)
+        function [x_bar_j , weights_new, direct_available] = get_local_state_for_vehicle(self, j, host_id, weights_new, instant_index)
             % Get local state for vehicle j, handle missing data
-            x_bar_j = self.vehicle.center_communication.get_local_state(j, host_id);
+            if nargin < 5
+                instant_index = NaN;
+            end
+            source_step = NaN;
+            if j ~= host_id && ~self.is_source_connected_to_host(j, host_id)
+                x_bar_j = zeros(size(self.est_local_state_current));
+                weights_new(1) = 0;
+                direct_available = false;
+                weights_new = self.normalize_observer_weights(weights_new, host_id);
+                return;
+            end
+            try
+                [x_bar_j, source_step] = self.vehicle.center_communication.get_local_state(j, host_id);
+            catch
+                x_bar_j = self.vehicle.center_communication.get_local_state(j, host_id);
+            end
+            x_bar_j = self.align_received_state_to_step(x_bar_j, source_step, instant_index);
             direct_available = true;
-            if any(isnan(x_bar_j(:)))
+            if isempty(x_bar_j) || any(~isfinite(x_bar_j(:)))
                 x_bar_j = zeros(size(self.est_local_state_current));
                 weights_new(1) = 0;
                 direct_available = false;
@@ -309,14 +573,24 @@ classdef Observer < handle
             x_hat_i_j = zeros(self.num_states, num_vehicles);
             source_available = false(1, num_vehicles);
             for k = 1:num_vehicles
-                x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k, self.vehicle.vehicle_number);
-                if any(isnan(x_hat_i_j_full(:)))
-                    x_hat_i_j_full = zeros(size(self.est_global_state_current));
+                if k ~= host_id && ~self.is_source_connected_to_host(k, host_id)
+                    weights_new(k + 1) = 0;
+                    continue;
+                end
+                source_step = NaN;
+                try
+                    [x_hat_i_j_full, source_step] = self.vehicle.center_communication.get_global_state(k, self.vehicle.vehicle_number);
+                catch
+                    x_hat_i_j_full = self.vehicle.center_communication.get_global_state(k, self.vehicle.vehicle_number);
+                end
+                if isempty(x_hat_i_j_full) || size(x_hat_i_j_full, 2) < j || ...
+                        any(~isfinite(x_hat_i_j_full(:, j)))
                     weights_new(k+1) = 0;
                 else
+                    x_hat_i_j(:, k) = self.align_received_state_to_step( ...
+                        x_hat_i_j_full(:, j), source_step, instant_index);
                     source_available(k) = true;
                 end
-                x_hat_i_j(:, k) = x_hat_i_j_full(:, j);
             end
             weights_new = self.normalize_observer_weights(weights_new, host_id);
 
@@ -351,20 +625,38 @@ classdef Observer < handle
                 self.vehicle.weight_module.vehicle_id = host_id;
             end
 
-            target_trust_model = [];
-            if ~isempty(self.vehicle.trip_models) && j <= length(self.vehicle.trip_models)
-                target_trust_model = self.vehicle.trip_models{j};
+            target_trust_model = self.get_effective_target_trust_model(j, trust_scores);
+            weight_source_scores = trust_scores;
+            if isprop(self.vehicle.weight_module, 'weight_type') && ...
+                    lower(string(self.vehicle.weight_module.weight_type)) == "paper" && ...
+                    ((isobject(self.vehicle) && isprop(self.vehicle, 'generalized_trust_log')) || ...
+                    (isstruct(self.vehicle) && isfield(self.vehicle, 'generalized_trust_log')))
+                generalized_log = self.vehicle.generalized_trust_log;
+                if instant_index >= 1 && instant_index <= size(generalized_log, 2)
+                    candidate_scores = double(generalized_log(:, instant_index)');
+                    if length(candidate_scores) >= self.num_vehicles && all(isfinite(candidate_scores))
+                        weight_source_scores = candidate_scores;
+                    end
+                end
             end
 
             if self.use_startup_fixed_target_weights(instant_index)
-                weights_new = self.vehicle.weight_module.calculate_startup_weights_for_target( ...
-                    host_id, j, source_available, direct_measurement);
+                if self.startup_target_weights_valid(j)
+                    weights_new = self.startup_target_weights_cache(:, j)';
+                else
+                    weights_new = self.vehicle.weight_module.calculate_startup_weights_for_target( ...
+                        host_id, j, source_available, direct_measurement);
+                    self.startup_target_weights_cache(:, j) = weights_new(:);
+                    self.startup_target_weights_valid(j) = true;
+                end
             else
-                if ~self.is_direct_measurement_allowed_for_target(j, trust_scores, target_trust_model)
+                mode = lower(string(self.vehicle.weight_module.weight_type));
+                if mode ~= "equal" && ...
+                        ~self.is_direct_measurement_allowed_for_target(j, trust_scores, target_trust_model)
                     direct_measurement = [];
                 end
                 weights_new = self.vehicle.weight_module.calculate_weights_for_target( ...
-                    host_id, j, trust_scores, source_available, direct_measurement, target_trust_model);
+                    host_id, j, weight_source_scores, source_available, direct_measurement, target_trust_model);
             end
             weights_new = self.normalize_observer_weights(weights_new, host_id);
         end
@@ -392,19 +684,31 @@ classdef Observer < handle
             if duration_s <= 0
                 return;
             end
-            use_startup = instant_index * self.param_sys.dt < duration_s;
+            % Python starts its warm-up clock at the first update.
+            use_startup = max(instant_index - 1, 0) * self.param_sys.dt < duration_s;
         end
 
         function allowed = is_direct_measurement_allowed_for_target(self, target_id, trust_scores, target_trust_model)
             % Match Python estimator gating: only local-channel failure suppresses w0.
             allowed = true;
+            if self.is_direct_trust_delay_active(target_id)
+                return;
+            end
+            if self.is_target_quarantined_by_rollback(target_id)
+                allowed = false;
+                return;
+            end
+            if self.direct_recovery_scale(target_id) <= 1e-9
+                allowed = false;
+                return;
+            end
             if self.get_trip_flag(target_id, 'flag_local_est_check')
                 allowed = false;
                 return;
             end
 
             local_trust = self.read_latest_trip_unit(target_trust_model, ...
-                {'local_trust_sample', 'trust_sample_log', 'local_trust_decayed_log'}, NaN);
+                {'local_trust_sample', 'local_trust_decayed_log', 'trust_sample_log'}, NaN);
             if ~isfinite(local_trust)
                 if target_id >= 1 && target_id <= numel(trust_scores)
                     local_trust = trust_scores(target_id);
@@ -558,7 +862,7 @@ classdef Observer < handle
             % This is what we want to use for both linearization and as the base state
             % x_j_prev = x_hat_i_j(:, host_id); % Our current/previous estimate of vehicle j
             
-            [A , B]  = self.matrix();
+            [A , B]  = self.matrix(x_hat_i_j(:, host_id));
             
             % Calculate the consensus term
             % Start from 2 , because the first element is the local state of the vehicle
@@ -609,7 +913,7 @@ classdef Observer < handle
                 predict_only = false;
             end
 
-            [A, B] = self.matrix();
+            [A, B] = self.matrix(x_hat_i_j(:, host_id));
             
             % Initialize deltas
             neighbor_deltas = {}; % Cell array for each neighbor's delta
@@ -765,6 +1069,22 @@ classdef Observer < handle
             end
         end
 
+        function connected = is_source_connected_to_host(self, source_id, host_id)
+            connected = true;
+            if isempty(self.vehicle)
+                return;
+            end
+            graph_value = [];
+            if isstruct(self.vehicle) && isfield(self.vehicle, 'graph')
+                graph_value = self.vehicle.graph;
+            elseif isobject(self.vehicle) && isprop(self.vehicle, 'graph')
+                graph_value = self.vehicle.graph;
+            end
+            if ~isempty(graph_value) && host_id <= size(graph_value, 1) && source_id <= size(graph_value, 2)
+                connected = graph_value(host_id, source_id) ~= 0;
+            end
+        end
+
         function flag = get_trip_flag(self, vehicle_id, flag_name)
             flag = false;
             if isempty(self.vehicle.trip_models) || vehicle_id > length(self.vehicle.trip_models)
@@ -790,6 +1110,982 @@ classdef Observer < handle
             end
         end
 
+        function model = get_effective_target_trust_model(self, target_id, trust_scores)
+            % Build a value struct instead of mutating the handle trust model.
+            raw_model = [];
+            if ~isempty(self.vehicle.trip_models) && target_id <= length(self.vehicle.trip_models)
+                raw_model = self.vehicle.trip_models{target_id};
+            end
+            local_trust = self.read_latest_trip_unit(raw_model, ...
+                {'local_trust_sample', 'local_trust_decayed_log', 'trust_sample_log'}, NaN);
+            if ~isfinite(local_trust)
+                local_trust = trust_scores(target_id);
+            end
+            final_trust = trust_scores(target_id);
+            gamma_self = self.read_latest_trip_unit(raw_model, ...
+                {'gamma_self', 'gamma_local_our_self_log'}, 1.0);
+
+            target_flag = self.get_trip_flag(target_id, 'flag_target_attack');
+            local_flag = self.get_trip_flag(target_id, 'flag_local_est_check');
+            global_flag = self.get_trip_flag(target_id, 'flag_global_est_check');
+            if self.is_direct_trust_delay_active(target_id)
+                local_trust = self.direct_trust_delay_state(target_id, 4);
+                final_trust = self.direct_trust_delay_state(target_id, 5);
+                target_flag = false;
+                local_flag = false;
+            end
+
+            model = struct( ...
+                'local_trust_sample', min(1, max(0, local_trust)), ...
+                'final_score', min(1, max(0, final_trust)), ...
+                'gamma_self', min(1, max(0, gamma_self)), ...
+                'flag_target_attack', logical(target_flag), ...
+                'flag_local_est_check', logical(local_flag), ...
+                'flag_global_est_check', logical(global_flag));
+        end
+
+        function bad = is_local_channel_untrusted(self, target_id, final_trust)
+            model = [];
+            if ~isempty(self.vehicle.trip_models) && target_id <= length(self.vehicle.trip_models)
+                model = self.vehicle.trip_models{target_id};
+            end
+            local_trust = self.read_latest_trip_unit(model, ...
+                {'local_trust_sample', 'local_trust_decayed_log', 'trust_sample_log'}, NaN);
+            if isempty(model) || ~isfinite(local_trust)
+                bad = isfinite(final_trust) && final_trust < self.trust_threshold;
+                return;
+            end
+            bad = self.get_trip_flag(target_id, 'flag_local_est_check') || ...
+                local_trust < self.trust_threshold;
+        end
+
+        function active = has_active_direct_attack(self, target_id)
+            active = self.is_local_channel_untrusted(target_id, NaN);
+        end
+
+        function mask = get_current_malicious_source_mask(self, trust_scores)
+            mask = false(1, self.num_vehicles);
+            host_id = self.vehicle.vehicle_number;
+            for source_id = 1:min(length(trust_scores), self.num_vehicles)
+                if source_id == host_id
+                    continue;
+                end
+                mask(source_id) = self.is_local_channel_untrusted( ...
+                    source_id, trust_scores(source_id)) || ...
+                    self.get_trip_flag(source_id, 'flag_global_est_check') || ...
+                    ismember(source_id, self.malicious_vehicles);
+            end
+        end
+
+        function update_direct_trust_delay_states(self, trust_scores)
+            delay_steps = self.direct_trust_application_delay_steps;
+            if delay_steps <= 0
+                self.direct_trust_delay_state(:, 1:3) = 0;
+                return;
+            end
+            host_id = self.vehicle.vehicle_number;
+            for target_id = 1:min(length(trust_scores), self.num_vehicles)
+                if target_id == host_id
+                    continue;
+                end
+                raw_model = [];
+                if ~isempty(self.vehicle.trip_models) && target_id <= length(self.vehicle.trip_models)
+                    raw_model = self.vehicle.trip_models{target_id};
+                end
+                local_trust = self.read_latest_trip_unit(raw_model, ...
+                    {'local_trust_sample', 'local_trust_decayed_log', 'trust_sample_log'}, trust_scores(target_id));
+                final_trust = trust_scores(target_id);
+                direct_bad = self.is_local_channel_untrusted(target_id, final_trust);
+                if ~direct_bad
+                    self.direct_trust_delay_state(target_id, :) = [0, 0, delay_steps, ...
+                        max(local_trust, self.trust_threshold), ...
+                        max(final_trust, self.trust_threshold)];
+                else
+                    bad_count = self.direct_trust_delay_state(target_id, 1) + 1;
+                    self.direct_trust_delay_state(target_id, 1) = bad_count;
+                    self.direct_trust_delay_state(target_id, 2) = double(bad_count <= delay_steps);
+                    self.direct_trust_delay_state(target_id, 3) = delay_steps;
+                end
+            end
+        end
+
+        function active = is_direct_trust_delay_active(self, target_id)
+            active = self.direct_trust_application_delay_steps > 0 && ...
+                target_id >= 1 && target_id <= size(self.direct_trust_delay_state, 1) && ...
+                self.direct_trust_delay_state(target_id, 2) >= 0.5;
+        end
+
+        function update_direct_channel_recovery_states(self, trust_scores)
+            if ~self.direct_recovery_enabled
+                self.direct_recovery_state(:, :) = [zeros(self.num_vehicles, 3), ones(self.num_vehicles, 1)];
+                self.direct_recovery_initialized(:) = false;
+                return;
+            end
+            host_id = self.vehicle.vehicle_number;
+            for target_id = 1:min(length(trust_scores), self.num_vehicles)
+                if target_id == host_id
+                    continue;
+                end
+                model = [];
+                if ~isempty(self.vehicle.trip_models) && target_id <= length(self.vehicle.trip_models)
+                    model = self.vehicle.trip_models{target_id};
+                end
+                local_trust = self.read_latest_trip_unit(model, ...
+                    {'local_trust_sample', 'local_trust_decayed_log', 'trust_sample_log'}, 1.0);
+                local_bad = self.has_active_direct_attack(target_id);
+                quarantined = self.is_target_quarantined_by_rollback(target_id);
+                local_ready = local_trust >= self.direct_recovery_min_local_trust;
+                if self.is_direct_trust_delay_active(target_id)
+                    local_bad = false;
+                    local_ready = true;
+                end
+
+                if ~self.direct_recovery_initialized(target_id) && ...
+                        ~local_bad && ~quarantined && local_ready
+                    self.direct_recovery_state(target_id, :) = [0, ...
+                        self.direct_recovery_required_good_steps, ...
+                        self.direct_recovery_ramp_steps, 1];
+                    self.direct_recovery_initialized(target_id) = true;
+                    continue;
+                end
+                self.direct_recovery_initialized(target_id) = true;
+                state = self.direct_recovery_state(target_id, :);
+                if local_bad || quarantined || ~local_ready
+                    self.direct_recovery_state(target_id, :) = ...
+                        [self.direct_recovery_hold_steps, 0, 0, 0];
+                    continue;
+                end
+                hold_count = max(round(state(1)), 0);
+                if hold_count > 0
+                    self.direct_recovery_state(target_id, :) = [hold_count - 1, 0, 0, 0];
+                    continue;
+                end
+                good_count = min(round(state(2)) + 1, self.direct_recovery_required_good_steps);
+                if good_count < self.direct_recovery_required_good_steps
+                    self.direct_recovery_state(target_id, :) = [0, good_count, 0, 0];
+                    continue;
+                end
+                if self.direct_recovery_ramp_steps <= 0
+                    ramp_count = 0;
+                    scale = 1;
+                else
+                    ramp_count = min(round(state(3)) + 1, self.direct_recovery_ramp_steps);
+                    scale = ramp_count / self.direct_recovery_ramp_steps;
+                end
+                self.direct_recovery_state(target_id, :) = [0, good_count, ramp_count, scale];
+            end
+        end
+
+        function scale = direct_recovery_scale(self, target_id)
+            if ~self.direct_recovery_enabled || target_id < 1 || target_id > self.num_vehicles
+                scale = 1.0;
+            else
+                scale = min(1, max(0, self.direct_recovery_state(target_id, 4)));
+            end
+        end
+
+        function weights = apply_direct_recovery_weight_scale(self, target_id, host_id, weights)
+            scale = self.direct_recovery_scale(target_id);
+            if scale >= 1 - 1e-12
+                return;
+            end
+            old_w0 = max(0, weights(1));
+            weights(1) = old_w0 * scale;
+            weights(host_id + 1) = max(0, weights(host_id + 1)) + old_w0 - weights(1);
+        end
+
+        function quarantined = is_target_quarantined_by_rollback(self, target_id)
+            quarantined = false;
+            if ~self.rollback_enabled || ~ismember(target_id, self.malicious_vehicles)
+                return;
+            end
+            if isempty(self.rollback_active_trigger_reasons) || ...
+                    target_id > size(self.rollback_active_trigger_reasons, 1)
+                quarantined = true;
+                return;
+            end
+            reasons = self.rollback_active_trigger_reasons(target_id, :);
+            if ~any(reasons)
+                quarantined = true;
+            else
+                quarantined = reasons(1) || reasons(2); % final/local, never global-only
+            end
+        end
+
+        function state = align_received_state_to_step(self, state, source_step, current_step)
+            state = double(state(:));
+            if ~self.timestamp_alignment_enabled || isempty(state) || length(state) < 4 || ...
+                    ~isfinite(source_step) || ~isfinite(current_step)
+                return;
+            end
+            age_s = (double(current_step) - double(source_step)) * self.param_sys.dt;
+            if age_s <= 0 || age_s > self.timestamp_alignment_max_extrapolation_s
+                return;
+            end
+            state(1) = state(1) + state(4) * cos(state(3)) * age_s;
+            state(2) = state(2) + state(4) * sin(state(3)) * age_s;
+        end
+
+        function mode = get_prediction_mode_for_target(self, target_id)
+            mode = self.dynamics_prediction_mode;
+            per_target = self.scenario_value('dynamics_prediction_mode_by_vehicle', []);
+            if ~isempty(per_target)
+                if iscell(per_target) && target_id <= numel(per_target)
+                    mode = string(per_target{target_id});
+                elseif isstring(per_target) && target_id <= numel(per_target)
+                    mode = per_target(target_id);
+                end
+            end
+            mode = lower(strtrim(string(mode)));
+            switch mode
+                case {"current", "current_model", "default", "kinematic"}
+                    mode = "model";
+                case {"clean-data", "clean", "pure_prediction_self", "pure-prediction-self", "pure_self_prediction", "pure-self-prediction"}
+                    mode = "clean_data";
+                case {"mixed-clean-data", "mixed_clean", "mixed-clean"}
+                    mode = "mixed_clean_data";
+                case {"relative-host-anchor-mixed", "host_anchor_mixed", "host-anchor-mixed"}
+                    mode = "relative_host_anchor_mixed";
+                case {"dead_reckon", "dead-reckoning", "dead-reckon", "dr"}
+                    mode = "dead_reckoning";
+                case {"no_prediction", "no-prediction", "disabled", "disable", "off"}
+                    mode = "none";
+            end
+            if ~any(mode == ["model", "clean_data", "mixed_clean_data", ...
+                    "relative_host_anchor_mixed", "dead_reckoning", "none"])
+                mode = "model";
+            end
+        end
+
+        function [clean_state, source_step] = get_clean_aligned_state(self, target_id, instant_index)
+            [clean_state, source_step] = ...
+                self.refresh_relative_host_measurement_memory(target_id, instant_index);
+            if isempty(clean_state)
+                return;
+            end
+            clean_state = self.align_received_state_to_step( ...
+                clean_state, source_step, instant_index);
+        end
+
+        function [clean_state, source_step] = refresh_relative_host_measurement_memory(self, target_id, instant_index)
+            % Fetch the clean packet, enforce Python's message-age guard, and
+            % retain its independent range/range-rate/bearing measurement.
+            clean_state = [];
+            source_step = NaN;
+            has_center = ~isempty(self.vehicle) && ...
+                ((isstruct(self.vehicle) && isfield(self.vehicle, 'center_communication')) || ...
+                (isobject(self.vehicle) && isprop(self.vehicle, 'center_communication')));
+            if has_center && ~isempty(self.vehicle.center_communication)
+                try
+                    [clean_state, source_step] = ...
+                        self.vehicle.center_communication.get_clean_local_state(target_id);
+                catch
+                    try
+                        clean_state = self.vehicle.center_communication.local_state_storage(target_id);
+                        try
+                            source_step = self.vehicle.center_communication.local_state_timestamp_storage(target_id);
+                        catch
+                            source_step = NaN;
+                        end
+                    catch
+                        clean_state = [];
+                    end
+                end
+            end
+
+            if ~isempty(clean_state) && all(isfinite(clean_state(:)))
+                if isfinite(source_step)
+                    message_age_s = (double(instant_index) - double(source_step)) * self.param_sys.dt;
+                    if message_age_s > self.relative_host_anchor_max_message_age_s
+                        clean_state = [];
+                    end
+                end
+                if ~isempty(clean_state)
+                    self.cache_relative_host_measurement( ...
+                        target_id, clean_state, source_step, instant_index);
+                    return;
+                end
+            else
+                clean_state = [];
+            end
+
+            % TriPTrustModel keeps the same clean relative sample used by the
+            % Python trust model. Harvest it when the clean packet history is
+            % unavailable, without changing the trust-model implementation.
+            self.refresh_relative_host_measurement_from_trust_model( ...
+                target_id, instant_index);
+        end
+
+        function cache_relative_host_measurement(self, target_id, target_state, source_step, instant_index, distance_override, relative_velocity_override, host_state_override)
+            if nargin < 6
+                distance_override = NaN;
+            end
+            if nargin < 7
+                relative_velocity_override = NaN;
+            end
+            if nargin < 8 || isempty(host_state_override)
+                host_state = self.est_local_state_current(:);
+            else
+                host_state = double(host_state_override(:));
+            end
+            target_state = double(target_state(:));
+            if target_id < 1 || target_id > self.num_vehicles || ...
+                    length(target_state) < 2 || length(host_state) < 2 || ...
+                    any(~isfinite(target_state(1:2))) || any(~isfinite(host_state(1:2)))
+                return;
+            end
+            if ~isfinite(source_step)
+                source_step = instant_index;
+            end
+            if self.relative_host_measurement_memory_valid(target_id)
+                previous_step = self.relative_host_measurement_memory(4, target_id);
+                if isfinite(previous_step) && source_step < previous_step
+                    return;
+                end
+            end
+
+            dx = target_state(1) - host_state(1);
+            dy = target_state(2) - host_state(2);
+            geometric_distance = hypot(dx, dy);
+            if ~isfinite(geometric_distance) || geometric_distance <= 0
+                return;
+            end
+            distance = geometric_distance;
+            if isfinite(distance_override) && distance_override > 0
+                distance = distance_override;
+            end
+            if length(host_state) < 3
+                host_theta = 0;
+            else
+                host_theta = host_state(3);
+            end
+            [rel_x, rel_y] = self.body_relative_from_world_delta( ...
+                dx, dy, host_theta);
+            bearing = self.wrap_angle(atan2(rel_y, rel_x));
+
+            relative_velocity = relative_velocity_override;
+            if ~isfinite(relative_velocity) && ...
+                    length(target_state) >= 4 && length(host_state) >= 4
+                line_of_sight = [dx; dy] / geometric_distance;
+                target_velocity = target_state(4) * ...
+                    [cos(target_state(3)); sin(target_state(3))];
+                host_velocity = host_state(4) * ...
+                    [cos(host_theta); sin(host_theta)];
+                relative_velocity = dot(target_velocity - host_velocity, line_of_sight);
+            end
+            self.relative_host_measurement_memory(:, target_id) = ...
+                [distance; relative_velocity; bearing; double(source_step)];
+            self.relative_host_measurement_memory_valid(target_id) = true;
+        end
+
+        function refresh_relative_host_measurement_from_trust_model(self, target_id, instant_index)
+            if isempty(self.vehicle) || target_id < 1 || ...
+                    target_id > length(self.vehicle.trip_models)
+                return;
+            end
+            trust_model = self.vehicle.trip_models{target_id};
+            history_map = [];
+            if isstruct(trust_model) && isfield(trust_model, 'local_score_previous_states_map')
+                history_map = trust_model.local_score_previous_states_map;
+            elseif isobject(trust_model) && isprop(trust_model, 'local_score_previous_states_map')
+                history_map = trust_model.local_score_previous_states_map;
+            end
+            if ~isa(history_map, 'containers.Map') || ...
+                    ~isKey(history_map, int32(target_id))
+                return;
+            end
+            entry = history_map(int32(target_id));
+            if ~isstruct(entry) || ~isfield(entry, 'state')
+                return;
+            end
+            source_step = instant_index;
+            if isfield(entry, 'instant_idx') && isfinite(entry.instant_idx)
+                source_step = entry.instant_idx;
+            end
+            distance = NaN;
+            if isfield(entry, 'distance_from_host')
+                distance = entry.distance_from_host;
+            end
+            relative_velocity = NaN;
+            if isfield(entry, 'relative_velocity_from_host')
+                relative_velocity = entry.relative_velocity_from_host;
+            end
+            host_state = self.est_local_state_current;
+            current_host = [];
+            if isstruct(trust_model) && isfield(trust_model, 'local_score_current_host_state')
+                current_host = trust_model.local_score_current_host_state;
+            elseif isobject(trust_model) && isprop(trust_model, 'local_score_current_host_state')
+                current_host = trust_model.local_score_current_host_state;
+            end
+            if isstruct(current_host) && isfield(current_host, 'state')
+                host_state = current_host.state;
+            end
+            self.cache_relative_host_measurement( ...
+                target_id, entry.state, source_step, instant_index, ...
+                distance, relative_velocity, host_state);
+        end
+
+        function snapshot = build_relative_host_anchor_entry(self, target_id, instant_index, reference_state, clean_state)
+            % Build one anchor in Python priority order: clean geometry,
+            % remembered relative measurement, then current fleet geometry.
+            if nargin < 5 || isempty(clean_state)
+                [clean_state, ~] = self.get_clean_aligned_state(target_id, instant_index);
+            end
+            host_state = self.est_local_state_current(:);
+            if length(host_state) < 5
+                host_state(end + 1:5) = 0;
+            end
+
+            distance = NaN;
+            relative_velocity = NaN;
+            bearing = NaN;
+            rel_x = NaN;
+            rel_y = NaN;
+            source_step = instant_index;
+            if ~isempty(clean_state) && length(clean_state) >= 2
+                dx = clean_state(1) - host_state(1);
+                dy = clean_state(2) - host_state(2);
+                clean_distance = hypot(dx, dy);
+                if isfinite(clean_distance) && clean_distance > 0
+                    distance = clean_distance;
+                    [rel_x, rel_y] = self.body_relative_from_world_delta( ...
+                        dx, dy, host_state(3));
+                    bearing = self.wrap_angle(atan2(rel_y, rel_x));
+                    source_step = instant_index;
+                end
+            end
+
+            if ~(isfinite(distance) && distance > 0) && ...
+                    target_id <= length(self.relative_host_measurement_memory_valid) && ...
+                    self.relative_host_measurement_memory_valid(target_id)
+                remembered = self.relative_host_measurement_memory(:, target_id);
+                if isfinite(remembered(1)) && remembered(1) > 0
+                    distance = remembered(1);
+                    relative_velocity = remembered(2);
+                    bearing = remembered(3);
+                    source_step = remembered(4);
+                    age_s = max((double(instant_index) - double(source_step)) * self.param_sys.dt, 0);
+                    if isfinite(relative_velocity) && ...
+                            age_s <= self.relative_host_anchor_max_message_age_s
+                        distance = distance + relative_velocity * age_s;
+                    end
+                    if isfinite(bearing) && self.relative_host_anchor_use_bearing
+                        bearing = self.wrap_angle(bearing);
+                        rel_x = distance * cos(bearing);
+                        rel_y = distance * sin(bearing);
+                    else
+                        bearing = NaN;
+                    end
+                end
+            end
+
+            target_state = reference_state;
+            if isempty(target_state) && target_id <= size(self.est_global_state_current, 2)
+                target_state = self.est_global_state_current(:, target_id);
+            end
+            if ~(isfinite(distance) && distance > 0) && ...
+                    ~isempty(target_state) && length(target_state) >= 2
+                dx = target_state(1) - host_state(1);
+                dy = target_state(2) - host_state(2);
+                fleet_distance = hypot(dx, dy);
+                if isfinite(fleet_distance) && fleet_distance > 0
+                    distance = fleet_distance;
+                    [rel_x, rel_y] = self.body_relative_from_world_delta( ...
+                        dx, dy, host_state(3));
+                    bearing = self.wrap_angle(atan2(rel_y, rel_x));
+                    source_step = instant_index;
+                end
+            end
+            if ~(isfinite(distance) && distance > 0)
+                snapshot = [];
+                return;
+            end
+
+            sign_value = self.resolve_relative_host_anchor_sign( ...
+                target_id, host_state, reference_state, clean_state);
+            if isfinite(rel_x) && abs(rel_x) > 1e-6
+                sign_value = 2 * double(rel_x >= 0) - 1;
+            end
+            if ~self.relative_host_anchor_use_bearing
+                bearing = NaN;
+            end
+            snapshot = [host_state(1:5); distance; sign_value; ...
+                relative_velocity; bearing; rel_x; rel_y; source_step];
+            snapshot = self.normalize_relative_host_anchor_snapshot(snapshot);
+        end
+
+        function snapshot = get_latest_trusted_relative_anchor_entry(self, target_id, instant_index)
+            snapshot = [];
+            if target_id < 1 || ...
+                    target_id > length(self.rollback_trusted_relative_anchor_count)
+                return;
+            end
+            count = self.rollback_trusted_relative_anchor_count(target_id);
+            if count <= 0
+                return;
+            end
+            hist_idx = min(count, self.rollback_trusted_state_history_size);
+            snapshot = self.normalize_relative_host_anchor_snapshot( ...
+                self.rollback_trusted_relative_anchor_history(:, hist_idx, target_id));
+            if isempty(snapshot) || nargin < 3
+                return;
+            end
+            source_step = snapshot(12);
+            relative_velocity = snapshot(8);
+            if isfinite(source_step) && source_step > 0 && isfinite(relative_velocity)
+                age_s = max((double(instant_index) - double(source_step)) * self.param_sys.dt, 0);
+                if age_s <= self.relative_host_anchor_max_message_age_s
+                    snapshot(6) = max(snapshot(6) + relative_velocity * age_s, 0.1);
+                    if isfinite(snapshot(9))
+                        snapshot(10) = snapshot(6) * cos(snapshot(9));
+                        snapshot(11) = snapshot(6) * sin(snapshot(9));
+                    end
+                end
+            end
+        end
+
+        function snapshot = build_relative_host_anchor_snapshot(self, target_id, instant_index, reference_state, clean_state, use_trusted_history)
+            % Numeric layout: [host x,y,theta,v,a, distance, sign,
+            % relative-v, bearing, relative-x, relative-y, source-step].
+            if nargin < 6
+                use_trusted_history = true;
+            end
+            if nargin < 5 || isempty(clean_state)
+                [clean_state, ~] = self.get_clean_aligned_state(target_id, instant_index);
+            end
+
+            snapshot = [];
+            if ~isempty(clean_state)
+                snapshot = self.build_relative_host_anchor_entry( ...
+                    target_id, instant_index, reference_state, clean_state);
+            end
+            if isempty(snapshot) && use_trusted_history
+                snapshot = self.get_latest_trusted_relative_anchor_entry( ...
+                    target_id, instant_index);
+            end
+            if isempty(snapshot)
+                snapshot = self.build_relative_host_anchor_entry( ...
+                    target_id, instant_index, reference_state, clean_state);
+            end
+            if isempty(snapshot)
+                return;
+            end
+
+            % A trusted snapshot retains relative geometry but always uses the
+            % live host pose, then resolves ahead/behind from current evidence.
+            host_state = self.est_local_state_current(:);
+            if length(host_state) < 5
+                host_state(end + 1:5) = 0;
+            end
+            snapshot(1:5) = host_state(1:5);
+            snapshot(7) = self.resolve_relative_host_anchor_sign( ...
+                target_id, host_state, reference_state, clean_state);
+            snapshot = self.normalize_relative_host_anchor_snapshot(snapshot);
+        end
+
+        function sign_value = resolve_relative_host_anchor_sign(self, target_id, host_state, reference_state, clean_state)
+            if nargin < 5
+                clean_state = [];
+            end
+            host_state = double(host_state(:));
+            host_x = host_state(1);
+            host_y = host_state(2);
+            host_theta = 0;
+            if length(host_state) >= 3
+                host_theta = host_state(3);
+            end
+            heading = [cos(host_theta); sin(host_theta)];
+            candidates = {reference_state, clean_state};
+            for idx = 1:length(candidates)
+                candidate = candidates{idx};
+                if isempty(candidate) || length(candidate) < 2
+                    continue;
+                end
+                projection = dot( ...
+                    [candidate(1) - host_x; candidate(2) - host_y], heading);
+                if isfinite(projection) && abs(projection) > 1e-6
+                    sign_value = 2 * double(projection >= 0) - 1;
+                    return;
+                end
+            end
+
+            leader_id = double(self.scenario_value('leader_id', NaN));
+            if isfinite(leader_id)
+                if target_id == leader_id && target_id ~= self.vehicle.vehicle_number
+                    sign_value = 1;
+                    return;
+                elseif self.vehicle.vehicle_number == leader_id && ...
+                        target_id ~= self.vehicle.vehicle_number
+                    sign_value = -1;
+                    return;
+                end
+            end
+            sign_value = 2 * double(target_id < self.vehicle.vehicle_number) - 1;
+        end
+
+        function snapshot = normalize_relative_host_anchor_snapshot(self, snapshot)
+            snapshot = double(snapshot(:));
+            if length(snapshot) < 12
+                snapshot(end + 1:12) = NaN;
+            elseif length(snapshot) > 12
+                snapshot = snapshot(1:12);
+            end
+            if ~isfinite(snapshot(6))
+                snapshot = [];
+                return;
+            end
+            snapshot(6) = max(snapshot(6), 0.1);
+            if ~isfinite(snapshot(7))
+                snapshot(7) = 1;
+            else
+                snapshot(7) = 2 * double(snapshot(7) >= 0) - 1;
+            end
+            if isfinite(snapshot(9))
+                snapshot(9) = self.wrap_angle(snapshot(9));
+                if ~isfinite(snapshot(10))
+                    snapshot(10) = snapshot(6) * cos(snapshot(9));
+                end
+                if ~isfinite(snapshot(11))
+                    snapshot(11) = snapshot(6) * sin(snapshot(9));
+                end
+            end
+        end
+
+        function [rel_x, rel_y] = body_relative_from_world_delta(~, dx, dy, host_theta)
+            rel_x = cos(host_theta) * dx + sin(host_theta) * dy;
+            rel_y = -sin(host_theta) * dx + cos(host_theta) * dy;
+        end
+
+        function state = predict_dynamics_parity(self, state, control, dt, target_id, instant_index, force_clean_anchor, relative_anchor_active, anchor_snapshot)
+            state = double(state(:));
+            if length(state) < self.num_states
+                state(end + 1:self.num_states) = 0;
+            end
+            mode = self.get_prediction_mode_for_target(target_id);
+            if dt <= 0 || mode == "none"
+                return;
+            end
+            if mode == "clean_data"
+                [clean_state, ~] = self.get_clean_aligned_state(target_id, instant_index);
+                motion = state;
+                if ~isempty(clean_state)
+                    motion = clean_state;
+                end
+                base_x = state(1);
+                base_y = state(2);
+                if force_clean_anchor && ~isempty(clean_state)
+                    base_x = clean_state(1);
+                    base_y = clean_state(2);
+                end
+                state(1) = base_x + motion(4) * cos(motion(3)) * dt;
+                state(2) = base_y + motion(4) * sin(motion(3)) * dt;
+                state(3) = self.wrap_angle(motion(3));
+                state(4) = motion(4);
+                if length(motion) >= 5
+                    state(5) = motion(5);
+                end
+                return;
+            end
+            if mode == "dead_reckoning"
+                state(1) = state(1) + state(4) * cos(state(3)) * dt;
+                state(2) = state(2) + state(4) * sin(state(3)) * dt;
+                return;
+            end
+            if (mode == "mixed_clean_data" || mode == "relative_host_anchor_mixed") && relative_anchor_active
+                state = self.predict_relative_host_anchor_motion( ...
+                    state, control, dt, target_id, instant_index, force_clean_anchor, anchor_snapshot);
+                return;
+            end
+            state = self.predict_with_vehicle_model_parity(state, control, dt);
+        end
+
+        function predicted = predict_relative_host_anchor_motion(self, state, control, dt, target_id, instant_index, force_clean_anchor, anchor_snapshot)
+            model_predicted = self.predict_with_vehicle_model_parity(state, control, dt);
+            [clean_state, ~] = self.get_clean_aligned_state(target_id, instant_index);
+            if isempty(anchor_snapshot)
+                anchor_snapshot = self.build_relative_host_anchor_snapshot( ...
+                    target_id, instant_index, state, clean_state);
+            end
+            predicted = state;
+            theta = state(3);
+            velocity = state(4);
+            acceleration = state(5);
+            if ~isempty(anchor_snapshot)
+                host_theta = anchor_snapshot(3);
+            else
+                host_theta = theta;
+            end
+            if ~isempty(clean_state) && length(clean_state) >= 3
+                theta = self.blend_angles(clean_state(3), host_theta, ...
+                    self.relative_host_anchor_clean_theta_weight, ...
+                    self.relative_host_anchor_host_theta_weight);
+            elseif ~isempty(anchor_snapshot)
+                theta = host_theta;
+            end
+            if ~isempty(anchor_snapshot)
+                velocity = self.relative_host_anchor_target_velocity_weight * velocity + ...
+                    self.relative_host_anchor_host_velocity_weight * anchor_snapshot(4);
+                acceleration = self.relative_host_anchor_target_acceleration_weight * acceleration + ...
+                    self.relative_host_anchor_host_acceleration_weight * anchor_snapshot(5);
+            end
+
+            base_x = state(1);
+            base_y = state(2);
+            has_anchor = false;
+            if ~isempty(anchor_snapshot)
+                if self.relative_host_anchor_use_bearing && ...
+                        isfinite(anchor_snapshot(10)) && isfinite(anchor_snapshot(11))
+                    base_x = anchor_snapshot(1) + cos(host_theta) * anchor_snapshot(10) - sin(host_theta) * anchor_snapshot(11);
+                    base_y = anchor_snapshot(2) + sin(host_theta) * anchor_snapshot(10) + cos(host_theta) * anchor_snapshot(11);
+                else
+                    base_x = anchor_snapshot(1) + anchor_snapshot(7) * anchor_snapshot(6) * cos(host_theta);
+                    base_y = anchor_snapshot(2) + anchor_snapshot(7) * anchor_snapshot(6) * sin(host_theta);
+                end
+                has_anchor = true;
+            elseif force_clean_anchor && ~isempty(clean_state)
+                base_x = clean_state(1);
+                base_y = clean_state(2);
+                has_anchor = true;
+            end
+            anchor_x = base_x + velocity * cos(theta) * dt;
+            anchor_y = base_y + velocity * sin(theta) * dt;
+            if has_anchor
+                aw = self.relative_host_anchor_anchor_position_weight;
+                ew = self.relative_host_anchor_estimate_position_weight;
+                denom = aw + ew;
+                if denom > 1e-9
+                    predicted(1) = (aw * anchor_x + ew * model_predicted(1)) / denom;
+                    predicted(2) = (aw * anchor_y + ew * model_predicted(2)) / denom;
+                else
+                    predicted(1:2) = [anchor_x; anchor_y];
+                end
+            else
+                predicted(1:2) = [anchor_x; anchor_y];
+            end
+            predicted(3) = self.wrap_angle(theta);
+            predicted(4) = velocity;
+            predicted(5) = acceleration;
+        end
+
+        function state = predict_with_vehicle_model_parity(self, state, control, dt)
+            x = state(1); y = state(2); theta = state(3); v = state(4); a = state(5);
+            has_control = ~isempty(control) && all(isfinite(control(:)));
+            if has_control
+                longitudinal = double(control(1));
+                if length(control) >= 2
+                    steering = double(control(2));
+                else
+                    steering = 0;
+                end
+            else
+                longitudinal = 0;
+                steering = 0;
+            end
+            max_steer = Inf;
+            if isobject(self.param_sys) && isprop(self.param_sys, 'max_steering_angle')
+                max_steer = abs(double(self.param_sys.max_steering_angle));
+            elseif isstruct(self.param_sys) && isfield(self.param_sys, 'max_steering_angle')
+                max_steer = abs(double(self.param_sys.max_steering_angle));
+            end
+            steering = min(max(steering, -max_steer), max_steer);
+            wheelbase = 1;
+            if isobject(self.param_sys) && isprop(self.param_sys, 'l_f') && isprop(self.param_sys, 'l_r')
+                wheelbase = self.param_sys.l_f + self.param_sys.l_r;
+            elseif isstruct(self.param_sys) && isfield(self.param_sys, 'l_f') && isfield(self.param_sys, 'l_r')
+                wheelbase = self.param_sys.l_f + self.param_sys.l_r;
+            end
+            wheelbase = max(double(wheelbase), 1e-6);
+            state(1) = x + v * cos(theta) * dt;
+            state(2) = y + v * sin(theta) * dt;
+            state(3) = theta + v * tan(steering) / wheelbase * dt;
+            if ~has_control
+                state(4) = v;
+                state(5) = 0;
+                return;
+            end
+            model_type = lower(string(self.scenario_value('model_vehicle_type', 'normal')));
+            if model_type == "delay_v"
+                tau_v = 0.6;
+                if isobject(self.param_sys) && isprop(self.param_sys, 'tau_v')
+                    tau_v = self.param_sys.tau_v;
+                elseif isstruct(self.param_sys) && isfield(self.param_sys, 'tau_v')
+                    tau_v = self.param_sys.tau_v;
+                end
+                v_dot = (longitudinal - v) / max(double(tau_v), 1e-6);
+                state(4) = v + v_dot * dt;
+                state(5) = v_dot;
+            elseif model_type == "delay_a" || model_type == "paper"
+                tau = 0.1;
+                if isobject(self.param_sys) && isprop(self.param_sys, 'tau')
+                    tau = self.param_sys.tau;
+                elseif isstruct(self.param_sys) && isfield(self.param_sys, 'tau')
+                    tau = self.param_sys.tau;
+                end
+                a_new = a + dt * (-(a / max(double(tau), 1e-6)) + longitudinal / max(double(tau), 1e-6));
+                state(4) = v + a_new * dt;
+                state(5) = a_new;
+            else
+                state(4) = v + longitudinal * dt;
+                state(5) = longitudinal;
+            end
+        end
+
+        function angle = blend_angles(self, primary, secondary, primary_weight, secondary_weight)
+            sin_sum = primary_weight * sin(primary) + secondary_weight * sin(secondary);
+            cos_sum = primary_weight * cos(primary) + secondary_weight * cos(secondary);
+            if abs(sin_sum) <= 1e-9 && abs(cos_sum) <= 1e-9
+                angle = self.wrap_angle(primary);
+            else
+                angle = atan2(sin_sum, cos_sum);
+            end
+        end
+
+        function angle = wrap_angle(~, angle)
+            angle = atan2(sin(angle), cos(angle));
+        end
+
+        function residual = state_residual(self, measurement, reference)
+            residual = double(measurement(:)) - double(reference(:));
+            if length(residual) >= 3
+                residual(3) = self.wrap_angle(residual(3));
+            end
+        end
+
+        function state = apply_output_low_pass_filter(self, previous_state, new_state, alpha_override)
+            if ~self.enable_output_low_pass
+                state = new_state;
+                return;
+            end
+            if nargin < 4 || ~isfinite(alpha_override)
+                alpha = self.output_low_pass_alpha;
+            else
+                alpha = min(1, max(0, alpha_override));
+            end
+            if alpha >= 1
+                state = new_state;
+                return;
+            end
+            state = (1 - alpha) * previous_state + alpha * new_state;
+            state(3) = self.wrap_angle(previous_state(3) + ...
+                alpha * self.wrap_angle(new_state(3) - previous_state(3)));
+            state = self.apply_state_constraints(state);
+        end
+
+        function state = apply_state_constraints(self, state)
+            state = double(state(:));
+            if length(state) >= 3
+                state(3) = self.wrap_angle(state(3));
+            end
+            if length(state) >= 4 && isfinite(self.prediction_max_velocity)
+                max_v = max(abs(self.prediction_max_velocity), eps);
+                state(4) = min(max(state(4), -max_v), max_v);
+            end
+            if length(state) >= 5 && isfinite(self.prediction_max_acceleration)
+                max_a = max(abs(self.prediction_max_acceleration), eps);
+                state(5) = min(max(state(5), -max_a), max_a);
+            end
+        end
+
+        function states = apply_post_rollback_anchor_correction(self, states, instant_index)
+            host_id = self.vehicle.vehicle_number;
+            for target_id = 1:self.num_vehicles
+                if target_id == host_id || ...
+                        ~(self.has_active_direct_attack(target_id) || self.is_target_quarantined_by_rollback(target_id))
+                    continue;
+                end
+                mode = self.get_prediction_mode_for_target(target_id);
+                if ~any(mode == ["clean_data", "mixed_clean_data", "relative_host_anchor_mixed"])
+                    continue;
+                end
+                [clean_state, ~] = self.get_clean_aligned_state(target_id, instant_index);
+                if mode == "clean_data"
+                    if isempty(clean_state)
+                        continue;
+                    end
+                    anchored = states(:, target_id);
+                    if self.force_clean_pose_anchor
+                        anchored(1:2) = clean_state(1:2);
+                    end
+                    anchored(3:min(5, length(clean_state))) = clean_state(3:min(5, length(clean_state)));
+                    states(:, target_id) = self.apply_state_constraints(anchored);
+                    continue;
+                end
+                force_anchor = self.force_clean_pose_anchor;
+                relative_active = mode == "relative_host_anchor_mixed" || ...
+                    (mode == "mixed_clean_data" && force_anchor);
+                if ~relative_active
+                    continue;
+                end
+                anchored = self.anchor_state_from_relative_host( ...
+                    states(:, target_id), target_id, instant_index, clean_state, force_anchor);
+                if ~isempty(anchored)
+                    states(:, target_id) = self.apply_state_constraints(anchored);
+                end
+            end
+        end
+
+        function anchored = anchor_state_from_relative_host(self, state, target_id, instant_index, clean_state, force_clean_anchor)
+            snapshot = self.build_relative_host_anchor_snapshot( ...
+                target_id, instant_index, state, clean_state);
+            if isempty(snapshot) && isempty(clean_state)
+                anchored = [];
+                return;
+            end
+            anchored = state;
+            theta = state(3);
+            velocity = state(4);
+            acceleration = state(5);
+            host_theta = theta;
+            if ~isempty(snapshot)
+                host_theta = snapshot(3);
+            end
+            if ~isempty(clean_state) && length(clean_state) >= 3
+                theta = self.blend_angles(clean_state(3), host_theta, ...
+                    self.relative_host_anchor_clean_theta_weight, ...
+                    self.relative_host_anchor_host_theta_weight);
+            elseif ~isempty(snapshot)
+                theta = host_theta;
+            end
+            if ~isempty(snapshot)
+                velocity = self.relative_host_anchor_target_velocity_weight * velocity + ...
+                    self.relative_host_anchor_host_velocity_weight * snapshot(4);
+                acceleration = self.relative_host_anchor_target_acceleration_weight * acceleration + ...
+                    self.relative_host_anchor_host_acceleration_weight * snapshot(5);
+            end
+
+            anchor_x = state(1);
+            anchor_y = state(2);
+            has_position = false;
+            if ~isempty(snapshot)
+                if self.relative_host_anchor_use_bearing && isfinite(snapshot(10)) && isfinite(snapshot(11))
+                    anchor_x = snapshot(1) + cos(host_theta) * snapshot(10) - sin(host_theta) * snapshot(11);
+                    anchor_y = snapshot(2) + sin(host_theta) * snapshot(10) + cos(host_theta) * snapshot(11);
+                else
+                    anchor_x = snapshot(1) + snapshot(7) * snapshot(6) * cos(host_theta);
+                    anchor_y = snapshot(2) + snapshot(7) * snapshot(6) * sin(host_theta);
+                end
+                has_position = true;
+            elseif force_clean_anchor && ~isempty(clean_state)
+                anchor_x = clean_state(1);
+                anchor_y = clean_state(2);
+                has_position = true;
+            end
+            if has_position
+                aw = self.relative_host_anchor_anchor_position_weight;
+                ew = self.relative_host_anchor_estimate_position_weight;
+                denom = aw + ew;
+                if denom > 1e-9
+                    anchored(1) = (aw * anchor_x + ew * state(1)) / denom;
+                    anchored(2) = (aw * anchor_y + ew * state(2)) / denom;
+                else
+                    anchored(1:2) = [anchor_x; anchor_y];
+                end
+            end
+            anchored(3) = self.wrap_angle(theta);
+            anchored(4) = velocity;
+            anchored(5) = acceleration;
+        end
+
         function [is_ok, log_element, confidence] = check_elementwise_similarity(self, output1, output2, instant_index, vehicle_id)
             is_ok = true;
             log_element = [];
@@ -812,14 +2108,31 @@ classdef Observer < handle
         end
 
 
-        function u_j =  Get_controller(self,j)
+        function u_j =  Get_controller(self,j, instant_index)
+            if nargin < 3
+                instant_index = NaN;
+            end
             if self.vehicle.scenarios_config.predict_controller_type == "self"
                 % If we are using local estimation, we need to use the local state of the vehicle
                 % u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
                 u_j = self.vehicle.input; % Control input of the current vehicle
             elseif self.vehicle.scenarios_config.predict_controller_type == "true_other"
-                % Go inside vehicle j , get control input of j
-                u_j = self.vehicle.other_vehicles(j).input; % Control input of the current vehicle
+                % Use the latest step-synchronous V2V control packet.  Direct
+                % object access mixes current and previous time steps because
+                % Simulator updates vehicles sequentially.
+                try
+                    [u_j, control_step] = self.vehicle.center_communication.get_input(j);
+                catch
+                    u_j = [];
+                    control_step = NaN;
+                end
+                if isfinite(instant_index) && isfinite(control_step) && ...
+                        (instant_index - control_step) * self.param_sys.dt > self.control_timeout_s
+                    u_j = [];
+                end
+                if isempty(u_j) || any(~isfinite(u_j(:)))
+                    u_j = [];
+                end
 
             else % "predict_other"
 
@@ -1046,18 +2359,24 @@ classdef Observer < handle
                     0 0];
 
             elseif (self.vehicle.scenarios_config.model_vehicle_type == "delay_v")
-                % Here in discrete time
+                tau_v = tau;
+                if isobject(self.param_sys) && isprop(self.param_sys, 'tau_v')
+                    tau_v = self.param_sys.tau_v;
+                elseif isstruct(self.param_sys) && isfield(self.param_sys, 'tau_v')
+                    tau_v = self.param_sys.tau_v;
+                end
+                tau_v = max(double(tau_v), eps);
                 A = [   1 0 -v*sin(theta)*Ts cos(theta)*Ts 0;
                     0 1 v*cos(theta)*Ts sin(theta)*Ts 0;
                     0 0 1 0 0 ;
-                    0 0 0 1 Ts;
-                    0 0 0 0 1 - tau/Ts];
+                    0 0 0 1-Ts/tau_v 0;
+                    0 0 0 0 0];
 
                 B = [0 0;
                     0 0;
                     0 Ts;
-                    Ts/tau 0;
-                    0 0];
+                    Ts/tau_v 0;
+                    1 0];
 
             elseif (self.vehicle.scenarios_config.model_vehicle_type == "delay_a")% "delay_a"
                 A = [   1 0 -v*sin(theta)*Ts cos(theta)*Ts 0;
@@ -1094,7 +2413,7 @@ classdef Observer < handle
 
 
         function [output, innovation, S] = predict_kalman_dist(self, host_id, j, x_hat_i_j_host, u_j)
-            [A, B] = self.matrix();
+            [A, B] = self.matrix(x_hat_i_j_host);
             C = eye(self.num_states);
 
             x_pred = A * x_hat_i_j_host + B * u_j;
@@ -1220,65 +2539,62 @@ classdef Observer < handle
         end
         
         function [rollback_applied, corrected_states] = check_and_trigger_rollback(self, instant_index, trust_scores, current_states)
-            % Check for newly malicious vehicles and trigger rollback if needed
+            % Python parity: recompute the active set every step and replay
+            % only when at least one source becomes newly active.
             rollback_applied = false;
-            corrected_states = [];
-            if ~self.rollback_enabled
-                return;
-            end
             if nargin < 4 || isempty(current_states)
                 current_states = self.est_global_state_current;
             end
+            corrected_states = current_states;
+            if ~self.rollback_enabled
+                return;
+            end
             
-            previous_malicious = self.malicious_vehicles;
+            previous_malicious = unique(self.malicious_vehicles(:)');
             active_malicious = [];
-            
+            active_reasons = false(self.num_vehicles, 3);
+            elapsed_s = max(instant_index - 1, 0) * self.param_sys.dt;
+            suppress_startup = elapsed_s < self.rollback_startup_suppress_duration_s;
             for vehicle_id = 1:length(trust_scores)
                 current_trust = trust_scores(vehicle_id);
                 if vehicle_id == self.vehicle.vehicle_number
                     continue;
                 end
 
-                should_flag = false;
-                if self.rollback_on_final_trust && isfinite(current_trust) && current_trust < self.trust_threshold
-                    should_flag = true;
-                end
-                if self.rollback_on_local_est_check && self.get_trip_flag(vehicle_id, 'flag_local_est_check')
-                    should_flag = true;
-                end
-                if self.rollback_on_global_est_check && self.get_trip_flag(vehicle_id, 'flag_global_est_check')
-                    should_flag = true;
-                end
+                raw_reasons = false(1, 3);
+                raw_reasons(1) = self.rollback_on_final_trust && isfinite(current_trust) && ...
+                    current_trust < self.trust_threshold && ...
+                    self.is_local_channel_untrusted(vehicle_id, current_trust);
+                raw_reasons(2) = self.rollback_on_local_est_check && ...
+                    self.get_trip_flag(vehicle_id, 'flag_local_est_check');
+                raw_reasons(3) = self.rollback_on_global_est_check && ...
+                    self.get_trip_flag(vehicle_id, 'flag_global_est_check');
 
-                if should_flag
-                    self.rollback_bad_counters(vehicle_id) = self.rollback_bad_counters(vehicle_id) + 1;
-                    is_confirmed_bad = self.rollback_bad_counters(vehicle_id) >= self.rollback_required_bad_steps;
-                    if is_confirmed_bad || ismember(vehicle_id, previous_malicious)
-                        active_malicious = [active_malicious, vehicle_id]; %#ok<AGROW>
-                    end
-                    self.rollback_recovery_counters(vehicle_id) = 0;
-                elseif ismember(vehicle_id, previous_malicious)
-                    self.rollback_bad_counters(vehicle_id) = 0;
-                    self.rollback_recovery_counters(vehicle_id) = self.rollback_recovery_counters(vehicle_id) + 1;
-                    if self.rollback_recovery_counters(vehicle_id) < self.rollback_recovery_good_steps
-                        active_malicious = [active_malicious, vehicle_id]; %#ok<AGROW>
-                    else
-                        self.rollback_recovery_counters(vehicle_id) = 0;
+                if suppress_startup
+                    self.rollback_trigger_delay_counters(vehicle_id) = 0;
+                    raw_reasons(:) = false;
+                elseif any(raw_reasons)
+                    self.rollback_trigger_delay_counters(vehicle_id) = ...
+                        self.rollback_trigger_delay_counters(vehicle_id) + 1;
+                    if self.rollback_trigger_delay_counters(vehicle_id) <= self.rollback_trigger_delay_steps
+                        raw_reasons(:) = false;
                     end
                 else
-                    self.rollback_bad_counters(vehicle_id) = 0;
-                    self.rollback_recovery_counters(vehicle_id) = 0;
+                    self.rollback_trigger_delay_counters(vehicle_id) = 0;
+                end
+                if any(raw_reasons)
+                    active_malicious(end + 1) = vehicle_id; %#ok<AGROW>
+                    active_reasons(vehicle_id, :) = raw_reasons;
                 end
             end
 
             active_malicious = unique(active_malicious);
             newly_malicious = setdiff(active_malicious, previous_malicious);
             self.malicious_vehicles = active_malicious;
+            self.rollback_active_trigger_reasons = active_reasons;
+            self.rollback_last_newly_flagged = newly_malicious;
             
             if ~isempty(newly_malicious)
-                if instant_index - self.rollback_last_trigger_step < self.rollback_cooldown_steps
-                    return;
-                end
                 [rollback_applied, corrected_states] = self.trigger_contamination_rollback(active_malicious, instant_index, current_states);
                 if rollback_applied
                     self.rollback_last_trigger_step = instant_index;
@@ -1396,10 +2712,29 @@ classdef Observer < handle
                     end
                 end
 
+                consensus_state = self.apply_state_constraints(base_state + correction);
                 control = prediction.control;
-                [A, B] = self.matrix(base_state);
-                corrected_state = A * (base_state + correction) + B * control;
-                corrected_state = self.apply_replay_state_constraints(corrected_state);
+                if self.fleet_estimator_parity_mode && isfield(prediction, 'dt')
+                    force_clean_anchor = isfield(prediction, 'force_clean_pose_anchor') && ...
+                        logical(prediction.force_clean_pose_anchor);
+                    relative_anchor_active = isfield(prediction, 'attack_relative_host_anchor_active') && ...
+                        logical(prediction.attack_relative_host_anchor_active);
+                    anchor_snapshot = [];
+                    if isfield(prediction, 'host_anchor_snapshot')
+                        anchor_snapshot = prediction.host_anchor_snapshot;
+                    end
+                    corrected_state = self.predict_dynamics_parity( ...
+                        consensus_state, control, double(prediction.dt), vehicle_j, ...
+                        step_data.instant_index, force_clean_anchor, relative_anchor_active, anchor_snapshot);
+                    corrected_state = self.apply_state_constraints(corrected_state);
+                else
+                    [A, B] = self.matrix(base_state);
+                    if isempty(control)
+                        control = zeros(size(B, 2), 1);
+                    end
+                    corrected_state = A * consensus_state + B * control;
+                    corrected_state = self.apply_replay_state_constraints(corrected_state);
+                end
                 return;
             end
 
@@ -1437,10 +2772,6 @@ classdef Observer < handle
                 if trust_scores(vehicle_id) < self.trust_threshold
                     continue;
                 end
-                if self.get_trip_flag(vehicle_id, 'flag_local_est_check') || self.get_trip_flag(vehicle_id, 'flag_global_est_check')
-                    continue;
-                end
-
                 entry = struct('state', states(:, vehicle_id), 'instant_index', instant_index);
                 history = self.rollback_trusted_state_history{vehicle_id};
                 if isempty(history)
@@ -1452,6 +2783,24 @@ classdef Observer < handle
                     history = history(end - self.rollback_trusted_state_history_size + 1:end);
                 end
                 self.rollback_trusted_state_history{vehicle_id} = history;
+
+                % Python records a freshly built entry here (rather than
+                % resolving through older trusted history).
+                anchor_entry = self.build_relative_host_anchor_entry( ...
+                    vehicle_id, instant_index, states(:, vehicle_id), []);
+                if ~isempty(anchor_entry)
+                    count = self.rollback_trusted_relative_anchor_count(vehicle_id);
+                    if count < self.rollback_trusted_state_history_size
+                        anchor_idx = count + 1;
+                    else
+                        self.rollback_trusted_relative_anchor_history(:, 1:end-1, vehicle_id) = ...
+                            self.rollback_trusted_relative_anchor_history(:, 2:end, vehicle_id);
+                        anchor_idx = self.rollback_trusted_state_history_size;
+                    end
+                    self.rollback_trusted_relative_anchor_history(:, anchor_idx, vehicle_id) = anchor_entry;
+                    self.rollback_trusted_relative_anchor_count(vehicle_id) = ...
+                        min(count + 1, self.rollback_trusted_state_history_size);
+                end
             end
         end
 

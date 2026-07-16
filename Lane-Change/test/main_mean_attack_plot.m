@@ -24,7 +24,7 @@ t_end = 15;
 rmse_time_window = [t_star, t_end];
 attacker_vehicle_id = 1;
 victim_id = -1;
-data_type_attack = "local"; % "local" , "global","both"
+data_type_attack = "global"; % "local" , "global","both"
 attack_type = "Mix_test"; % "DoS" , "faulty" , "scaling" , "Collusion" ,"Bogus" , "POS" , "VEL" , "ACC" , "Mix_test"
 
 
@@ -35,20 +35,27 @@ if isempty(script_dir)
     script_dir = pwd;
 end
 
-run_timestamp = datestr(now, 'yyyymmdd_HHMMSS_FFF');
+run_start_time = now;
+run_date_folder = datestr(run_start_time, 'yyyy-mm-dd');
+run_timestamp = datestr(run_start_time, 'yyyymmdd_HHMMSS_FFF');
+run_time_label = datestr(run_start_time, 'HHMMSS_FFF');
 data_type_folder = sanitize_result_filename(char(data_type_attack));
 attacker_folder = sprintf('attacker_V%d', attacker_vehicle_id);
 attack_type_folder = sanitize_result_filename(char(attack_type));
-run_label = sanitize_result_filename(sprintf('%s_window_%gs_%gs', ...
-    run_timestamp, rmse_time_window(1), rmse_time_window(2)));
+run_label = sanitize_result_filename(sprintf('run_%s_window_%gs_%gs', ...
+    run_time_label, rmse_time_window(1), rmse_time_window(2)));
 results_root = fullfile(script_dir, 'results');
-results_group_dir = fullfile(results_root, data_type_folder, attacker_folder, attack_type_folder);
+results_day_dir = fullfile(results_root, run_date_folder);
+results_group_dir = fullfile(results_day_dir, data_type_folder, attacker_folder, attack_type_folder);
 run_results_dir = fullfile(results_group_dir, run_label);
 figures_dir = fullfile(run_results_dir, 'figures');
 logs_dir = fullfile(run_results_dir, 'logs');
 
 if ~exist(results_root, 'dir')
     mkdir(results_root);
+end
+if ~exist(results_day_dir, 'dir')
+    mkdir(results_day_dir);
 end
 if ~exist(results_group_dir, 'dir')
     mkdir(results_group_dir);
@@ -66,6 +73,8 @@ end
 run_log_filename = fullfile(logs_dir, 'command_window.log');
 diary(run_log_filename);
 diary on;
+fprintf('Simulation run day: %s\n', run_date_folder);
+fprintf('Daily results folder: %s\n', results_day_dir);
 fprintf('Run output folder: %s\n', run_results_dir);
 fprintf('Command-window log: %s\n', run_log_filename);
 
@@ -110,8 +119,11 @@ non_attacker_ids = all_vehicle_ids(all_vehicle_ids ~= attacker_vehicle_id);
 
 % Override the 4-vehicle graph from Config for this 5-vehicle workflow.
 graph = ones(num_vehicles) - eye(num_vehicles);
+% Preserve the fully configured Config.m template.  Weight_Trust_module is a
+% handle class, so sharing one object across hosts/cases leaks vehicle_id,
+% smoothing, and startup state between otherwise independent simulations.
+weight_trust_module_template = Weight_Trust_module;
 clear('Weight_Trust_module');
-weight_trust_module = Weight_Trust_module(graph, trust_threshold, kappa);
 
 vehicle_labels = arrayfun(@(x) sprintf('V%d', x), all_vehicle_ids, 'UniformOutput', false);
 scenario_labels = arrayfun(@(x) sprintf("Case %d", x), attack_case_numbers, 'UniformOutput', false);
@@ -166,7 +178,10 @@ controller2_types = ["None", repmat("CACC", 1, num_vehicles - 1)];
 
 % Give each vehicle a small fixed parameter mismatch, reused for all cases.
 rng_state = rng;
-rng(10);
+parameter_random_seed = 10;
+rng(parameter_random_seed, 'twister');
+batch_case_seed_base = 20260710;
+case_random_seeds = batch_case_seed_base + attack_case_numbers;
 param_spread = 0.03;
 vehicle_params = cell(num_vehicles, 1);
 for vehicle_id = all_vehicle_ids
@@ -197,8 +212,11 @@ rng(rng_state);
 
 for case_idx = 1:total_num_attack_cases
     case_nb_attack = attack_case_numbers(case_idx);
-    fprintf('Running %s attack by V%d, Case %d/%d...\n', ...
-        attack_type, attacker_vehicle_id, case_idx, total_num_attack_cases);
+    case_random_seed = case_random_seeds(case_idx);
+    rng(case_random_seed, 'twister');
+    fprintf('Running %s attack by V%d, Case %d/%d (seed %d)...\n', ...
+        attack_type, attacker_vehicle_id, case_idx, total_num_attack_cases, ...
+        case_random_seed);
 
     attack_module = Attack_module(Scenarios_config.dt);
     attack_module = Atk_Scenarios(attack_module , attack_type ,data_type_attack,case_nb_attack , t_star, t_end, attacker_vehicle_id,victim_id );
@@ -208,7 +226,9 @@ for case_idx = 1:total_num_attack_cases
     platton_vehicles = Vehicle.empty;
     for vehicle_id = all_vehicle_ids
         initial_state = [initial_x_positions(vehicle_id); 0.5 * lane_width; 0; initial_speeds(vehicle_id); 0];
-        new_vehicle = Vehicle(vehicle_id, controller_types(vehicle_id), vehicle_params{vehicle_id}, initial_state, initial_lane_id, straightLanes, direction_flag, 0, Scenarios_config, weight_trust_module);
+        vehicle_weight_module = clone_weight_trust_module( ...
+            weight_trust_module_template, graph, vehicle_id);
+        new_vehicle = Vehicle(vehicle_id, controller_types(vehicle_id), vehicle_params{vehicle_id}, initial_state, initial_lane_id, straightLanes, direction_flag, 0, Scenarios_config, vehicle_weight_module);
         platton_vehicles = [platton_vehicles; new_vehicle];
     end
 
@@ -367,8 +387,12 @@ for case_idx = 1:total_num_attack_cases
                             attacker_weight_traces(ev_idx, time_idx) = max(attacker_source_values);
                         end
                     end
-                    trusted_neighbor_count_traces(ev_idx, time_idx) = ...
-                        length(weight_trust_module.get_trusted_neighbors(evaluator_id, trust_scores_now));
+                    if isprop(evaluator, 'weight_module') && ...
+                            ~isempty(evaluator.weight_module)
+                        trusted_neighbor_count_traces(ev_idx, time_idx) = ...
+                            length(evaluator.weight_module.get_trusted_neighbors( ...
+                                evaluator_id, trust_scores_now));
+                    end
                 end
             end
         end
@@ -527,7 +551,9 @@ for case_idx = 1:total_num_attack_cases
     % Store complete trust data for each case
     all_case_trust_logs{case_idx} = struct();
     all_case_vehicles{case_idx} = platton_vehicles;
-    all_case_scenarios{case_idx} = struct('t_start', t_star, 't_end', t_end, 'dt', Scenarios_config.dt, 'case_number', case_nb_attack);
+    all_case_scenarios{case_idx} = struct( ...
+        't_start', t_star, 't_end', t_end, 'dt', Scenarios_config.dt, ...
+        'case_number', case_nb_attack, 'random_seed', case_random_seed);
     
     % Collect trust logs from all vehicles for this case
     for v_idx = 1:length(platton_vehicles)
@@ -574,6 +600,7 @@ for case_idx = 1:total_num_attack_cases
         end
     end
 end
+rng(rng_state);
 
 %% ===================================================================
 %% PAPER-QUALITY PLOTTING SECTION
@@ -1550,7 +1577,9 @@ if summary_fid < 0
 else
     fprintf(summary_fid, 'RUN SUMMARY\n');
     fprintf(summary_fid, '===========\n');
+    fprintf(summary_fid, 'Simulation run day: %s\n', run_date_folder);
     fprintf(summary_fid, 'Run folder: %s\n', run_results_dir);
+    fprintf(summary_fid, 'Daily results folder: %s\n', results_day_dir);
     fprintf(summary_fid, 'Grouped under: %s\n', results_group_dir);
     fprintf(summary_fid, 'Excel workbook: %s\n', excel_filename);
     fprintf(summary_fid, 'Attack type: %s\n', attack_type);
@@ -1604,6 +1633,7 @@ else
     fprintf(summary_fid, 'Excel workbook: %s\n', excel_filename);
     fprintf(summary_fid, 'Command-window log: %s\n', run_log_filename);
     fprintf(summary_fid, 'Figures folder: %s\n', figures_dir);
+    fprintf(summary_fid, 'Daily results folder: %s\n', results_day_dir);
     fprintf(summary_fid, 'Grouped results folder: %s\n', results_group_dir);
     fclose(summary_fid);
 end
@@ -1616,6 +1646,7 @@ if ~exist('all_case_scenarios', 'var')
 end
 run_metadata = struct( ...
     'run_timestamp', run_timestamp, ...
+    'run_date_folder', run_date_folder, ...
     'run_results_dir', run_results_dir, ...
     'attack_type', attack_type, ...
     'data_type_attack', data_type_attack, ...
@@ -1623,6 +1654,8 @@ run_metadata = struct( ...
     'victim_id', victim_id, ...
     'rmse_time_window', rmse_time_window, ...
     'attack_case_numbers', attack_case_numbers, ...
+    'parameter_random_seed', parameter_random_seed, ...
+    'case_random_seeds', case_random_seeds, ...
     'simulation_time', Scenarios_config.simulation_time, ...
     'dt', Scenarios_config.dt);
 simulation_log_filename = fullfile(logs_dir, 'simulation_logs.mat');
@@ -1632,27 +1665,38 @@ save(simulation_log_filename, 'run_metadata', 'all_case_state_logs', ...
 figure_manifest_filename = save_all_open_figures_to_results(figures_dir);
 
 latest_run_text = sprintf(['Latest run folder:\n%s\n\n', ...
+    'Simulation run day: %s\nDaily results folder:\n%s\n\n', ...
     'Data type attack: %s\nAttacker vehicle: V%d\nAttack type: %s\n', ...
     'Excel workbook:\n%s\nSummary report:\n%s\nFigures folder:\n%s\n'], ...
-    run_results_dir, data_type_attack, attacker_vehicle_id, attack_type, ...
+    run_results_dir, run_date_folder, results_day_dir, ...
+    data_type_attack, attacker_vehicle_id, attack_type, ...
     excel_filename, summary_filename, figures_dir);
 write_text_file(fullfile(results_root, 'latest_run_folder.txt'), latest_run_text);
+write_text_file(fullfile(results_day_dir, 'latest_run_folder.txt'), latest_run_text);
 write_text_file(fullfile(results_group_dir, 'latest_run_folder.txt'), latest_run_text);
 write_text_file(fullfile(run_results_dir, 'open_this_results_folder.bat'), ...
     sprintf('@echo off\r\nexplorer "%s"\r\n', run_results_dir));
 write_text_file(fullfile(results_root, 'open_latest_results.bat'), ...
+    sprintf('@echo off\r\nexplorer "%s"\r\n', run_results_dir));
+write_text_file(fullfile(results_day_dir, 'open_latest_results.bat'), ...
     sprintf('@echo off\r\nexplorer "%s"\r\n', run_results_dir));
 write_text_file(fullfile(results_group_dir, 'open_latest_results.bat'), ...
     sprintf('@echo off\r\nexplorer "%s"\r\n', run_results_dir));
 
 append_run_index(fullfile(results_root, 'results_index.csv'), run_metadata, ...
     results_group_dir, run_results_dir, excel_filename, summary_filename, figures_dir);
+append_run_index(fullfile(results_day_dir, 'results_index.csv'), run_metadata, ...
+    results_group_dir, run_results_dir, excel_filename, summary_filename, figures_dir);
 append_run_index(fullfile(results_group_dir, 'results_index.csv'), run_metadata, ...
     results_group_dir, run_results_dir, excel_filename, summary_filename, figures_dir);
 
 fprintf('\nResults saved to run folder: %s\n', run_results_dir);
+fprintf('Simulation run day: %s\n', run_date_folder);
+fprintf('Daily result folder: %s\n', results_day_dir);
 fprintf('Grouped result folder: %s\n', results_group_dir);
+fprintf('Daily latest-run pointer: %s\n', fullfile(results_day_dir, 'latest_run_folder.txt'));
 fprintf('Latest-run pointer: %s\n', fullfile(results_group_dir, 'latest_run_folder.txt'));
+fprintf('Daily open latest shortcut: %s\n', fullfile(results_day_dir, 'open_latest_results.bat'));
 fprintf('Open latest shortcut: %s\n', fullfile(results_group_dir, 'open_latest_results.bat'));
 fprintf('Excel workbook: %s\n', excel_filename);
 fprintf('Summary report: %s\n', summary_filename);
@@ -1662,6 +1706,35 @@ fprintf('Figure manifest: %s\n', figure_manifest_filename);
 fprintf('Command-window log: %s\n', run_log_filename);
 fprintf('Use these figures and statistics in your paper!\n');
 diary off;
+
+function module = clone_weight_trust_module(template, graph, vehicle_id)
+% Build an independent Weight_Trust_module while preserving Config.m values.
+% Runtime state (vehicle_id and prev_weights) is deliberately not shared.
+module = Weight_Trust_module(graph, template.trust_threshold, template.kappa);
+config_properties = { ...
+    'weight_type', ...
+    'w0_fixed', ...
+    'w_self_base', ...
+    'w_cap', ...
+    'eta', ...
+    'enable_smoothing', ...
+    'startup_fixed_duration_s', ...
+    'use_gamma_self_weight_adaptation', ...
+    'gamma_self_weight_floor', ...
+    'include_target_self_fleet_estimate', ...
+    'local_bad_zero_w0_neighbor_total_cap', ...
+    'flag_w0_target_attack_factor', ...
+    'flag_w0_global_est_check_factor', ...
+    'flag_w0_local_est_check_factor'};
+
+for property_idx = 1:numel(config_properties)
+    property_name = config_properties{property_idx};
+    module.(property_name) = template.(property_name);
+end
+
+module.vehicle_id = vehicle_id;
+module.prev_weights = [];
+end
 
 function manifest_filename = save_all_open_figures_to_results(figures_dir)
     if ~exist(figures_dir, 'dir')

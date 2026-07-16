@@ -92,6 +92,10 @@ decorations.pathreplacing}
 \newtheorem{alert}{\color{red}\it Alert Remark}
 % \newtheorem{proof}{\it Proof}%[section]
 
+% Reviewer answers, in ForestGreen.
+\newcommand{\azrevcolor}{ForestGreen}
+\newcommand{\azrev}[1]{\textcolor{\azrevcolor}{#1}}
+
 
 
 
@@ -107,17 +111,18 @@ decorations.pathreplacing}
 \begin{document}
 
 \title{Trust-Aware Resilient Distributed Observer Design for Connected Vehicle Platoons}
-\author{Q.H. Nguyen, Shengya Meng, H. Rafaralahy, M. Haddad, and A. Zemouche%
-\thanks{This work was supported by SEGULA Engineering. H. Rafaralahy and A. Zemouche acknowledge the ANR agency for its partial financial support under project ArtISMo ANR-20-CE48-0015.}%
-\thanks{Q.H. Nguyen, Shengya Meng, H. Rafaralahy, and A. Zemouche are with Universit\'e de Lorraine, CNRS, CRAN, F-57000 Metz, France (e-mail: ali.zemouche@univ-lorraine.fr).}%
+\author{Q.H. Nguyen, S. Meng, H. Rafaralahy, M. Haddad, and A. Zemouche%
+\thanks{\azrev{This work was supported by SEGULA Engineering. The work of H. Rafaralahy and A. Zemouche was partially supported by the French National Research Agency (ANR) under grant ANR-20-CE48-0015 (ArtISMo project).}}%
+\thanks{\azrev{A preliminary version of this work was accepted at the 2026 IFAC World Congress, Busan, South Korea~\cite{nguyen2026ifac}.}}%
+\thanks{Q.H. Nguyen, S. Meng, H. Rafaralahy, and A. Zemouche are with Universit\'e de Lorraine, CNRS, CRAN, F-57000 Metz, France (e-mail: ali.zemouche@univ-lorraine.fr).}%
 \thanks{Q.H. Nguyen and M. Haddad are with SEGULA Engineering, 19 rue d'Arras, 92000 Nanterre, France (e-mail: madjid.haddad@segula.fr).}%
 \thanks{QCar/LIMO implementation resources are available at \protect\url{https://github.com/kslhuy/QCar2_Cran}; the demonstration video is available at \protect\url{https://youtu.be/t6-soznp6ks}.}}
 
-\markboth{IEEE Transactions on Intelligent Transportation Systems,~Vol.~XX, No.~XX, 2026}{Nguyen \MakeLowercase{\textit{et al.}}: Trust-Aware Resilient Distributed Observer Design}
+\markboth{IEEE Transactions on Intelligent Transportation Systems, 2026}{Nguyen \MakeLowercase{\textit{et al.}}: Trust-Aware Resilient Distributed Observer Design}
 \maketitle
 
 \begin{abstract}
-Connected vehicle platoons depend on distributed state estimation, but vehicle-to-vehicle data can be corrupted by falsified states, replayed or delayed packets, packet drops, and compromised vehicles. This paper proposes a trust-aware resilient distributed observer for vehicles described by a discrete kinematic bicycle model. The observer converts local and distributed consistency checks into online observer weights. The resulting observer builds a time-varying trusted-neighbor set while preserving a local-observer anchor, so unreliable data are down-weighted without discarding useful cooperation from reliable vehicles. Checkable local nonlinear input-to-state stability conditions are given for bounded model uncertainty, input mismatch, nonlinear remainders, bounded accepted attack values, and trust-induced switching along bounded trajectories. A finite-window rollback mechanism is also formulated to mitigate contamination caused by delayed trust decisions. Simulations on a five-vehicle platoon under position, speed, and packet-drop attacks show bounded estimation degradation; during the tested closed-loop attack interval, the trust-modulated adaptive and cooperative adaptive cruise-control scheme preserves positive inter-vehicle spacing through longitudinal projection.
+Connected vehicle platoons require distributed state estimates, but vehicle-to-vehicle packets may contain falsified states, replayed or delayed data, packet losses, or faulty-neighbor estimates. This paper develops a trust-aware resilient distributed observer for vehicles modeled by a discrete-time kinematic bicycle model. Received data are checked for validity and consistency, and local and distributed consistency scores are mapped to trust-adaptive observer weights. The observer keeps a local-observer anchor while selecting time-varying trusted neighbors, reducing the influence of unreliable sources without discarding cooperative information that remains consistent. We give checkable sufficient conditions for local nonlinear input-to-state stability under bounded model uncertainty, input mismatch, accepted attack values, nonlinear remainders, and trust-induced switching; both direct-anchor and sparse accepted-graph cases are covered. To address detection delay, a finite-window rollback procedure replays recent observer updates after a trust decision changes. Numerical tests on a five-vehicle platoon under position, speed, and packet-drop attacks show that the trust mechanism detects and suppresses corrupted sources while keeping estimation errors bounded. QCar/LIMO platform results show that rollback reduces position error after delayed detection, and the tested trust-modulated adaptive and cooperative adaptive cruise-control scheme preserves positive path-projected spacing during the attack interval.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -125,44 +130,50 @@ Connected and Autonomous Vehicles, system state estimation, methods for security
 \end{IEEEkeywords}
 
 \section{Introduction}\label{sec_introduction}
-\IEEEPARstart{A}{utonomous} road vehicles are no longer only mechanical platforms with added electronics. Advances in onboard sensing, embedded computation, and AI-supported perception are turning them into mobile cyber-physical systems that process large sensor streams and close control loops in real time. However, single-vehicle autonomy is only one part of the emerging mobility architecture. The next step is cooperation: through vehicle-to-vehicle (V2V) and broader vehicle-to-everything (V2X) communication, multiple vehicles can share state information and coordinate maneuvers, enabling platooning, smoother traffic flow, and safer mobility. In a connected and automated vehicle platoon, each vehicle must therefore estimate not only its own state but also the states of surrounding platoon members from a mixture of onboard sensing and communicated information. This distributed estimation layer is a critical component of cooperative adaptive cruise control and other platoon-level decision loops.
+\IEEEPARstart{A}{utonomous} road vehicles are no longer only mechanical platforms with added electronics. Advances in onboard sensing, embedded computation, and AI-supported perception are turning them into mobile cyber-physical systems that process large sensor streams and close control loops in real time. However, single-vehicle autonomy is only one part of the emerging mobility architecture. The next step is cooperation: through vehicle-to-vehicle (V2V) and broader vehicle-to-everything (V2X) communication, multiple vehicles can share state information and coordinate maneuvers, enabling platooning, smoother traffic flow, and safer mobility. In a connected and automated vehicle platoon, each vehicle must estimate not only its own state but also the states of surrounding platoon members from a mixture of onboard sensing and communicated information. This distributed estimation layer is a critical component of cooperative adaptive cruise control and other platoon-level decision loops.
 
 The same connectivity that enables cooperation also enlarges the attack surface. From a systems viewpoint, threats may enter through three main layers: the sensing and perception layer, where spoofed or degraded measurements can mislead the ego vehicle; the actuation and control layer, where manipulated control loops can create unsafe physical motion; and the communication layer, where denial-of-service, replay, delay, or false-data-injection attacks can corrupt the information exchanged between vehicles. The present paper focuses on this communication-driven vulnerability, while also treating faulty neighbor sensing or local estimation as unreliable reported data. This is not only a theoretical concern: cyberattacks and misbehavior in connected automated platoons and Internet-of-Vehicles networks have become practical research issues in intelligent transportation systems~\cite{C_IDM,mousavinejad2019distributed,siddiqui2023trust_vehicles}.
 
 Once compromised information is accepted by a distributed observer, the resulting estimation error can propagate across the communication graph and degrade both safety and closed-loop performance. Conventional distributed observers often assume that exchanged data are reliable, which is restrictive for connected-vehicle applications exposed to cyberattacks, packet drops, and faulty nodes. A resilient observer should therefore decide online which neighbor information remains useful, reduce the influence of unreliable packets, and still preserve cooperation when the received data are consistent with the vehicle motion.
 
-This paper develops a trust-aware distributed observer for resilient platoon state estimation. The main idea is to evaluate the behavioral consistency of received data, convert this consistency into trust scores, and use those scores to adapt the observer weights online. As a result, the observer can reduce the influence of unreliable neighbors while preserving useful cooperation from reliable vehicles. The proposed formulation clarifies the threat model, separates the trust-scoring layer from the observer conditions needed for ISS analysis, introduces a bounded rollback module for delayed decisions, and evaluates the estimator under multiple communication faults.
+\azrev{This paper develops a trust-aware distributed observer for resilient platoon state estimation. The main idea is to evaluate the behavioral consistency of received data, convert this consistency into trust scores, and use those scores to adapt the observer weights online, so that the observer reduces the influence of unreliable neighbors while preserving useful cooperation from reliable vehicles.}
 
-The main contributions are summarized as follows:
+\azrev{A preliminary version of this work was accepted at the 2026 IFAC World Congress~\cite{nguyen2026ifac}, where the platoon was described by a linear longitudinal model and the switching topology was handled through a joint-connectivity condition. The present paper keeps that trust-based idea but recasts it for a nonlinear platoon model with a resilient stability analysis, delayed-decision recovery, and hardware validation. Its main contributions, stated as advances over that preliminary version, are as follows:}
 \begin{itemize}
-    \item A resilient distributed state-estimation architecture for connected vehicle platoons under adversarial communication.
-    \item A behavioral trust framework that combines local consistency, distributed-estimate consistency, freshness, and temporal smoothing to construct a trusted-neighbor set.
-    \item A trust-adaptive observer-weight design with admissible mixing coefficients and checkable local nonlinear input-to-state stability (ISS) conditions for bounded modeling, input, attack, and nonlinear mismatch terms in the bicycle-error dynamics.
-    \item A finite-window rollback mechanism, stated as an implementable replay procedure, that can re-propagate recent observer updates after delayed trust decisions.
-    \item Simulation evidence under position, velocity, and packet-drop attack cases, together with a closed-loop spacing check during the attack interval using the current ACC/CACC structure through path-longitudinal projection.
+    \item \azrev{A nonlinear resilient distributed state-estimation architecture for connected vehicle platoons under adversarial communication, based on a discrete-time kinematic bicycle model rather than the linear longitudinal model of the conference version, with the analysis carried out on the original nonlinear error dynamics.}
+
+    \item \azrev{A behavioral trust framework that combines local consistency, distributed-estimate consistency, freshness, and temporal smoothing to construct a trusted-neighbor set, together with a receiving-side validity gate that turns any accepted corruption into a bounded input for the stability analysis.}
+
+    \item \azrev{A trust-adaptive observer-weight design with admissible mixing coefficients and local nonlinear input-to-state stability (ISS) conditions for bounded modeling, input, attack, and nonlinear mismatch terms, now established through a sequentially rooted accepted-graph condition that yields direct-anchor (one-step) and sparse-graph (windowed block) contraction results, in place of the joint-connectivity condition used previously.}
+
+    \item \azrev{A finite-window rollback mechanism, stated as an implementable replay procedure, that re-propagates recent observer updates after delayed trust decisions and is shown to preserve the ISS bound under a dwell-time condition.}
+
+    \item \azrev{An experimental and closed-loop validation: the observer is implemented on a QCar/LIMO platform under real packet timing, and a trust-modulated ACC/CACC controller is checked for positive path-projected spacing during the attack interval, in addition to the numerical campaign under position, velocity, and packet-drop attacks.}
 \end{itemize}
 
-The remainder of the paper is organized as follows. Section~\ref{sec_related_work} reviews related work and motivates the proposed approach. Section~\ref{sec_vehiclemodel} introduces the graph notation, vehicle model, and threat model. Section~\ref{sec_distributed_observer} presents the distributed observer architecture. Section~\ref{sec_trust_score} defines the trust framework. Section~\ref{sec_weight_design} develops the trust-based weight design and stability analysis. Section~\ref{sec_rollback} presents the delayed-decision rollback module. Section~\ref{sec_simulation} reports the simulation study, QCar/LIMO platform implementation, and controller spacing check, and Section~\ref{sec_conclusion} concludes the paper.
+The remainder of the paper is organized as follows. Section~\ref{sec_related_work} reviews related work and motivates the proposed approach, with the positioning relative to representative resilient platoon and state-estimation methods summarized in Table~\ref{tab:related_comparison}. Section~\ref{sec_vehiclemodel} introduces the graph notation, vehicle model, and threat model. Section~\ref{sec_distributed_observer} presents the distributed observer architecture. Section~\ref{sec_trust_score} defines the trust framework. Section~\ref{sec_weight_design} develops the trust-based weight design and stability analysis. Section~\ref{sec_rollback} presents the delayed-decision rollback module. Section~\ref{sec_simulation} reports the simulation study, QCar/LIMO platform implementation, and controller spacing check. Section~\ref{sec_discussion_conclusion} discusses limitations, and concludes the paper.
+
 
 \begin{table*}[!b]
 \centering
-\caption{Positioning of the proposed method relative to related resilient platoon/state-estimation approaches.}
+\caption{Positioning of the proposed method relative to related resilient platoon/state-estimation approaches. }
 \label{tab:related_comparison}
 \scriptsize
 \setlength{\tabcolsep}{3pt}
 \renewcommand{\arraystretch}{0.94}
-\begin{tabular}{p{2.7cm}p{2.7cm}ccccc}
+\begin{tabular}{p{2.45cm}p{2.4cm}cccccc}
 \toprule
-\textbf{Approach} & \textbf{Typical attack class} & \textbf{Dist. observer} & \textbf{Adaptive trust weights} & \textbf{ISS/stability} & \textbf{Rollback} & \textbf{Closed-loop use} \\
+\textbf{Approach} & \textbf{Typical attack class} & \textbf{Dist. observer} & \textbf{Adaptive trust weights} & \textbf{ISS/stability} & \textbf{Formal $f$-resil.} & \textbf{Rollback} & \textbf{Closed-loop use} \\
 \midrule
-Observer residual detection~\cite{jeon2020simultaneous,yamamoto2021attack,huang2022detection,2_obs_Angelo} & Sensor/communication anomalies & Partial & No & Case dependent & No & Partial \\
-Consensus/distributed estimation~\cite{Guitao_multi_mesure,Consensus_discret_Saber,Plug_play} & Noise and model mismatch & Yes & No & Yes & No & Limited \\
-Bank-of-observers secure estimation~\cite{chong2021secure} & Sparse sensor attacks & No (bank) & No & Yes & No & No \\
-Distributed $\ell_1$ state/fault estimation~\cite{hashimoto2020distributed_l1} & Sparse faulty agents & Yes & No & Error bound & No & No \\
-Set-membership/zonotopic estimation~\cite{niazi2023resilient_set} & Time-varying sensor attacks & No & No & Set inclusion & No & No \\
-Data-driven attack detection~\cite{coimbatore2025data_driven_attack} & Sensor, replay, delay attacks & No & No & Feasibility cond. & No & No \\
-Trust/context-aware reputation filtering~\cite{trust_physic_connecte,KF_chisquare_meusure,trust_simple,trust_complex,siddiqui2023trust_vehicles,self-belive,Enhancing_control_trust} & Misbehavior and unreliable links & Partial & Partial & Limited & No & Partial \\
-Proposed trust-aware observer & Bias, intermittent faults, replay/delay, packet drops & Yes & Yes & Yes & Optional & Yes \\
+Observer residual detection~\cite{jeon2020simultaneous,yamamoto2021attack,huang2022detection,2_obs_Angelo} & Sensor/communication anomalies & Partial & No & Case dependent & No & No & Partial \\
+Consensus/distributed estimation~\cite{Guitao_multi_mesure,Consensus_discret_Saber,Plug_play} & Noise and model mismatch & Yes & No & Yes & No & No & Limited \\
+Formal secure/resilient estimation~\cite{fawzi2014secure,mitra2018byzantine,chong2015observability,pajic2017attack_resilient,khazraei2020attack_auth} & Sparse, Byzantine, stealthy attacks & Partial & No & Worst-case & Yes & No & No \\
+Bank-of-observers secure estimation~\cite{chong2021secure} & Sparse sensor attacks & No (bank) & No & Yes & Sparse & No & No \\
+Distributed $\ell_1$ state/fault estimation~\cite{hashimoto2020distributed_l1} & Sparse faulty agents & Yes & No & Error bound & Sparse & No & No \\
+Set-membership/zonotopic estimation~\cite{niazi2023resilient_set} & Time-varying sensor attacks & No & No & Set inclusion & Cond. & No & No \\
+Data-driven attack detection~\cite{coimbatore2025data_driven_attack} & Sensor, replay, delay attacks & No & No & Feasibility cond. & Cond. & No & No \\
+Trust/context-aware reputation filtering~\cite{trust_physic_connecte,KF_chisquare_meusure,trust_simple,trust_complex,siddiqui2023trust_vehicles,self-belive,Enhancing_control_trust} & Misbehavior and unreliable links & Partial & Partial & Limited & No & No & Partial \\
+Proposed trust-aware observer & Bias, intermittent faults, replay/delay, packet drops & Yes & Yes & Conditional ISS & No & Optional & Tested \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -170,21 +181,23 @@ Proposed trust-aware observer & Bias, intermittent faults, replay/delay, packet 
 \section{Related Work and Motivation}\label{sec_related_work}
 Security and resilience for connected vehicle platoons have been studied through attack detection, fault-tolerant estimation, and mitigation-oriented control. Observer-based methods compare model-predicted states with measurements or received data to detect abnormal behavior~\cite{jeon2020simultaneous,yamamoto2021attack,huang2022detection,2_obs_Angelo}. These methods are attractive because they are model-aware and can be implemented locally, but their performance degrades when the observer itself uses corrupted neighbor information.
 
-Consensus and distributed-estimation methods exploit redundancy across multiple agents or sensors~\cite{Guitao_multi_mesure,Consensus_discret_Saber,Plug_play}. They can improve robustness by cross-validating information, but many approaches implicitly require sufficiently reliable neighbors or fixed communication weights. Under coordinated attacks, persistent packet loss, or biased local observers, fixed consensus weights can spread wrong estimates instead of isolating them. More general secure-estimation methods include bank-of-observers selection under sparse sensor attacks~\cite{chong2021secure} and distributed $\ell_1$ state-and-fault estimation for multi-agent systems~\cite{hashimoto2020distributed_l1}; these provide useful resilient-estimation baselines, but they do not directly provide trust-adaptive V2V observer weights for platoons.
+Consensus and distributed-estimation methods exploit redundancy across multiple agents or sensors~\cite{Guitao_multi_mesure,Consensus_discret_Saber,Plug_play}. They can improve robustness by cross-validating information, but many approaches implicitly require sufficiently reliable neighbors or fixed communication weights. Under coordinated attacks, persistent packet loss, or biased local observers, fixed consensus weights can spread wrong estimates instead of isolating them.
+
+Formal secure and Byzantine-resilient estimation provides worst-case guarantees under sparse attacked sensors or bounded adversary fractions~\cite{fawzi2014secure,mitra2018byzantine,khazraei2020attack_auth}. The observability of continuous-time linear systems under a bounded number of arbitrarily corrupted sensor outputs was characterized, along with finite-window and switched-observer reconstruction methods in ~\cite{chong2015observability}. Sparse sensor attacks with bounded noise were considered in ~\cite{pajic2017attack_resilient}, leading to $\ell_0$- and $\ell_1$-based estimators with analytic error bounds proportional to the noise magnitude. These results provided formal attacked-sensor sparsity, adversary-count, or reconstruction guarantees that are stronger than the conditional ISS claim made here. In contrast, the present objective is to adapt distributed V2V weights online for a nonlinear platoon observer and to connect the estimate to delayed-decision rollback and closed-loop use. More general secure-estimation methods also include nonlinear bank-of-observers selection under sparse sensor attacks~\cite{chong2021secure} and distributed $\ell_1$ state-and-fault estimation for multi-agent systems~\cite{hashimoto2020distributed_l1}; these provide useful resilient-estimation baselines, but they do not directly provide trust-adaptive V2V observer weights for platoons.
 
 Set-membership and data-driven techniques provide another line of resilient estimation and detection. Zonotopic set-based estimators propagate all states consistent with bounded uncertainties and can guarantee true-state containment under time-varying sensor attacks when sufficient uncompromised sensing remains~\cite{niazi2023resilient_set}. Data-driven attack-detection methods instead use attack-free input-output trajectories to identify uncompromised sensors online, including extensions for replay and delay attacks~\cite{coimbatore2025data_driven_attack}. These methods are useful for guaranteed or model-learning-based security analysis, but they are generally centralized or detection-oriented and do not directly adapt the distributed V2V observer weights used by a platoon controller.
 
 Trust-based approaches assign reliability scores to agents or data streams. Physical-layer and connectivity-based methods use signal fingerprints or communication characteristics to authenticate neighbors~\cite{trust_physic_connecte,KF_chisquare_meusure}, while behavior-based methods compare exchanged data with local sensing or expected motion~\cite{trust_simple,trust_complex}. Context-aware IoV trust management further incorporates application context, rational trust-attribute weighting, and adaptive misbehavior thresholds to improve attack resistance in dynamic vehicular networks~\cite{siddiqui2023trust_vehicles}. Trust can also be injected into control policies to reduce the influence of unreliable vehicles~\cite{self-belive,Enhancing_control_trust}. However, these trust mechanisms are usually diagnostic, reputation-oriented, or controller-side filters; they do not directly provide a trust-adaptive distributed observer with stability guarantees and delayed-decision rollback.
 
-The present work is motivated by this gap. Instead of treating trust as an external diagnostic signal, the proposed method feeds trust directly into the observer-weight design. The observer therefore adapts its communication graph online while preserving a local-observer anchor, which improves recoverability after transient attacks and supports a stability analysis for bounded disturbances.
+The present work is motivated by these gaps. Instead of treating trust as an external diagnostic signal, the proposed method feeds trust directly into the observer-weight design. The observer therefore adapts its communication graph online while preserving a local-observer anchor, which improves recoverability after transient attacks and supports a stability analysis for bounded disturbances. The contribution is therefore incremental and architectural: it couples a behavior-based trust layer with admissible observer weights and sufficient ISS conditions, rather than replacing formal sparse-adversary or Byzantine-resilient estimators.
 
-Notations: For vectors $z_1,\ldots,z_N$, $\col{z_1,\ldots,z_N}$ denotes their vertical concatenation, and $\rho(M)$ denotes the spectral radius of a square matrix $M$. $\mathbf{1}_N$ is the all-ones vector.
+Notations: For vectors $z_1,\ldots,z_N$, $\col{z_1,\ldots,z_N}$ denotes their vertical concatenation, and $\varrho(M)$ denotes the spectral radius of a square matrix $M$. $\mathbf{1}_N$ is the all-ones vector.
 
 \section{Problem Formulation}\label{sec_vehiclemodel}
 
-In this section, a group of connected automated vehicles traveling on a two-dimensional plane are considered. Each vehicle can measure its own state through onboard sensors and exchange state information with neighboring vehicles via vehicle-to-vehicle (V2V) communication. Graph theory is used to characterize the communication topology among vehicles, while a discrete-time kinematic bicycle model is adopted to describe the motion dynamics of each vehicle. Considering potential threats such as data falsification, replay attacks, communication-delay attacks, denial-of-service (DoS) attacks, and erroneous neighbor state reports caused by sensor faults, we aim to design a resilient distributed state observer that enables each vehicle to estimate the state of the entire platoon under unreliable communication while ensuring bounded estimation errors.
+In this section, a group of connected automated vehicles traveling on a two-dimensional plane are considered. Each vehicle can measure its own state through onboard sensors and exchange state information with neighboring vehicles via V2V communication. Graph theory is used to characterize the communication topology among vehicles, while a discrete-time kinematic bicycle model is adopted to describe the motion dynamics of each vehicle. Considering potential threats such as data falsification, replay attacks, communication-delay attacks, denial-of-service (DoS) attacks, and erroneous neighbor state reports caused by sensor faults, we aim to design a resilient distributed state observer that enables each vehicle to estimate the state of the entire platoon under unreliable communication while ensuring bounded estimation errors.
 
-\subsection{Kinematic Bicycle Vehicle Model with V2V Communication}
+\subsection{Kinematic bicycle vehicle model with V2V communication}
 To describe the dynamics of each vehicle, we use a discrete-time kinematic bicycle model. The state and input of vehicle $i$ are defined as
 \begin{equation*}
     x_i=\begin{bmatrix}X_i&Y_i&\psi_i&v_i\end{bmatrix}^{\top},
@@ -275,18 +288,18 @@ The Laplacian matrix $\L=[l_{ij}]$ is defined by
 
 Although the communication layer may be undirected, each vehicle can independently adjust its trust-based communication weights toward neighboring vehicles under potential attacks. Because such trust weights are generally asymmetric, the effective information flow becomes directional. Thus, the trust-weighted virtual communication graph can be modeled as a directed weighted graph. More details about the trust framework and its influence on the observer weights are provided in Section~\ref{sec_trust_score}. 
 
-\subsection{Problem Formulation and Threat Model}\label{subsec_threat_model}
+\subsection{Problem formulation and threat model}\label{subsec_threat_model}
 
 Each vehicle estimates the full platoon state using onboard measurements and packets received from neighboring vehicles. The objective is to ensure that the estimation error remains bounded and informative for platoon control even when a subset of received packets is unreliable.
 The proposed method does not require the host to know which channel is attacked or when the attack begins. It infers packet reliability online using physical consistency, agreement among distributed estimates, packet freshness, and trust smoothing.
 
 We consider four communication and data-integrity faults:
-\begin{itemize}
-    \item First, a false data injection (FDI) attack, also referred to as a data falsification attack, intentionally corrupts communicated state information by injecting an additive bias or substituting arbitrary values in selected fields such as planar position, speed, heading, acceleration, and steering. This manipulation typically preserves packet syntax while violating physical consistency and intervehicle agreement.
-    \item Second, a replay attack resends previously transmitted valid packets, and a delay attack delivers otherwise valid packets with excessive latency. Both attacks yield stale but syntactically valid information that can pass basic format checks while contradicting the current motion evolution and heading consistency.
-    \item Third, a denial of service (DoS) attack prevents timely packet delivery by dropping packets, jamming the channel, or saturating the communication medium. The resulting effect is intermittent or persistent packet loss that can manifest as extended communication blackouts.
-    \item Fourth, a benign neighbor fault, caused for example by sensor malfunction, calibration drift, or local estimator divergence, produces corrupted neighbor reported estimates that are physically inconsistent even without adversarial intent. Such faults can mimic integrity attacks at the packet level while arising from nonmalicious sources.
-\end{itemize}
+\begin{enumerate}
+    \item[(1)] \textbf{FDI:} False-data injection, or data falsification, corrupts communicated state information by adding biases or substituting arbitrary values in selected fields, such as planar position, speed, heading, acceleration, or steering. Such packets may remain syntactically valid but violate physical consistency and intervehicle agreement.
+    \item[(2)] \textbf{Replay/Delay:} Replay attacks resend previously valid packets, whereas delay attacks deliver otherwise valid packets with excessive latency. In both cases, the received information is stale and may pass basic format checks while contradicting the current motion evolution and heading consistency.
+    \item[(3)] \textbf{DoS:} Denial-of-service attacks prevent timely packet delivery through packet dropping, channel jamming, or communication-medium saturation. Their effect is intermittent or persistent packet loss, including extended communication blackouts.
+    \item[(4)] \textbf{Benign Neighbor Fault:} Non-adversarial faults, such as sensor malfunction, calibration drift, or local-estimator divergence, can also produce physically inconsistent neighbor estimates. Although not malicious, these faults can mimic integrity attacks at the packet level.
+\end{enumerate}
 In the analysis, these effects are modeled as bounded disturbance terms, input mismatch terms, and linearization remainder terms, provided that the corresponding magnitudes are bounded. Packet losses are addressed through packet freshness and the selection of trusted neighbors.
 
 To make this bounded-input interpretation precise, every received packet is first passed through authentication, timestamp, and physical-plausibility gates before it can enter the observer. Denote by $z_l(t)$ the packet content transmitted by vehicle $l$ and by $a_{i,l}(t)$ an additive corruption seen by host $i$. The value made available to the trust and observer layers is
@@ -296,14 +309,14 @@ To make this bounded-input interpretation precise, every received packet is firs
     \Pi_{\Omega_z}\big(z_l(t-\tau_{i,l}(t))+a_{i,l}(t)\big),
     \label{eq_received_packet_gate}
 \end{equation}
-when the packet is authenticated and fresh; otherwise it is rejected and $\delta_{i,l}(t)=0$. Here $\Pi_{\Omega_z}$ denotes projection or clipping onto a compact physically admissible packet set, including feasible position increments, speeds, headings, accelerations, steering angles, and timestamps. Therefore, an arbitrarily large injected value is either rejected by the validity gate or converted into a bounded accepted value. The ISS result below applies to these bounded accepted corruptions; it does not claim robustness to unbounded values injected directly into the observer without a receiving-side gate.
+when the packet is authenticated and fresh; otherwise it is rejected and $g_{i,l}^{\mathrm{pkt}}(t)=0$. Here $\Pi_{\Omega_z}$ denotes projection or clipping onto a compact physically admissible packet set, including feasible position increments, speeds, headings, accelerations, steering angles, and timestamps. Therefore, an arbitrarily large injected value is either rejected by the validity gate or converted into a bounded accepted value. The ISS result below applies to these bounded accepted corruptions; it does not claim robustness to unbounded values injected directly into the observer without a receiving-side gate.
 
-The attacker is assumed to affect V2V data received from compromised or faulty neighbors, but not the host vehicle's onboard measurement channel or the local bicycle model used by the observer. The method is designed to isolate unreliable incoming information and maintain platoon-level safety; it is not intended to reconstruct the exact true state of a malicious vehicle after that vehicle's data have been rejected unless independent reliable measurements remain available. This limitation is standard for distributed observer architectures that prioritize safe estimation over forensic reconstruction of compromised agents.
+The attacker is assumed to affect V2V data received from compromised or faulty neighbors, but not the host vehicle's onboard measurement channel or the local bicycle model used by the observer. The method is designed to isolate unreliable incoming information and maintain platoon-level safety; it is not intended to reconstruct the exact true state of a malicious vehicle after that vehicle's data have been rejected unless independent reliable measurements remain available. This limitation is standard for distributed observer that prioritize safe estimation over reconstruction of compromised agents.
 
 \section{Distributed State Observer Architecture}\label{sec_distributed_observer}
 This section introduces the observer architecture; the trust mechanism is detailed in Section~\ref{sec_trust_score}. Two layers are used: a Local Observer $(\LO)$ based on onboard sensors, and a Distributed Observer $(\DO)$ that fuses information exchanged through communication links.
 
-The notation distinguishes the physical origin of an estimate from the host that stores it. Vehicle $j$ runs its own local observer $\LO_j$ from onboard measurements and broadcasts the corresponding anchor packet $\hat{x}_0^{(j)}$, together with timestamp and optional input information. It also broadcasts its fleet estimate $\hat{x}_j=\col{\hat{x}_j^{(1)},\ldots,\hat{x}_j^{(N)}}$. When host vehicle $i$ uses $\hat{x}_0^{(j)}$ in $\DO_i^{(j)}$, this quantity is the local-observer output generated by target vehicle $j$: it is onboard information only when $i=j$, and it is a received V2V anchor packet when $i\neq j$. Therefore the anchor is not assumed to be automatically reliable; its availability and use are controlled by the validity indicator $\delta_{i,j}(t)$ and the anchor acceptance variable $\chi_{i0}^{(j)}(t)$ defined below.
+The notation distinguishes the physical origin of an estimate from the host that stores it. Vehicle $j$ runs its own local observer $\LO_j$ from onboard measurements and broadcasts the corresponding anchor packet $\hat{x}_0^{(j)}$, together with timestamp and optional input information. It also broadcasts its fleet estimate $\hat{x}_j=\col{\hat{x}_j^{(1)},\ldots,\hat{x}_j^{(N)}}$. When host vehicle $i$ uses $\hat{x}_0^{(j)}$ in $\DO_i^{(j)}$, this quantity is the local-observer output generated by target vehicle $j$: it is onboard information only when $i=j$, and it is a received V2V anchor packet when $i\neq j$. Therefore the anchor is not assumed to be automatically reliable; its availability and use are controlled by the packet-validity indicator $g_{i,j}^{\mathrm{pkt}}(t)$ and the anchor acceptance variable $\chi_{i0}^{(j)}(t)$ defined below.
 
 \subsection{General structure of the observer}
 The observer is defined by
@@ -314,24 +327,24 @@ The observer is defined by
 &= f_{\text{b}}\big(\hat{x}_{0}^{(i)}(t),u_i(t)\big)\notag \\
 &\quad + F_i(t)\Big(y_i(t)-h_i\big(\hat{x}_{0}^{(i)}(t)\big)\Big) %\tag{\LO$_i$}
 \end{align}
+\begin{align}\label{eq_DO}
+(\DO_i^{(j)}): \hat{x}^{(j)}_i(t+1)
+&= f_{\text{b}}\big(\hat{x}_{i,c}^{(j)}(t),\hat{u}_j(t)\big) %\tag{\DO$_i^{(j)}$}
+\end{align}
 \begin{align}\label{eq_consensus_state}
 \hat{x}_{i,c}^{(j)}(t)
 &= \hat{x}_i^{(j)}(t)
 +\sum_{l \in \N_i} w_{il}^{(j)}(t)
    \big(\hat{x}_l^{(j)}(t)-\hat{x}_i^{(j)}(t)\big)\notag\\
 &\quad + w_{i0}^{(j)}(t)
-   \big(\hat{x}_0^{(j)}(t)-\hat{x}_i^{(j)}(t)\big)
-\end{align}
-\begin{align}\label{eq_DO}
-(\DO_i^{(j)}): \hat{x}^{(j)}_i(t+1)
-&= f_{\text{b}}\big(\hat{x}_{i,c}^{(j)}(t),\hat{u}_j(t)\big) %\tag{\DO$_i^{(j)}$}
+   \big(\hat{x}_0^{(j)}(t)-\hat{x}_i^{(j)}(t)\big),
 \end{align}
 \end{small}
 \end{subequations}
-where $\hat{x}_{0}^{(i)}(t)$ is the local-observer state of vehicle $i$, $F_i(t)$ is the corresponding time-varying gain, and $\N_i$ is the neighbor set of vehicle $i$ in $\G$. The variable $\hat{x}_i^{(j)}(t)$ is vehicle $i$'s distributed estimate of vehicle $j$'s bicycle state. The intermediate state $\hat{x}_{i,c}^{(j)}(t)$ applies trust-weighted consensus and anchor corrections before the nonlinear bicycle prediction. The weights $w_{il}^{(j)}(t)$, $l \in \N_i$, and $w_{i0}^{(j)}(t)$ scale the neighbor-consensus and local-observer anchoring terms. 
+where $\hat{x}_{0}^{(i)}(t)$ is the local-observer state of vehicle $i$, $F_i(t)$ is the corresponding time-varying gain, and $\N_i$ is the neighbor set of vehicle $i$ in $\G$. The variable $\hat{x}_i^{(j)}(t)$ is vehicle $i$'s distributed estimate of vehicle $j$'s state. The intermediate state $\hat{x}_{i,c}^{(j)}(t)$ applies trust-weighted consensus and anchor corrections before the nonlinear bicycle prediction. The weights $w_{il}^{(j)}(t)$, $l \in \N_i$, and $w_{i0}^{(j)}(t)$ scale the neighbor-consensus and local-observer anchoring terms. 
 
 \begin{remark}\label{rem1}
-If a host forms $\hat{u}_j(t)$, for example from a known controller law or an input estimator for $\hat a_j(t)$ and $\hat\delta_j(t)$, the mismatch
+If a host forms $\hat{u}_j(t)$, from a known controller law or an input estimator for $\hat a_j(t)$ and $\hat\delta_j(t)$, the mismatch
 \begin{equation}
     \Delta u_j(t) = u_j(t) - \hat{u}_j(t)
 \end{equation}
@@ -392,8 +405,9 @@ Each distributed observer $\DO_{i}^{(j)}$ needs reference information from the l
 Fixed observer weights assume reliable data exchange, which is not valid when compromised vehicles transmit falsified information. The objective is to define a trust measure for received data and use it to update $w_{il}^{(j)}(t)$ and $w_{i0}^{(j)}(t)$ online, while choosing the target-local gain $F_j(t)$ so the local nonlinear bicycle-error synthesis in Section~\ref{sec_weight_design} yields an ISS convergence bound. In particular, there exist constants $c_0, c_1 > 0$ and $\lambda \in (0,1)$ such that
 \begin{align}
 \|e_0^{(j)}(t)\| &\le c_0\lambda^t \|e_0^{(j)}(0)\| + c_0 \bar{d}_0,\label{eq_iss_e0}\\
-\|e_{\DO}^{(j)}(t)\| &\le c_1\lambda^t \|e_{\DO}^{(j)}(0)\| \notag\\
-&\quad+ c_1 \Big(\|e_0^{(j)}(0)\| + \bar{d}_0 + \bar{\tilde d}_{\DO}\Big). \label{eq_iss_edo}
+\|e_{\DO}^{(j)}(t)\| &\le c_1\lambda^t
+\Big(\|e_{\DO}^{(j)}(0)\|+\|e_0^{(j)}(0)\|\Big)\notag
++c_1\Big(\bar d_0+\bar{\tilde d}_{\DO}\Big),\label{eq_iss_edo}
 \end{align}
 where $e_0^{(j)}$ and $e_{\DO}^{(j)}$ denote the local and distributed estimation errors defined in Section~\ref{subsec_Prove}, and $\bar{d}_0$, $\bar{d}_{\DO}$, and $\bar{\tilde{d}}_{\DO}$ are the bounded-input constants in Assumption~\ref{assum_distur}.
 
@@ -466,20 +480,21 @@ In this context, we define the following types of trust:
     \item \textbf{Vehicle Trust $\VT_{i,l}$}: class-filtered trust score used by the observer.
 \end{itemize}
 
-The following subsections define these scores and their use in the observer.
-\subsection{Data validity indicator}
-
+% \subsection{Data validity indicator}
 Before trust computation, each received V2V packet is checked for authenticity and freshness:
 {\small
 \begin{equation}
-    \delta_{i,l}(t)=
+    g_{i,l}^{\mathrm{pkt}}(t)=
     \begin{cases}
         1, & \text{if the message is authenticated and fresh}, \\
         0, & \text{otherwise.}
     \end{cases}
 \end{equation}
 }
-Only packets with $\delta_{i,l}(t)=1$ are used for trust evaluation.
+Only packets with $g_{i,l}^{\mathrm{pkt}}(t)=1$ are used for trust evaluation.
+
+The following subsections define these scores and their use in the observer.
+
 
 \subsection{Local trust}\label{sub:local_trust}
 
@@ -538,9 +553,9 @@ If radar azimuth or LiDAR shape orientation is available, it can replace or comp
     \right),
 \end{equation*}
 where $\psi_{\mathrm{th}}>0$ is a nominal heading tolerance. This check implements the heading-verification mechanism based on consecutive position reports or bearing measurements.
-\begin{assumption}\label{assum_connect}
-When a vehicle is connected, it has access to basic information about its neighbors, including their type, length, and nominal wheelbase class.
-\end{assumption}
+% \begin{assumption}\label{assum_connect}
+% When a vehicle is connected, it has access to basic information about its neighbors, including their type, length, and nominal wheelbase class.
+% \end{assumption}
 
 \subsubsection{Optional input consistency}
 If acceleration and steering commands are included in the received packet, the host checks them against finite-difference speed and yaw-rate estimates:
@@ -577,9 +592,9 @@ For simplicity and reproducibility, the available indicators are fused by a weig
 If the optional input channel is unavailable, the last factor is omitted. Missing or invalid packets are handled by
 \begin{equation}
     \LT_{i,l}(t) =
-    \left\{ \begin{array}{lc}
-        \LT_{i,l}^{\mathrm{raw}}(t),  &  \text{if } \delta_{i,l}(t) = 1, \\
-        (1 - \lambda_h)\LT_{i,l}(t-1), & \text{otherwise}
+    \left\{ \begin{array}{ll}
+        \LT_{i,l}^{\mathrm{raw}}(t),  &  \text{if } g_{i,l}^{\mathrm{pkt}}(t) = 1, \\
+        (1 - \lambda_h)\LT_{i,l}(t-1), & \text{otherwise,}
     \end{array}\right.
     \label{eq_local_trust_update}
 \end{equation}
@@ -593,7 +608,7 @@ Distributed Trust applies the same idea to exchanged distributed estimates. It i
 \begin{equation}
         \DT_{i,l}(t)  = \begin{cases}
        \gamma_{i,l}^{\text{self}}(t) \cdot \gamma_{i,l}^{\text{local}}(t) \cdot
-        \gamma_{i,l}^{\text{host}}(t)   &  \text{if } \delta_{i,l}(t) = 1 \\
+        \gamma_{i,l}^{\text{host}}(t)   &  \text{if } g_{i,l}^{\mathrm{pkt}}(t) = 1 \\
         (1 - \lambda_h)\DT_{i,l}(t-1), & \text{otherwise} \\
     \end{cases}
 \end{equation}
@@ -618,7 +633,7 @@ where $\Sigma_{\text{self}}$ is the covariance matrix associated with the sender
 \subsubsection{Host-estimate consistency}
 The host compares the estimate received from target $l$ with its own estimate using the Mahalanobis distance:
 \begin{equation}
-    \rho_{i,l}^{(j)}(t) = \left( \hat{x}_i^{(j)}(t) - \hat{x}_l^{(j)}(t) \right)^{\top} \Sigma_{\text{host}}^{-1} \left( \hat{x}_i^{(j)}(t) - \hat{x}_l^{(j)}(t) \right)
+    \mu_{i,l}^{(j)}(t) = \left( \hat{x}_i^{(j)}(t) - \hat{x}_l^{(j)}(t) \right)^{\top} \Sigma_{\text{host}}^{-1} \left( \hat{x}_i^{(j)}(t) - \hat{x}_l^{(j)}(t) \right)
     \label{eq_dis_glo}
 \end{equation}
 where $\Sigma_{\text{host}}$ is the diagonal covariance matrix of state-channel discrepancies:
@@ -629,7 +644,7 @@ where $n$ is the number of states and $\sigma^2_k$ is the variance of the $k$th 
 
 The total discrepancy score is
 \begin{equation}
-    D_{i,l}^{\text{host}}(t) = \sum_{j=1}^N \rho_{i,l}^{(j)}(t).
+    D_{i,l}^{\text{host}}(t) = \sum_{j=1}^N \mu_{i,l}^{(j)}(t).
 \end{equation}
 A small $D_{i,l}^{\text{host}}(t)$ means that vehicle $l$'s estimates are close to the host's estimates. The corresponding trust factor is
 \begin{equation}
@@ -683,7 +698,7 @@ Let $q=5$ denote the number of ordered trust classes:
 \textit{Unreliable}, \textit{Poor}, \textit{Acceptable}, \textit{Good}, and \textit{Excellent}.
 Define the class scores
 \begin{equation}
-    \rho_m=\frac{m-1}{q-1}, \qquad m=1,\ldots,q,
+    \kappa_m=\frac{m-1}{q-1}, \qquad m=1,\ldots,q,
 \end{equation}
 and the corresponding intervals
 \begin{equation}
@@ -713,7 +728,7 @@ The accumulated class evidence is updated as
     \label{eq_class_history_update}
 \end{equation}
 where $R_{i,l}(t)\in\mathbb{R}_{\ge0}^{q}$ is initialized as $R_{i,l}(0)=0$ unless prior interaction evidence is available, and $\beta_{\text{trust}}\in[0,1]$ controls the decay of past class evidence.
-The modulation by $\T_{i,l}(t)$ prevents one isolated low-quality sample from immediately erasing the accumulated history, while repeated low-quality samples keep adding evidence to the lower classes.
+The modulation by $\T_{i,l}(t)$ prevents one isolated low-quality sample from immediately erasing the accumulated history, while repeated low-quality samples keep adding evidence to the lower classes. This deliberately asymmetric memory makes trust rejection less sensitive to isolated outliers, but it also delays recovery after a repaired node becomes reliable again; consequently, $\beta_{\text{trust}}$ and the rejection threshold should be calibrated with benign false-positive and recovery data.
 To regularize the class distribution, let $\alpha_{\mathrm{tr}}\in\mathbb{R}_{\ge0}^{q}$ be a prior trust-class distribution satisfying $\sum_{m=1}^{q}\alpha_{\mathrm{tr},m}=1$, and let $C_{\mathrm{tr}}>0$ be a confidence parameter.
 The prior $\alpha_{\mathrm{tr}}$ represents the initial belief about vehicle $l$ before enough packets are observed; if no prior information is available, one can use the uniform choice $\alpha_{\mathrm{tr},m}=1/q$.
 The parameter $C_{\mathrm{tr}}$ controls how strongly this prior affects the estimate: larger $C_{\mathrm{tr}}$ gives more weight to the prior, while smaller $C_{\mathrm{tr}}$ lets online evidence dominate faster.
@@ -728,9 +743,10 @@ The normalized trust-class distribution is
 The smoothed vehicle trust used by the observer is the expected trust level
 \begin{equation}
     \VT_{i,l}(t)=
-    \sum_{m=1}^{q}\rho_m S_{i,l,m}(t).
+    \sum_{m=1}^{q}\kappa_m S_{i,l,m}(t).
     \label{eq_class_filtered_vehicle_trust}
 \end{equation}
+A normalized version of~\eqref{eq_class_distribution}--\eqref{eq_class_filtered_vehicle_trust} is equivalent to a finite-class Dirichlet reputation posterior mean with confidence prior $C_{\mathrm{tr}}\alpha_{\mathrm{tr}}$~\cite{josang2007dirichlet}.
 A larger $\beta_{\text{trust}}$ gives a more reactive trust history, while a smaller value gives smoother trust evolution.
 The confidence $C_{\mathrm{tr}}$ controls how strongly the prior influences the estimate when only a short interaction history is available.
 The observer uses $\VT_{i,l}(t)$ to weigh information received from vehicle $l$.
@@ -747,9 +763,10 @@ The trust parameters are selected from nominal data and physical limits rather t
 
 \section{Trust-Based Observer Weight Design}\label{sec_weight_design}
 The trust framework provides each vehicle with smoothed vehicle-trust scores $\VT_{i,l}(t)$ representing the reliability of information from other vehicles.
-This section shows how these values are used to define adaptive observer weights $w_{il}^{(j)}(t)$ and establishes conditions for stability of the estimation error dynamics.
+Fix a rejection threshold $\theta_{\min}\in(0,1]$. Throughout this section, $\|\cdot\|_*$ denotes a fixed norm on the bicycle state space, and all induced and block norms are formed from this same state norm unless stated otherwise.
+This section shows how the trust values define adaptive observer weights $w_{il}^{(j)}(t)$ and establishes conditions for stability of the estimation error dynamics.
 
-\subsection{Weight based on the trust}
+\subsection{Trust-based weights}
 Using the virtual graph $\bar{\G}^{(j)}$, each vehicle $i$ first selects the trusted neighbor sources at time $t$:
 \begin{equation}
 \mathcal{LN}^{(j)}_{i}(t)
@@ -789,7 +806,7 @@ and the neighbor weights are
     {S_i^{(j)}(t)},
     \qquad l\in\N_i .
 \end{equation}
-Thus, rejected neighbors receive zero weight, while accepted neighbors share the fixed budget $\eta_N$ in proportion to their trust values. The remaining mass is the implicit self-prediction weight
+Thus, rejected neighbors receive zero weight, while accepted neighbors share at most the budget $\eta_N$ in proportion to their trust values. The remaining mass is the implicit self-prediction weight
 \begin{equation}
     w_{is}^{(j)}(t)
     =
@@ -867,7 +884,7 @@ When direct anchors are intermittent, the same argument must be applied over a w
 \begin{assumption}[Sequentially rooted accepted graph]\label{ass_graph}
 There exist an integer $T_c>0$ and a scalar $\underline w>0$ such that, for every target $j$, every start time $t\ge0$, and every host $i\in\V$, there are nodes $v_0=0,v_1,\ldots,v_m=i$ and times $t\le \tau_1<\cdots<\tau_m\le t+T_c-1$ for which the accepted edge $v_{r-1}\to v_r$ is present in $\bar{\G}^{(j)}(\tau_r)$. Each accepted edge weight on these temporal paths is at least $\underline w$, and each implicit self-prediction weight used to carry information between two consecutive path times is also at least $\underline w$. Moreover, if the path reaches the destination host $i$ at a time $\tau_m<t+T_c-1$, then the implicit self-prediction weight of host $i$ is also at least $\underline w$ at every remaining instant $\tau_m<\tau\le t+T_c-1$, so that the anchor-induced row-sum deficit at host $i$ is preserved until the end of the window.
 \end{assumption}
-Assumption~\ref{ass_graph} means that every host estimate of target $j$ receives anchor information either directly or through trusted intermediate estimates within each window. This is stronger than ordinary connectivity: the root must be the target-local observer node, the links must be accepted by the trust layer, and the path must be ordered along the product. A standard jointly rooted union condition implies this assumption after enlarging the window when accepted links recur in every joint-connectivity interval and the implicit self-prediction weights are uniformly positive; otherwise the product condition below must be verified directly.
+Assumption~\ref{ass_graph} means that every host estimate of target $j$ receives anchor information either directly or through trusted intermediate estimates within each window. This is stronger than ordinary connectivity: the root must be the target-local observer node, the links must be accepted by the trust layer, and the path must be ordered along the product. A standard jointly rooted union condition implies this assumption after enlarging the window when accepted links recur in every joint-connectivity interval and the implicit self-prediction weights are uniformly positive; otherwise the product condition below must be enforced by a communication supervisor or checked on each completed window.
 
 \begin{lemma}[Rooted block contraction]\label{lem_rooted_block_contraction}
 If Assumption~\ref{ass_graph} holds, then the grounded trust-mixing product satisfies
@@ -878,23 +895,30 @@ If Assumption~\ref{ass_graph} holds, then the grounded trust-mixing product sati
     \le 1-\underline w^{T_c} .
     \label{eq_grounded_product_bound}
 \end{equation}
-Let $G_{x,j}(T_c)$ be an upper bound, in the chosen state norm, on the nonlinear bicycle prediction gain over any admissible $T_c$-step block. Because the one-step bicycle prediction is Lipschitz with constant $L_{x,j}$ in this norm on the compact admissible region, the $T_c$-step prediction gain satisfies
+Let $L_{x,j}(\tau)\le L_{x,j}$ be a scalar one-step Lipschitz bound that applies uniformly to all hosts estimating target $j$ at time $\tau$. For the separable interleaved prediction--mixing estimate below, define
 \begin{equation}
-    G_{x,j}(T_c)\le L_{x,j}^{T_c}.
+    G_{x,j}(T_c)
+    :=\sup_{t\ge0}\prod_{r=0}^{T_c-1}L_{x,j}(t+r)
+    \le L_{x,j}^{T_c}.
 \end{equation}
-Since $L_{x,j}$ is scalar, it factors out of the matrix product. In particular, for the componentwise error-size vector
-\begin{equation}
+When time-resolved bounds are unavailable, the conservative choice is $G_{x,j}(T_c)=L_{x,j}^{T_c}$. The one-step gains are scalar and therefore factor through the mixing matrices. For the componentwise error-size vector
+\begin{equation}\label{eq_E}
 E^{(j)}(t)=\col{\|e_1^{(j)}(t)\|_*,\ldots,\|e_N^{(j)}(t)\|_*},
 \end{equation}
-the homogeneous recursion satisfies, componentwise,
+the one-step homogeneous recursion satisfies, componentwise,
+\begin{equation}
+E^{(j)}(t+1)
+\le L_{x,j}(t)M^{(j)}(t)E^{(j)}(t).
+\end{equation}
+Unrolling this recursion over one block gives
 \begin{align}
 E^{(j)}(t+T_c)
-&\le L_{x,j}^{T_c}
-\big(M^{(j)}(t+T_c-1)\cdots M^{(j)}(t)\big)
-E^{(j)}(t).
+&\le G_{x,j}(T_c)
+\big(M^{(j)}(t+T_c-1)\cdots M^{(j)}(t)\big)\notag\\
+&\quad\times E^{(j)}(t).
 \label{eq_componentwise_block_bound}
 \end{align}
-This explains why the prediction gain and the trust-mixing product separate even though prediction and mixing are interleaved in time. If
+Thus $G_{x,j}(T_c)$ is an upper bound for the product of the one-step gains in every admissible interleaved block; it is not an independently chosen gain for the prediction-only composition. This explains why the scalar prediction gain and the trust-mixing product separate. If
 \begin{equation}
     G_{x,j}(T_c)\big(1-\underline w^{T_c}\big)
     \le \alpha_c<1,
@@ -903,7 +927,7 @@ This explains why the prediction gain and the trust-mixing product separate even
 then the distributed homogeneous error is contractive over every window of length $T_c$. The one-step condition~\eqref{eq_anchor_contraction_check} is the special case $T_c=1$ with direct anchor acceptance at every step.
 \end{lemma}
 \begin{proof}
-The matrices $M^{(j)}(\tau)$ are nonnegative and substochastic. A positive anchor weight creates a strict row-sum deficit in the row receiving that anchor. For any host $i$, Assumption~\ref{ass_graph} gives a temporal accepted path from the anchor to $i$. Each accepted edge transmits at least a factor $\underline w$ of the existing deficit to the next node, and each waiting step preserves at least a factor $\underline w$ through the implicit self-prediction weight. Since the path transmissions and waiting steps occupy no more than $T_c$ time instants, the terminal-waiting clause of Assumption~\ref{ass_graph} guarantees that, once the deficit reaches host $i$ at time $\tau_m$, it is carried by a factor of at least $\underline w$ per step up to $t+T_c-1$. Hence it appears in the $i$th row sum of the full product, which is at most $1-\underline w^{T_c}$. Taking the maximum row sum gives~\eqref{eq_grounded_product_bound}. Multiplying by the bounded $T_c$-step bicycle prediction gain gives~\eqref{eq_window_contraction_check}.
+The matrices $M^{(j)}(\tau)$ are nonnegative and substochastic. A positive anchor weight creates a strict row-sum deficit in the row receiving that anchor. For any host $i$, Assumption~\ref{ass_graph} gives a temporal accepted path from the anchor to $i$. Each accepted edge transmits at least a factor $\underline w$ of the existing deficit to the next node, and each waiting step preserves at least a factor $\underline w$ through the implicit self-prediction weight. Since the path transmissions and waiting steps occupy no more than $T_c$ time instants, the terminal-waiting clause of Assumption~\ref{ass_graph} guarantees that, once the deficit reaches host $i$ at time $\tau_m$, it is carried by a factor of at least $\underline w$ per step up to $t+T_c-1$. Hence it appears in the $i$th row sum of the full product, which is at most $1-\underline w^{T_c}$. Taking the maximum row sum gives~\eqref{eq_grounded_product_bound}. Combining this result with the separable interleaved bound~\eqref{eq_componentwise_block_bound} gives~\eqref{eq_window_contraction_check}.
 \end{proof}
 
 Thus, contraction is not assumed from trust scoring alone. The weight law supplies the anchor lower bound through $\eta_0\theta_{\min}$ when anchor packets are directly accepted, and Assumption~\ref{ass_graph} supplies the corresponding lower bound for sparse or intermittent trusted paths. If all reliable paths to a target are rejected, the theorem applies only to the reachable part of the platoon, and that target cannot be reconstructed from communication alone.
@@ -912,10 +936,11 @@ Thus, contraction is not assumed from trust scoring alone. The weight law suppli
 The complete design can be implemented through the following steps.
 \begin{enumerate}
     \item Select a compact operating region $\Omega_x\times\Omega_u$ from vehicle limits and the receiving-side gate~\eqref{eq_received_packet_gate}. Compute conservative bounds for the bicycle Lipschitz constants $L_{x,j}$ and $L_{u,j}$ on this region.
-    \item Choose the local observer gain $F_j(t)$ so that the zero-input local error recursion is uniformly locally exponentially stable. With full-state local measurements, verify the resulting LTV local-error recursion along the considered trajectory, for example using the parameter-dependent Lyapunov inequality in Lemma~\ref{lem_local_iss}; frozen-time eigenvalue placement alone is not sufficient.
-    \item Fix the trust parameters using the nominal-data procedure in Section~\ref{subsec_trust_tuning}, then compute $\VT_{i,l}(t)$, $\LT_{i,j}(t)$, and the acceptance variables $\delta_{i,l}(t)$ and $\chi_{i0}^{(j)}(t)$ online.
-    \item Compute the anchor and neighbor weights from~\eqref{eq_anchor_weight}--\eqref{design_gain}. Lemma~\ref{lem_weight_admissible} guarantees that the resulting correction is a nonnegative bounded mixture.
-    \item Check the contraction condition~\eqref{eq_anchor_contraction_check} or~\eqref{eq_window_contraction_check}. If the check fails for a target, the implementation should increase the anchor budget when a reliable anchor exists, reduce neighbor reliance, hold the last trusted estimate, or mark the target temporarily unreachable rather than injecting unverified cooperative data.
+    \item Choose the local observer gain $F_j(t)$ so that the zero-input local error recursion is uniformly locally exponentially stable. With full-state local measurements, verify the resulting linear time-varying (LTV) local-error recursion along the considered trajectory using the parameter-dependent Lyapunov inequality~\eqref{eq_ltv_lyapunov} in Lemma~\ref{lem_local_iss}. \azrev{Frozen-time eigenvalue placement alone is not sufficient in the time-varying case.}
+    \item Fix the trust parameters using the nominal-data procedure in Section~\ref{subsec_trust_tuning}, then compute $\VT_{i,l}(t)$, $\LT_{i,j}(t)$, and the acceptance variables $g_{i,l}^{\mathrm{pkt}}(t)$ and $\chi_{i0}^{(j)}(t)$ online.
+    \item Compute the anchor and neighbor weights from~\eqref{eq_anchor_weight}--\eqref{design_gain}. 
+    % Lemma~\ref{lem_weight_admissible} guarantees that the resulting correction is a nonnegative bounded mixture.
+    \item Check the contraction condition~\eqref{eq_anchor_contraction_check} or~\eqref{eq_window_contraction_check}. If the check fails for a target, the stability certificate is inactive. The implementation should increase the anchor budget when a reliable anchor exists, redesign the prediction/gain parameters, or mark the target temporarily unreachable rather than supply an uncertified cooperative estimate. Merely reducing the neighbor budget does not improve the direct-anchor factor $L_{x,j}(1-w_{i0}^{(j)})$ when the anchor weight is unchanged.
 \end{enumerate}
 
 \subsection{Stability of the error}\label{subsec_Prove}
@@ -929,12 +954,16 @@ e_i^{(j)}(t+1)
 &=f_{\mathrm b}(\hat x_{i,c}^{(j)},\hat u_j)-x_j(t+1),\quad i\in\V,
 \label{eq_raw_eDO}
 \end{align}
-where $\hat x_{i,c}^{(j)}$ is the trust-weighted correction in~\eqref{eq_consensus_state}; time arguments on its right-hand side are omitted for readability. The analysis is local on a compact operating region $\Omega_x\times\Omega_u$ with bounded speed and inputs, no yaw-chart discontinuity, and $|\delta|\le\delta_{\max}<\pi/2$. On this region there are finite $L_{x,j},L_{u,j}>0$ such that
+where $\hat x_{i,c}^{(j)}$ is the trust-weighted correction in~\eqref{eq_consensus_state}; time arguments on its right-hand side are omitted for readability.
+\begin{assumption}[Compact operating region]\label{ass_compact_region}
+The trajectories considered in the analysis remain in a compact set $\Omega_x\times\Omega_u$ with bounded speed and inputs, $|\delta|\le\delta_{\max}<\pi/2$, accepted packets inside the receiving-side admissible set~\eqref{eq_received_packet_gate}, and a local yaw chart without wrap discontinuities.
+\end{assumption}
+Under Assumption~\ref{ass_compact_region}, there are finite $L_{x,j},L_{u,j}>0$ such that
 \begin{equation}
 \begin{aligned}
 \|f_{\mathrm b}(\xi,\mu)-f_{\mathrm b}(\zeta,\nu)\|_*
-&\le L_{x,j}\|\xi-\zeta\|_*\\
-&\quad+L_{u,j}\|\mu-\nu\|_*
+&\le L_{x,j}\|\xi-\zeta\|_*
++L_{u,j}\|\mu-\nu\|_*
 \end{aligned}
 \label{eq_nonlinear_lipschitz}
 \end{equation}
@@ -953,9 +982,21 @@ Throughout the distributed-error analysis, we use the block maximum norm
 \label{eq_block_max_norm}
 \end{equation}
 The same block-norm convention is used for other stacked state vectors below.
-By Lemma~\ref{lem_weight_admissible}, $M^{(j)}(t)=I_N-\bar\L^{(j)}(t)$ is entrywise nonnegative and its $i$th row sum is $1-w_{i0}^{(j)}(t)$. Nonnegativity allows the triangle inequality to pass through the weighted correction: for every host $i$,
+By Lemma~\ref{lem_weight_admissible}, $M^{(j)}(t)=I_N-\bar\L^{(j)}(t)$ is entrywise nonnegative and its $i$th row sum is $1-w_{i0}^{(j)}(t)$. \azrev{Componentwise, its entries follow from the grounded Laplacian:}
+\begin{equation}
+\azrev{
+M_{ik}^{(j)}(t)=
+\begin{cases}
+w_{is}^{(j)}(t), & k=i,\\
+w_{ik}^{(j)}(t), & k\neq i,\; k\in\N_i,\\
+0, & \text{otherwise},
+\end{cases}}
+\label{eq_mixing_entries}
+\end{equation}
+\azrev{where $w_{is}^{(j)}(t)$ is the implicit self-prediction weight. The $i$th row sum is therefore $w_{is}^{(j)}(t)+\sum_{k\in\N_i}w_{ik}^{(j)}(t)=1-w_{i0}^{(j)}(t)$.}
+Nonnegativity allows the triangle inequality to pass through the weighted correction. For every host $i$,
 \begin{align}
-\left\|\sum_{k=1}^N M_{ik}^{(j)}(t)e_k^{(j)}(t)\right\|_*
+\left\|\sum_{k=1}^N {M_{ik}^{(j)}(t)}e_k^{(j)}(t)\right\|_*
 &\le \sum_{k=1}^N M_{ik}^{(j)}(t)\|e_k^{(j)}(t)\|_*\notag\\
 &\le \big(1-w_{i0}^{(j)}(t)\big)
 \|e_{\DO}^{(j)}(t)\|_{\mathrm{b},*}.
@@ -969,30 +1010,32 @@ Stacking the trust-weighted correction and using the nonnegative row-substochast
 &\le \|M^{(j)}(t)\|_\infty
 \|e_{\DO}^{(j)}(t)\|_{\mathrm{b},*}\notag\\
 &\quad+\|w_0^{(j)}(t)\|_\infty\|e_0^{(j)}(t)\|_*
-+\|\rho^{(j)}(t)\|_{\mathrm{b},*} ,
++\|r_{\mathrm{chart}}^{(j)}(t)\|_{\mathrm{b},*} ,
 \label{eq_nonlinear_consensus_bound}
 \end{align}
-where $M^{(j)}=I_N-\bar\L^{(j)}$, $w_0^{(j)}$ stacks the anchor weights, and $\rho^{(j)}$ is zero in the no-wrap Euclidean chart (or a bounded second-order retraction remainder).
+where $M^{(j)}=I_N-\bar\L^{(j)}$, $w_0^{(j)}$ stacks the anchor weights, and $r_{\mathrm{chart}}^{(j)}$ is zero in the no-wrap Euclidean chart (or a bounded second-order retraction remainder).
 
 The Jacobians in~\eqref{eq_bicycle_jacobian} provide the usual auxiliary linearized model for selecting $F_j$ and checking conservative contraction constants, but the result below is stated for the nonlinear recursions~\eqref{eq_raw_e0}--\eqref{eq_raw_eDO}.
 
 If $a_0^{(j)}$ and $a_l^{(j)}$ corrupt the anchor and neighbor-$l$ channels, respectively, the correction at host $i$ contains
 {\small
 \begin{equation}
-\chi_{\mathrm{att},i}^{(j)}(t)
+\xi_{\mathrm{att},i}^{(j)}(t)
 =w_{i0}^{(j)}(t)a_{0}^{(j)}(t)
 +\sum_{l\in\mathcal{M}_{i}^{(j)}(t)}w_{il}^{(j)}(t)a_{l}^{(j)}(t).
 \label{eq_attack_input}
 \end{equation}
 }
+\azrev{Here $\mathcal{M}_i^{(j)}(t)\subseteq\N_i$ denotes the corrupted neighbor channels seen by host $i$ for target $j$; for unattacked, unavailable, or rejected channels the corresponding attack vector is zero. \textcolor{red}{Note that this symbol clashes with the mixing matrix $M^{(j)}$; renaming it to $\mathcal{K}_i^{(j)}(t)$ would remove the ambiguity.}}
+
 By~\eqref{eq_nonlinear_lipschitz}, this perturbation enters the nonlinear error recursion as an additive ISS input bounded by
 \begin{equation}
 \|d_{\mathrm{att},i}^{(j)}(t)\|_*
-\le L_{x,j}\|\chi_{\mathrm{att},i}^{(j)}(t)\|_* .
+\le L_{x,j}\|\xi_{\mathrm{att},i}^{(j)}(t)\|_* .
 \label{eq_attack_lipschitz_bound}
 \end{equation}
 Stacking these row-wise terms gives the additive input $d_{\mathrm{att}}^{(j)}$. Its size is modulated by the trust weights.
-If $\|a_{0}^{(j)}(t)\|_*\le \bar a_0$ and $\|a_{l}^{(j)}(t)\|_*\le \bar a_{\mathrm{N}}$ on $\mathcal{M}_{i}^{(j)}(t)$, then Lemma~\ref{lem_weight_admissible} gives
+If $\|a_{0}^{(j)}(t)\|_*\le \bar a_0$ and $\|a_{l}^{(j)}(t)\|_*\le \bar a_{\mathrm{N}}$ on ${\color{red}\mathcal{M}_{i}^{(j)}(t)}$, then Lemma~\ref{lem_weight_admissible} gives
 \begin{align}
 \|d_{\mathrm{att},i}^{(j)}(t)\|_*
 &\le L_{x,j}
@@ -1001,22 +1044,22 @@ w_{i0}^{(j)}(t)\bar a_0
 +\sum_{l\in\mathcal{M}_{i}^{(j)}(t)}
 w_{il}^{(j)}(t)\bar a_{\mathrm{N}}
 \right) \notag\\
-&\le \bar A_j \max\{\bar a_0,\bar a_{\mathrm{N}}\}.
+&\le L_{x,j}\max\{\bar a_0,\bar a_{\mathrm{N}}\}.
 \label{eq_attack_bound}
 \end{align}
-where $\bar A_j$ is finite on the compact region. Thus $\|d_{\mathrm{att}}^{(j)}\|\le\bar d_{\mathrm{att}}$ for some finite $\bar d_{\mathrm{att}}$; after rejection, the corrupted channel's term in~\eqref{eq_attack_input} is zero.
+Thus $\|d_{\mathrm{att}}^{(j)}(t)\|_{\mathrm{b},*}\le\bar d_{\mathrm{att}}$ for some finite $\bar d_{\mathrm{att}}$; after rejection, the corrupted channel's direct term in~\eqref{eq_attack_input} is zero.
 
 For the nonlinear ISS proof, $d_0^{(j)}$ and $d_{\DO}^{(j)}$ denote the corresponding lumped inputs caused by model uncertainty, input mismatch, chart remainders, and bounded approximation terms. We assume these inputs and the additive attack contribution are bounded.
 \begin{assumption}\label{assum_distur}
-There are finite $\bar d_0$, $\bar d_{\DO}$, and $\bar d_{\mathrm{att}}$ such that $\|d_0^{(j)}\|\le\bar d_0$, $\|d_{\DO}^{(j)}\|\le\bar d_{\DO}$, and $\|d_{\mathrm{att}}^{(j)}\|\le\bar d_{\mathrm{att}}$. Hence $\|\tilde d_{\DO}^{(j)}\|\le\bar{\tilde d}_{\DO}:=\bar d_{\DO}+\bar d_{\mathrm{att}}$.
+There are finite $\bar d_0$, $\bar d_{\DO}$, and $\bar d_{\mathrm{att}}$ such that, for every $t$, $\|d_0^{(j)}(t)\|_*\le\bar d_0$, $\|d_{\DO}^{(j)}(t)\|_{\mathrm{b},*}\le\bar d_{\DO}$, and $\|d_{\mathrm{att}}^{(j)}(t)\|_{\mathrm{b},*}\le\bar d_{\mathrm{att}}$. Hence $\|\tilde d_{\DO}^{(j)}(t)\|_{\mathrm{b},*}\le\bar{\tilde d}_{\DO}:=\bar d_{\DO}+\bar d_{\mathrm{att}}$.
 \end{assumption}
 
 \begin{lemma}[Local nonlinear observer ISS]\label{lem_local_iss}
-Assume that, on the compact operating region $\Omega_x\times\Omega_u$, the disturbance-free local nonlinear error recursion associated with~\eqref{eq_raw_e0} is uniformly locally exponentially stable. Equivalently, there exist $c_{\ell}>0$ and $\lambda_{\ell}\in(0,1)$ such that the zero-input local error satisfies the corresponding exponential bound for all admissible trajectories in the region. If Assumption~\ref{assum_distur} holds and the perturbed trajectory remains in the same region, then the local-observer error is ISS with respect to $d_0^{(j)}$. In particular,
+Assume that, on the compact operating region $\Omega_x\times\Omega_u$, the disturbance-free local nonlinear error recursion associated with~\eqref{eq_raw_e0} is uniformly locally exponentially stable. Equivalently, there exist $c_{\ell}>0$ and $\lambda_{\ell}\in(0,1)$ such that the zero-input local error satisfies the corresponding exponential bound for all sufficiently small initial errors and all admissible trajectories in the region. Then there exist local radii $r_{\ell},d_{\ell}>0$ such that, if $\|e_0^{(j)}(0)\|_*\le r_{\ell}$ and $\sup_t\|d_0^{(j)}(t)\|_*\le d_{\ell}$, the perturbed recursion remains in a local invariant neighborhood contained in the admissible region and is ISS with respect to $d_0^{(j)}$. In particular, for some finite local input gain $\gamma_{\ell}>0$,
 \begin{equation}
 \|e_0^{(j)}(t)\|_*
 \le c_{\ell}\lambda_{\ell}^{t}\|e_0^{(j)}(0)\|_*
-+\frac{c_{\ell}}{1-\lambda_{\ell}}\bar d_0 .
++\gamma_{\ell}\bar d_0 .
 \label{eq_local_iss_bound}
 \end{equation}
 A sufficient local check is the uniform exponential stability of the LTV local-error recursion
@@ -1026,25 +1069,25 @@ z(t+1)=\big(A_j(t)-F_j(t)C_j(t)\big)z(t),
 \end{equation}
 understood as an LTV system and not as frozen-time Schur stability of each $A_j(t)-F_j(t)C_j(t)$. A checkable sufficient condition is the existence of a bounded symmetric matrix sequence $P_j(t)=P_j(t)^\top$ and scalars $0<\underline p\le\bar p$ and $q>0$ such that, with $A_{F,j}(t):=A_j(t)-F_j(t)C_j(t)$,
 \begin{align}
-\underline p I&\preceq P_j(t)\preceq\bar p I,\notag\\
+\azrev{\underline p}\, I \preceq P_j(t)\preceq\bar p I,\notag\\
 A_{F,j}(t)^\top P_j(t+1)A_{F,j}(t)-P_j(t)
-&\preceq-qI
+\preceq-qI
 \label{eq_ltv_lyapunov}
 \end{align}
 for all $t$, together with a sufficiently small invariant neighborhood on which the higher-order remainder of the nonlinear local-error map is uniformly quadratic.
 \end{lemma}
 \begin{proof}
-Uniform local exponential stability of the zero-input recursion gives a transition bound $c_{\ell}\lambda_{\ell}^{t-k}$. Unrolling the perturbed local recursion and using Assumption~\ref{assum_distur} gives the geometric ISS estimate~\eqref{eq_local_iss_bound}. The Lyapunov inequality~\eqref{eq_ltv_lyapunov} establishes uniform exponential stability of the LTV linearization; the uniformly quadratic higher-order remainder then gives uniform local exponential stability of the nonlinear zero-input recursion on a sufficiently small invariant neighborhood.
+Uniform local exponential stability of the smooth zero-input recursion admits a local Lyapunov function with uniform quadratic bounds and a strict one-step decrease. On a sufficiently small invariant neighborhood, the additive input changes this Lyapunov difference by a term proportional to $\|d_0^{(j)}\|$. Iterating the resulting comparison inequality and using Assumption~\ref{assum_distur} gives~\eqref{eq_local_iss_bound} for a finite $\gamma_{\ell}$. The Lyapunov inequality~\eqref{eq_ltv_lyapunov} establishes uniform exponential stability of the LTV linearization; the uniformly quadratic higher-order remainder then gives uniform local exponential stability of the nonlinear zero-input recursion on a sufficiently small invariant neighborhood.
 \end{proof}
 
 \begin{lemma}[Nonlinear distributed-error contraction]\label{lem_dist_contraction}
 Suppose that the block contraction condition~\eqref{assume3} below holds. If the local-observer error is ISS and Assumption~\ref{assum_distur} holds, then the nonlinear distributed error~\eqref{eq_raw_eDO} is ISS with respect to $e_0^{(j)}$ and $d_{\DO}^{(j)}$. Under the additive attack model, the attacked distributed error is ISS with respect to $e_0^{(j)}$ and $\tilde d_{\DO}^{(j)}$.
 \end{lemma}
 \begin{proof}
-Use the componentwise error-size vector $E^{(j)}(t)$ defined before~\eqref{eq_componentwise_block_bound}. Equations~\eqref{eq_nonlinear_lipschitz} and~\eqref{eq_rowwise_mixing_bound}, together with the anchor and disturbance terms, give a componentwise recursion of the form
+Use the componentwise error-size vector $E^{(j)}(t)$ defined in~\eqref{eq_E}. Equations~\eqref{eq_nonlinear_lipschitz} and~\eqref{eq_rowwise_mixing_bound}, together with the anchor and disturbance terms, give a componentwise recursion of the form
 \begin{equation}
 E^{(j)}(t+1)
-\le L_{x,j}M^{(j)}(t)E^{(j)}(t)+b^{(j)}(t),
+\le L_{x,j}(t)M^{(j)}(t)E^{(j)}(t)+b^{(j)}(t),
 \label{eq_componentwise_input_recursion}
 \end{equation}
 where $\|b^{(j)}(t)\|_\infty$ is bounded by finite gains multiplying $\|e_0^{(j)}(t)\|_*$ and $\|\tilde d_{\DO}^{(j)}(t)\|_{\mathrm{b},*}$. Define the block mixing product
@@ -1070,10 +1113,10 @@ for some finite $c_b>0$. Condition~\eqref{assume3} contracts the homogeneous ter
 
 Combining Lemmas~\ref{lem_local_iss} and~\ref{lem_dist_contraction} gives the following result.
 \begin{theorem}\label{thm_observer}
-Consider a vehicle platoon~\eqref{eq_platoon} over a directed weighted communication network $\bar{\G}^{(j)}$. Let~\eqref{eq_observer} be the corresponding nonlinear distributed observer. Assume that the following conditions hold true:
+Fix a target $j\in\V$. Consider the vehicle platoon~\eqref{eq_platoon} over the directed weighted communication network $\bar{\G}^{(j)}$, and let~\eqref{eq_observer} be the corresponding nonlinear distributed observer for target $j$. Assume that the following conditions hold:
 \begin{enumerate}
-    \item For all $j \in \V$, there exists a bounded gain $F_{j}(t)$ such that the local nonlinear observer error recursion~\eqref{eq_raw_e0} is uniformly locally exponentially stable on $\Omega_x\times\Omega_u$. A sufficient check is the uniform exponential stability of the LTV recursion~\eqref{eq_ltv_local_error} along the considered bounded bicycle trajectory, for instance through the parameter-dependent Lyapunov inequality~\eqref{eq_ltv_lyapunov} stated in Lemma~\ref{lem_local_iss}. Frozen-time eigenvalue placement of $A_j(t)-F_j(t)C_j(t)$ alone does not imply this property in the time-varying case.
-    \item For all $i \in \V$, $w_{i0}^{(j)} \geq 0$ and $w_{il}^{(j)} \geq 0$ satisfy
+    \item There exists a bounded gain $F_{j}(t)$ such that the local nonlinear observer error recursion~\eqref{eq_raw_e0} is uniformly locally exponentially stable on the compact region of Assumption~\ref{ass_compact_region}. A sufficient check is the uniform exponential stability of the LTV recursion~\eqref{eq_ltv_local_error} along the considered bounded bicycle trajectory, for instance through the parameter-dependent Lyapunov inequality~\eqref{eq_ltv_lyapunov} stated in Lemma~\ref{lem_local_iss}. Frozen-time eigenvalue placement of $A_j(t)-F_j(t)C_j(t)$ alone does not imply this property in the time-varying case.
+    \item For all $i \in \V$, $w_{i0}^{(j)}(t) \geq 0$ and $w_{il}^{(j)}(t) \geq 0$ satisfy
     \begin{equation}\label{thm_W}%\label{sum_w_il}
     \sum_{l\in \N_i\cup\{0\}} w_{il}^{(j)}(t) \leq 1.
     \end{equation}
@@ -1083,58 +1126,76 @@ Consider a vehicle platoon~\eqref{eq_platoon} over a directed weighted communica
     \left\|M^{(j)}(t+T_c-1)\cdots M^{(j)}(t)\right\|_\infty
     \le \alpha_c<1.
     \end{equation}
-    Here $G_{x,j}(T_c)$ is the $T_c$-step bicycle prediction gain on the compact admissible region. A checkable sufficient condition for $T_c=1$ is Lemma~\ref{lem_anchor_contraction}; for intermittent anchors or sparse graphs, Assumption~\ref{ass_graph} and Lemma~\ref{lem_rooted_block_contraction} give the corresponding block check~\eqref{eq_window_contraction_check}.
+    Here $G_{x,j}(T_c)$ is the separable interleaved block gain defined in Lemma~\ref{lem_rooted_block_contraction}; the conservative choice is $L_{x,j}^{T_c}$. A checkable sufficient condition for $T_c=1$ is Lemma~\ref{lem_anchor_contraction}; for intermittent anchors or sparse accepted graphs, Assumption~\ref{ass_graph} can be enforced by a supervisor or checked on each completed window, and Lemma~\ref{lem_rooted_block_contraction} gives the corresponding block check~\eqref{eq_window_contraction_check}.
 \end{enumerate}
-Then, the original nonlinear error dynamics~\eqref{eq_raw_e0}--\eqref{eq_raw_eDO} are locally ISS on $\Omega_x\times\Omega_u$. Under the additive attack model, the attacked estimation error is also locally ISS. In particular, there exist constants $c_0, c_1 > 0$ and $\lambda \in (0,1)$ such that
+Then the original nonlinear error dynamics~\eqref{eq_raw_e0}--\eqref{eq_raw_eDO} are locally ISS on $\Omega_x\times\Omega_u$. Under the additive attack model, the attacked estimation error is also locally ISS. The bounds below hold for sufficiently small initial errors and bounded-input suprema for which the perturbed errors remain in the local invariant neighborhoods of Lemma~\ref{lem_local_iss} and Lemma~\ref{lem_dist_contraction}. In particular, choose any
+\begin{equation}
+\max\{\alpha_c^{1/T_c},\lambda_{\ell}\}<\lambda<1.
+\label{eq_cascade_rate}
+\end{equation}
+There then exist constants $c_0,c_1>0$ such that
 \begin{align}
 \|e_0^{(j)}(t)\| &\le c_0\lambda^t \|e_0^{(j)}(0)\| + c_0 \bar{d}_0,\\
-\|e_{\DO}^{(j)}(t)\| &\le c_1\lambda^t \|e_{\DO}^{(j)}(0)\| \notag\\
-&\quad+ c_1 \Big(\|e_0^{(j)}(0)\| + \bar{d}_0 + \bar{\tilde d}_{\DO}\Big).
+\|e_{\DO}^{(j)}(t)\| &\le c_1\lambda^t
+\Big(\|e_{\DO}^{(j)}(0)\|+\|e_0^{(j)}(0)\|\Big)\notag\\
+&\quad+c_1\Big(\bar d_0+\bar{\tilde d}_{\DO}\Big).
 \end{align}
 
 \end{theorem}
 \begin{proof}
-Condition~1 and Assumption~\ref{assum_distur} give the local-observer ISS bound by Lemma~\ref{lem_local_iss}. Lemma~\ref{lem_weight_admissible} gives Condition~2 and the nonnegative row-substochastic structure used in~\eqref{eq_rowwise_mixing_bound}. Condition~3 gives the distributed block contraction in Lemma~\ref{lem_dist_contraction}. Applying that lemma and taking $\lambda=\max\{\alpha_c^{1/T_c},\lambda_{\ell}\}$ gives the stated bounds after the finite within-block, bounded-gain, and norm-equivalence constants are absorbed into $c_0,c_1$. In the nominal case $d_{\mathrm{att}}^{(j)}=0$ and $\bar{\tilde d}_{\DO}=\bar d_{\DO}$.
+Condition~1 and Assumption~\ref{assum_distur} give the local-observer ISS bound by Lemma~\ref{lem_local_iss}. Lemma~\ref{lem_weight_admissible} gives Condition~2 and the nonnegative row-substochastic structure used in~\eqref{eq_rowwise_mixing_bound}. Condition~3 gives the distributed block contraction in Lemma~\ref{lem_dist_contraction}. Substituting~\eqref{eq_local_iss_bound} into the block recursion~\eqref{eq_distributed_block_recursion} produces the convolution of the block rate $\alpha_c^{1/T_c}$ with the local rate $\lambda_{\ell}$. For any $\lambda$ satisfying~\eqref{eq_cascade_rate}, this convolution is bounded by a finite constant times $\lambda^t$, including when the two original rates coincide. The finite within-block, bounded-gain, and norm-equivalence constants are absorbed into $c_0,c_1$, which gives the stated decay of both initial errors and the bounded disturbance terms. In the nominal case $d_{\mathrm{att}}^{(j)}=0$ and $\bar{\tilde d}_{\DO}=\bar d_{\DO}$.
 \end{proof}
 
 \begin{remark}
-The result is local because the compact region excludes steering singularities, yaw-wrap discontinuities, and unbounded velocities or inputs. The Jacobians in~\eqref{eq_bicycle_jacobian} provide conservative design constants, while the LTV local-error check must be performed along the trajectory rather than through frozen-time eigenvalues alone. Dense accepted-anchor graphs use $T_c=1$; sparse switching graphs use the ordered windows of Assumption~\ref{ass_graph}. Rejection drives the malicious input gain to zero.
+The result is local under Assumption~\ref{ass_compact_region}. The Jacobians in~\eqref{eq_bicycle_jacobian} provide conservative design constants, while the LTV local-error check must be performed along the trajectory rather than through frozen-time eigenvalues alone. Dense accepted-anchor graphs use $T_c=1$; sparse switching graphs use the ordered windows of Assumption~\ref{ass_graph}. Rejection drives the malicious input gain to zero.
 \end{remark}
 
 \section{Contamination Rollback Under Delayed Trust Decisions}\label{sec_rollback}
 Trust values are computed from consistency windows and therefore may lag behind the first corrupted packet. During this detection delay, falsified data can enter the distributed observer before the corresponding neighbor is removed from the trusted set. To limit this transient contamination, each host vehicle can optionally maintain a finite rollback buffer and re-evaluate the most recent observer steps once a neighbor is flagged.
 
-The rollback module is useful when contamination is propagated through an otherwise honest intermediate vehicle. Consider an attacked transmitter $l^{\star}$ and two honest vehicles $m$ and $i$. During the trust-detection delay, $l^{\star}$ broadcasts a falsified position or heading, and vehicle $m$ uses this packet in its own distributed estimate before the trust score has fallen below the rejection threshold. Later, vehicle $i$ receives the fleet estimate from $m$. From the direct perspective of vehicle $i$, the neighbor $m$ may still appear reliable, but the estimate carried by $m$ already contains upstream contamination from $l^{\star}$. If the observer only sets future weights associated with $l^{\star}$ to zero after detection, the biased state that entered the recursion during the previous steps remains embedded in the current estimate and can continue to affect prediction. Rollback is introduced to address exactly this delayed-decision effect: when the unreliable source is identified, the host returns to a recent stored state, removes the newly rejected contribution from the buffered updates, and replays the observer with the local anchor and the remaining trusted neighbors. Thus, rollback converts a late trust decision into a retrospective correction rather than only a future communication cut.
+Each host performs rollback using the data stored in its own buffer. It can remove a rejected source only when data from that source appear directly in the buffer. For example, suppose an attacked vehicle $l^{\star}$ sends false data to vehicle $m$, and vehicle $m$ then sends a contaminated estimate to vehicle $i$. If vehicle $i$ has stored only the estimate from $m$, replaying its buffer cannot identify and remove the contribution of $l^{\star}$.
 
-Assume that neighbor $l^{\star}$ is declared unreliable at time $t$. For a rollback horizon $K$, host vehicle $i$ stores, for each observer $\DO_i^{(j)}$ and each time $k\in\{t-K,\ldots,t-1\}$, the pre-update state $\hat{x}_i^{(j)}(k)$, the received neighbor estimates, the trust weights, the anchor estimate, and the input estimate $\hat{u}_j(k)$. The replay is executed as follows:
+Correcting this indirect contamination would require either provenance information, meaning a record of the upstream packets and weights used to form each stored estimate, or a coordinated replay in which $m$ corrects its history before $i$ replays its own data. Therefore, the procedure below directly corrects only rejected data contained in the host's own buffer.
+
+Assume that a trust decision is made at time $t$ after the update that produced the pre-reset estimate $\hat{x}_i^{(j)}(t^-)$ and before the reset-corrected estimate at time $t$ is released. Thus, replay over $k=t-K,\ldots,t-1$ produces the replacement value for $\hat{x}_i^{(j)}(t)$. For a rollback horizon $K$, host vehicle $i$ stores, for each observer $\DO_i^{(j)}$ and each time $k\in\{t-K,\ldots,t-1\}$, the pre-update state $\hat{x}_i^{(j)}(k)$, the received neighbor and anchor estimates, the original weights, the input estimate, and the corresponding validity metadata. Let $\mathcal{R}_i^{(j)}(t)\subseteq\N_i$ be the neighbor sources retrospectively rejected by the new decision, let $\chi_{i0,\mathrm r}^{(j)}(k;t)\in\{0,1\}$ denote retrospective acceptance of the archived anchor, and let $\hat u_{j,\mathrm r}(k;t)$ be an archived or recomputed input estimate that remains accepted at replay time. If no accepted bounded input estimate is available, replay is not certified and the target is marked temporarily unavailable. The replay is executed as follows:
 \begin{enumerate}
-    \item form the newly rejected set $\mathcal{M}$ from the trust decision at time $t$;
+    \item form the retrospective neighbor, anchor, and input acceptance decisions from the trust decision at time $t$;
     \item reset a temporary replay state to the stored state at the beginning of the buffer;
-    \item replay the observer from $t-K$ to $t-1$ using the archived packets, archived weights, and archived inputs, but excluding every source in $\mathcal{M}$;
+    \item replay the observer from $t-K$ to $t-1$ using only archived channels that remain accepted;
     \item replace the current distributed estimate by the replayed value.
 \end{enumerate}
+The replay can remove only contributions introduced during the stored interval. Full removal additionally requires the buffer-start state $\hat x_i^{(j)}(t-K)$ to be an unaffected checkpoint; if the first affected packet predates the buffer or the checkpoint is already contaminated, replay is only a bounded mitigation step.
+
+Define the retrospectively masked weights
+\begin{align}
+\bar w_{il}^{(j)}(k;t)
+&=w_{il}^{(j)}(k)\mathbf 1_{\{l\notin\mathcal R_i^{(j)}(t)\}},\quad l\in\N_i,\notag\\
+\bar w_{i0}^{(j)}(k;t)
+&=w_{i0}^{(j)}(k)\chi_{i0,\mathrm r}^{(j)}(k;t).
+\label{eq_rollback_masked_weights}
+\end{align}
 During replay, the corrected state $x_{\mathrm{r}}$ is used to recompute the innovation terms
 \begin{align}
 \tilde{\eta}_{il}^{(j)}(k;x_{\mathrm{r}})
-&= w_{il}^{(j)}(k)
+&= \bar w_{il}^{(j)}(k;t)
 \big(\hat{x}_l^{(j)}(k)-x_{\mathrm{r}}\big),\quad l\in\N_i, \\
 \tilde{\eta}_{i0}^{(j)}(k;x_{\mathrm{r}})
-&= w_{i0}^{(j)}(k)
+&= \bar w_{i0}^{(j)}(k;t)
 \big(\hat{x}_0^{(j)}(k)-x_{\mathrm{r}}\big).
 \end{align}
-When $l^{\star}$ is flagged, the host resets the temporary state to the buffer start,
+The host resets the temporary state to the buffer start,
 \begin{equation}
     x_{\mathrm{r}} \leftarrow \hat{x}_i^{(j)}(t-K),
 \end{equation}
-and replays the observer update for $k=t-K,\ldots,t-1$ while excluding the flagged neighbor, or a flagged set $\mathcal{M}$:
+and replays the observer update for $k=t-K,\ldots,t-1$:
 \begin{equation}
 \begin{aligned}
 x_{\mathrm{r}} \leftarrow\;&
 f_{\text{b}}\!\left(
 x_{\mathrm{r}}
-+\sum_{l\in\N_i\setminus\mathcal{M}}\tilde{\eta}_{il}^{(j)}(k;x_{\mathrm{r}})
++\sum_{l\in\N_i}\tilde{\eta}_{il}^{(j)}(k;x_{\mathrm{r}})
 + \tilde{\eta}_{i0}^{(j)}(k;x_{\mathrm{r}}),
-\hat{u}_j(k)\right).
+\hat{u}_{j,\mathrm r}(k;t)\right).
 \end{aligned}
 \label{eq_rollback_replay}
 \end{equation}
@@ -1143,21 +1204,33 @@ Finally, the current distributed estimate is corrected by setting
     \hat{x}_i^{(j)}(t)\leftarrow x_{\mathrm{r}}.
 \end{equation}
 
-The rollback memory cost is proportional to $K\deg(i)$ per observer and can be implemented with archived packets and weights. The anchor innovation $\tilde{\eta}_{i0}^{(j)}(k;x_{\mathrm{r}})$ is retained during replay so that removing a corrupted neighbor does not leave the correction step purely open loop.
+Because the masked weights in~\eqref{eq_rollback_masked_weights} do not exceed the original weights, their sum remains at most one; the removed weight remains assigned to the replay state through the residual self coefficient, so replay does not require renormalization. The rollback memory cost is proportional to $K\deg(i)$ per observer and can be implemented with archived packets, weights, inputs, and validity metadata. The anchor innovation is retained only when its archived channel remains accepted.
 
 \begin{lemma}[Bounded rollback reset]\label{lem_rollback_bounded}
-Assume that the stored packets, archived weights, inputs, and replayed states remain in the compact admissible region used in Theorem~\ref{thm_observer}, and that the rollback horizon $K$ is finite. Then the reset
+Assume that the stored packets, masked weights, accepted inputs, replayed states, and pre-reset estimates remain in the compact admissible region used in Theorem~\ref{thm_observer}, and that the rollback horizon $K$ is finite. At a reset time $\tau_q$, define the stacked reset $\zeta_{\DO}^{(j)}(\tau_q)$ by stacking
 \[
-    \zeta_i^{(j)}(t)=x_{\mathrm r}-\hat{x}_i^{(j)}(t^-)
+    \zeta_i^{(j)}(\tau_q)=x_{\mathrm r}-\hat{x}_i^{(j)}(\tau_q^-)
 \]
-induced by~\eqref{eq_rollback_replay} is bounded. If successive rollback triggers are separated by a dwell time $T_{\mathrm r}>0$, the reset sequence can be treated as an additional bounded impulsive input, and the local ISS boundedness conclusion of Theorem~\ref{thm_observer} is preserved with an enlarged ultimate bound.
+for the resetting hosts and zeros for the other hosts. Then $\|\zeta_{\DO}^{(j)}(\tau_q)\|_{\mathrm{b},*}\le\bar\zeta$ for some finite $\bar\zeta$. Suppose also that every post-reset error remains in the local invariant neighborhood of Theorem~\ref{thm_observer}, and that $\tau_{q+1}-\tau_q\ge T_{\mathrm r}$ for an integer $T_{\mathrm r}\ge1$. Let $C_{\mathrm r}>0$ and $\rho_{\mathrm r}\in(0,1)$ bound the reset-free homogeneous distributed-error transition, as supplied by the block contraction condition. If $\mathcal B_{\mathrm{ISS}}^{(j)}(t)$ denotes the reset-free ISS bound of Theorem~\ref{thm_observer}, including norm-equivalence constants, then
+\begin{align}
+\|e_{\DO}^{(j)}(t)\|_{\mathrm{b},*}
+&\le \mathcal B_{\mathrm{ISS}}^{(j)}(t)
++C_{\mathrm r}\!\sum_{\tau_q<t}\rho_{\mathrm r}^{\,t-\tau_q}
+\|\zeta_{\DO}^{(j)}(\tau_q)\|_{\mathrm{b},*}\notag\\
+&\le \mathcal B_{\mathrm{ISS}}^{(j)}(t)
++\frac{C_{\mathrm r}\bar\zeta}{1-\rho_{\mathrm r}^{T_{\mathrm r}}}.
+\label{eq_rollback_iss_bound}
+\end{align}
+Thus the reset-augmented observer is locally practically ISS with respect to the ordinary disturbances and the rollback-reset sequence.
 \end{lemma}
 \begin{proof}
-For fixed finite $K$, the replay map is a finite composition of the clipped packet map, the bounded weighted correction step, and the bicycle prediction map on a compact set. This composition is bounded, hence $\zeta_i^{(j)}(t)$ is bounded. The dwell-time condition prevents infinitely many reset jumps from accumulating over a finite time interval. Between two reset times, Theorem~\ref{thm_observer} gives the usual ISS decay and bounded-input response; at a reset time, the bounded jump is added as another bounded input. Iterating over the dwell-time intervals gives the same ISS form with a larger constant that depends on the reset bound and $T_{\mathrm r}$.
+For fixed finite $K$, the replay map is a finite composition of bounded weighted corrections and bicycle predictions on a compact set. It is therefore bounded. Since the pre-reset estimate is also bounded in the same admissible region, the difference between the replayed state and the pre-reset estimate is bounded, which gives a finite $\bar\zeta$. Between reset times, the block contraction proof of Theorem~\ref{thm_observer} gives a transition bound $C_{\mathrm r}\rho_{\mathrm r}^{t-s}$. Inserting each reset as an additive jump and iterating this bound gives the first inequality in~\eqref{eq_rollback_iss_bound}. The integer separation of reset times bounds the resulting geometric series by $(1-\rho_{\mathrm r}^{T_{\mathrm r}})^{-1}$, which gives the second inequality. The post-reset neighborhood condition ensures that the local estimates used in this iteration remain valid.
 \end{proof}
+Lemma~\ref{lem_rollback_bounded} proves boundedness of the reset-augmented error; it does not guarantee that every rollback decreases the estimation error. Error reduction depends on a sufficiently early unaffected checkpoint and on correct retrospective channel decisions.
 
 \subsection{Pose propagation and relative-measurement re-anchoring}
-Rollback mitigates short-term contamination caused by delayed trust decisions, whereas anchoring provides a repeated pose reference that limits long-term propagation of accumulated offsets when a trusted anchor or relative measurement is available. This motivates the distinction between ordinary pose propagation and optional relative-measurement re-anchoring.
+Rollback mitigates short-term contamination caused by delayed trust decisions. In contrast, re-anchoring provides an independent pose reference that limits the long-term propagation of accumulated position offsets when a trusted anchor or accepted relative measurement is available. This distinction separates ordinary pose propagation from optional relative-measurement re-anchoring.
+
 
 Let $p=[X,Y]^\top$ and write the consensus-corrected state as
 $\hat{x}_{i,c}^{(j)}=\col{\hat p_{i,c}^{(j)},\hat\psi_{i,c}^{(j)},\hat v_{i,c}^{(j)}}$.
@@ -1184,7 +1257,7 @@ Re-anchoring is an optional correction before prediction. If host vehicle $i$ ha
 \end{equation}
 where $\hat p_0^{(i)}$ is the host local-observer position and $r_{i,j}^{\mathrm{meas}}$ is the measured relative position from $i$ to $j$. This reference does not come from the received distributed estimate of target $j$; it comes from host sensing and the host's own local pose.
 
-The host may then blend the propagated base pose with this relative-measurement reference:
+The host may then blend the corrected base pose with this relative-measurement reference:
 \begin{equation}
 \begin{aligned}
     p_{\mathrm b,i}^{(j)}(t)
@@ -1208,82 +1281,37 @@ and predict from the resulting base pose,
     \end{bmatrix}.
     \label{eq_pose_reanchor_prediction}
 \end{equation}
-The scalar $\rho_{i,\mathrm{rel}}^{(j)}$ determines how strongly the relative measurement is used. The case $\rho_{i,\mathrm{rel}}^{(j)}=0$ gives the standard observer prediction, $0<\rho_{i,\mathrm{rel}}^{(j)}<1$ gives a soft re-anchor, and $\rho_{i,\mathrm{rel}}^{(j)}=1$ resets the position base to the relative-measurement pose. If the relative measurement is missing, rejected, or outside the sensing range, then $\rho_{i,\mathrm{rel}}^{(j)}=0$ and the observer reduces to the trust-weighted prediction and rollback mechanism already analyzed above. Thus, re-anchoring is not used as an additional proof assumption; it is a practical add-on for cases where an independent onboard relative measurement is available and accepted.
+The scalar $\rho_{i,\mathrm{rel}}^{(j)}(t)$ determines how strongly the relative measurement is used. When $\rho_{i,\mathrm{rel}}^{(j)}(t)=0$, the update reduces to the standard observer prediction. Values $0<\rho_{i,\mathrm{rel}}^{(j)}(t)<1$ give soft re-anchoring, while $\rho_{i,\mathrm{rel}}^{(j)}(t)=1$ resets the position base to the relative-measurement pose. If the relative measurement is missing, rejected, or outside the sensing range, then $\rho_{i,\mathrm{rel}}^{(j)}(t)=0$, and the observer reduces to the trust-weighted prediction and rollback mechanism analyzed above. Thus, re-anchoring is not an additional proof assumption; it is a practical add-on used only when an independent onboard relative measurement is available and accepted.
+
 
 
 \section{Simulation and Platform Results}\label{sec_simulation}
 
-This section reports three validation layers. The numerical campaign uses a five-vehicle platoon and 15 saved runs over local, global, and simultaneous local--global attacks to evaluate RMSE, trust response, source suppression, and the dominant attack cases. The QCar/LIMO validation then checks rollback under real packet timing and uses Case~2 trajectories to show closed-loop path effects. Finally, the control check uses trust as a gate between CACC and ACC and verifies positive projected spacing during the attack interval.
+This section reports three validation layers. The numerical campaign uses a five-vehicle platoon and compares local, global, and simultaneous local--global corruption to evaluate RMSE, trust response, source suppression, and the dominant attack cases. The QCar/LIMO validation then checks rollback under real packet timing and uses trajectories to show closed-loop path effects. Finally, the control check uses trust as a gate between CACC and ACC and verifies positive projected spacing during the attack interval.
 
 \subsection{Numerical Simulation Setup}
 
-The numerical simulation uses five vehicles with all-to-all V2V communication; each vehicle runs the observer, and small modeling variations are treated as uncertainties. The main parameters are $N=5$, $T_s=0.01$~s, nominal geometry $l_f=1.11$~m and $l_r=1.74$~m, giving $L_w=2.85$~m, local-trust product-fusion exponents $(\omega_p,\omega_v,\omega_\psi,\omega_u)=(2.0,3.0,1.0,1.0)$ for position/distance, velocity, heading, and acceleration/input consistency, single-rating aging weight $\beta_{\text{trust}}=0.45$, class confidence $C_{\mathrm{tr}}=0.2$, $q=5$ trust classes, heading tolerance $\psi_{\mathrm{th}}=0.35$~rad, and trust threshold $\theta_{\min}=0.5$. The observer-weight module uses base gains $w_{0,\mathrm{base}}=0.4$ and $w_{\mathrm{self,base}}=0.2$, with nominal neighbor budget $0.4$ and per-neighbor cap $0.4$.
+The numerical simulation uses five vehicles with all-to-all V2V communication; each vehicle runs the observer, and small fixed parameter variations are treated as modeling uncertainty. The main parameters are $N=5$, $T_s=0.01$~s, nominal geometry $l_f=1.11$~m and $l_r=1.74$~m, giving $L_w=2.85$~m, local-trust product fusion with internal powers $(\omega_p,\omega_v,\omega_\psi,\omega_u)=(2.0,3.0,1.0,1.0)$ for distance/position, velocity, heading, and acceleration/input consistency, class-filter aging weight $\beta_{\text{trust}}=0.45$ in the active single-rating update, class confidence $C_{\mathrm{tr}}=0.2$, $q=5$ trust classes, heading base tolerance $\psi_{\mathrm{th}}=0.35$~rad, and trust threshold $\theta_{\min}=0.5$. The observer-weight module uses base gains $w_{0,\mathrm{base}}=0.4$ and $w_{\mathrm{self,base}}=0.2$, with nominal neighbor budget $0.4$ and per-neighbor cap $0.4$; after trust and flag normalization these are adaptive weights rather than fixed lower bounds.
 
-For the direct-anchor case of Theorem~\ref{thm_observer}, the contraction check uses the scaled infinity norm $\|z\|_* = \|D_x z\|_\infty$, $D_x=\mathrm{diag}(0.01,0.01,1,0.2)$, to account for mixed state units. On $v\le33$~m/s and $|\delta|\le0.35$~rad, the induced one-step bicycle gain is $L_{x,\max}=1.066$. With accepted anchor mass $\underline w_0=\eta_0\theta_{\min}=0.20$, Lemma~\ref{lem_anchor_contraction} gives $\alpha=L_{x,\max}(1-\underline w_0)=0.853<1$ for the all-to-all accepted-anchor topology. If a target anchor is rejected, no reconstruction from communication alone is claimed; the implementation holds or marks the estimate as temporarily unreachable until an accepted anchored path returns.
+For the direct-anchor case of Theorem~\ref{thm_observer}, the contraction check uses the scaled infinity norm $\|z\|_* = \|D_x z\|_\infty$, $D_x=\mathrm{diag}(0.01,0.01,1,0.2)$, to account for mixed state units. On $v\le33$~m/s and $|\delta|\le0.35$~rad, the induced one-step bicycle gain evaluates to $L_{x,\max}\approx1.007$. With accepted anchor mass $\underline w_0=\eta_0\theta_{\min}=0.20$, Lemma~\ref{lem_anchor_contraction} gives $\alpha=L_{x,\max}(1-\underline w_0)\approx1.007\times0.80\approx0.806<1$. If a target anchor is rejected, no reconstruction from communication alone is claimed; the implementation holds or marks the estimate as temporarily unreachable until an accepted anchored path returns.
 
 \subsection{Evaluation Metrics}
-The validation reports estimation accuracy, trust response, source-weight suppression, severe residual-error cases, rollback behavior, and projected spacing preservation.
-
-% \begin{table*}[!t]
-% \centering
-% \caption{Baseline configurations for validation.}
-% \label{tab:baseline_matrix}
-% \scriptsize
-% \begin{tabular}{p{3.2cm}ccccp{5.2cm}}
-% \toprule
-% \textbf{Configuration} & \textbf{Neighbor trust} & \textbf{Anchor} & \textbf{Rollback} & \textbf{Trust control} & \textbf{Purpose} \\
-% \midrule
-% Fixed-weight distributed observer & No & Yes & No & No & Shows the effect of fixed consensus weights under corrupted V2V data. \\
-% Local-only fallback & No & No & No & No & Gives the conservative performance when cooperation is completely disabled. \\
-% Trust-aware without anchor & Yes & No & No & Optional & Isolates the contribution of local-observer anchoring. \\
-% Trust-aware without rollback & Yes & Yes & No & Yes & Measures the baseline trust response before delayed-decision replay. \\
-% Proposed full method & Yes & Yes & Yes & Yes & Combines trust weights, anchor correction, optional rollback, and trust-modulated control. \\
-% \bottomrule
-% \end{tabular}
-% \end{table*}
-
-The main numerical metrics are channel-wise RMSE, trust detection/recovery delay, attacker-source influence, and source suppression delay. The saved workbooks report longitudinal position $X$ (labeled distance in the MATLAB output), yaw $\psi$, speed $v$, and acceleration $a$. For reported channel $q\in\{X,\psi,v,a\}$ and vehicle $i$,
+The numerical evaluation reports attack-window estimation error, trust response, and attacker-source suppression. All RMSE values below are computed on the attack interval $\mathcal{T}_{\mathrm{att}}=[10,15]$~s for non-attacker target vehicles. For a reported component $q\in\{d,v,a\}$, where $d$ is the distance/longitudinal-position error, $v$ is velocity, and $a$ is acceleration/input, the target-level RMSE is
 \begin{equation}
 \operatorname{RMSE}_{q,i}=
-\sqrt{\frac{1}{|\mathcal{T}|}\sum_{t\in\mathcal{T}}
+\sqrt{\frac{1}{|\mathcal{T}_{\mathrm{att}}|}\sum_{t\in\mathcal{T}_{\mathrm{att}}}
 \left(q_i(t)-\hat q_i(t)\right)^2}.
 \end{equation}
-For yaw, the error is $\mathrm{wrap}_{\pi}(\psi_i-\hat\psi_i)$. Saved-run attack-window RMSE is computed over $[10,15]$~s for non-attacker entries. Detection delay is measured from $10$~s until the mean trust assigned to the attacker falls below $\theta_{\mathrm{op}}=0.70$, and recovery delay is measured from $15$~s until the same trace remains above $\theta_{\mathrm{op}}$ for $0.5$~s. Attacker-source influence is the neighbor or global-source weight assigned to the attacker, excluding direct self-weight; suppression delay is the first attack-window time at which this influence remains below $10\%$ of its pre-attack mean for $0.5$~s. The raw combined RMSE used for ranking in the saved analysis is
+The raw combined RMSE used for ranking is
 \begin{equation}
-\begin{aligned}
-\operatorname{RMSE}_{\mathrm{raw},i}
-&=\operatorname{RMSE}_{X,i}
-+\operatorname{RMSE}_{v,i}
+S_{\mathrm{raw},i}
+=\operatorname{RMSE}_{d,i}+\operatorname{RMSE}_{v,i}
 +\operatorname{RMSE}_{a,i}.
-\end{aligned}
 \end{equation}
-Because this sum mixes physical units, it is used only as a relative severity index within the same setup; yaw is reported separately and is not included in this combined ranking score. False-positive trust rejection is computed separately as the fraction of benign non-self source trust samples with $\VT_{i,l}<\theta_{\min}$ over the reported window. The saved data do not contain the full post-attack state/input histories needed for estimation-error recovery, so recovery is reported only for trust and source-weight traces. The closed-loop check is limited to positive path-projected spacing during the attack interval.
-
-% \begin{table*}[!t]
-% \centering
-% \caption{Quantitative metrics for estimation and closed-loop validation.}
-% \label{tab:metric_matrix}
-% \scriptsize
-% \begin{tabular}{p{3.0cm}p{4.3cm}p{6.1cm}}
-% \toprule
-% \textbf{Metric} & \textbf{Definition} & \textbf{Purpose} \\
-% \midrule
-% RMSE and peak error & Channel-wise estimation error for $X$, $Y$, $\psi$, and $v$ & Does the observer reduce attack-induced estimation degradation? \\
-% Detection delay & Time between attack onset and $\VT_{i,l}<\theta_{\min}$ & Does trust react quickly enough for control use? \\
-% Recovery time & Time after attack end until error returns to nominal band & Does the observer recover after data become reliable again? \\
-% False-positive trust drop & Fraction of benign time with $\VT_{i,l}<\theta_{\min}$ & Does the trust layer avoid unnecessary communication removal? \\
-% Minimum spacing & $\min_t((p_{i-1}(t)-p_i(t))^\top e_{\parallel}(t)-L)$ & Is the platoon collision-free under attack? \\
-% Lateral and heading error & $\max_t |(p_i(t)-p_i^{\mathrm{ref}}(t))^\top e_{\perp}(t)|$ and $\max_t|\mathrm{wrap}_{\pi}(\psi_i-\psi_i^{\mathrm{ref}})|$ & Does the bicycle estimate remain aligned with the lane or path? \\
-% Acceleration and jerk & $\max_t |u_i(t)|$ and $\max_t |u_i(t)-u_i(t-1)|/T_s$ & Are controller commands physically smooth? \\
-% String amplification & Ratio of downstream to upstream spacing/velocity peaks & Quantifies disturbance propagation in an extended closed-loop study. \\
-% \bottomrule
-% \end{tabular}
-% \end{table*}
-
-% Additional validation beyond the present five-vehicle all-to-all case can include sparse-topology tests, coordinated attacks from two vehicles, delayed trust decisions with rollback, and Monte Carlo runs with sensor noise, packet loss, and model mismatch. Sensitivity can be evaluated over $\theta_{\min}$, $\beta_{\text{trust}}$, rollback horizon $K$, and platoon sizes $N\in\{5,8,12\}$.
+Since this score adds quantities with different units, it is used only as a within-campaign severity index. Detection time is the first time at which the mean trust assigned to the attacker falls below $\theta_{\mathrm{op}}=0.70$; the corresponding detection delay is this time minus the $10$~s attack onset. The average trust drop is the pre-attack attacker-trust mean minus the attack-window attacker-trust mean; larger values indicate a stronger reduction in the attacker's assigned credibility. The attacker-source zero-rate is the percentage of attack-window source-weight samples assigned to the attacker that are numerically zero, excluding direct self-weight.
 
 \subsection{Attack Scenarios}\label{sec:attack_scenarios}
-The numerical campaign is organized around five bicycle-state attack cases, summarized in Table~\ref{tab:attack_mix}. Each attack is active on the interval $[10,15]$~s. The campaign contains 15 saved run files: local-channel corruption, global-channel corruption, and simultaneous local--global corruption, each crossed with attacker identities V1--V5. Within each file, the five attack IDs are evaluated as separate cases. The lead scenario, initial platoon state, and fixed parameter spread are reused across runs; intermittent faults, packet drops, and measurement noise use the random draws stored in each saved run, so the results should be interpreted as one saved stochastic campaign rather than Monte Carlo averages. Unless stated otherwise, the summaries below aggregate over state channels, attacker locations, attack cases, corruption channels, and non-attacker target vehicles.
+The numerical campaign uses a single corrupted source in a five-vehicle platoon. The corrupted vehicle is V1, and V2--V5 are the non-attacker targets used in the RMSE summaries. Each attack is active on $[10,15]$~s. Table~\ref{tab:attack_mix} lists the five attack cases. The same cases are evaluated under local, global, and simultaneous local--global corruption, so the channel comparison is made under matched attack definitions.
 
 \begin{table}[!ht]
 \centering
@@ -1293,131 +1321,71 @@ The numerical campaign is organized around five bicycle-state attack cases, summ
 \begin{tabular}{p{0.7cm}p{1.35cm}p{2.0cm}p{3.0cm}}
 \toprule
 \textbf{Case} & \textbf{Type} & \textbf{Target} & \textbf{Parameters} \\
-\midrule
-1 & Bias & Longitudinal position $X$ & bias = $-5$~m \\
-2 & Faulty & Longitudinal position $X$ & std. = 10~m, $p = 0.5$ \\
+1 & Bias & Position $X$ & bias = $-5$~m \\
+2 & Faulty & Position $X$ & std. = 10~m, $p = 0.5$ \\
 3 & Bias & Speed $v$ & bias = $-2.5$~m/s \\
 4 & Faulty & Speed $v$ & std. = 2.5~m/s, $p = 0.5$ \\
-5 & Drop & All bicycle-state packets & $p_\text{drop} = 0.5$ \\
+5 & Drop & All state packets & $p_\text{drop} = 0.5$ \\
 \bottomrule
 \end{tabular}
 \end{table}
-
-% \begin{table}[!ht]
-% \centering
-% \caption{Extended validation scenarios.}
-% \label{tab:extended_scenarios}
-% \scriptsize
-% \begin{tabular}{p{1.4cm}p{2.1cm}p{3.2cm}}
-% \toprule
-% \textbf{Scenario} & \textbf{Variation} & \textbf{Purpose} \\
-% \midrule
-% S1 & Five attacks in Table~\ref{tab:attack_mix} & Single-source attack isolation. \\
-% S2 & Replay/delay with delayed flag & Rollback benefit and recovery time. \\
-% S3 & Two attacked vehicles & Coordinated corruption robustness. \\
-% S4 & Sparse predecessor graph & Connectivity dependence. \\
-% S5 & Monte Carlo noise/dropout & False-positive and average-case behavior. \\
-% S6 & $N=5,8,12$ & Scalability and string amplification. \\
-% \bottomrule
-% \end{tabular}
-% \end{table}
 
 \subsection{Numerical Simulation Results}
 
-% The following numerical results summarize the 15-run campaign. Across all non-attacker vehicle/case/run entries, the mean raw combined RMSE over $X$, $Y$, $\psi$, and $v$ is $0.1479$, and the maximum observed raw combined RMSE is $0.3175$. Figure~\ref{fig:hybrid_heatmap} visualizes the normalized impact score, defined as the raw combined estimation error divided by the maximum error over the saved campaign. The quantitative rankings below use the raw RMSE values because they preserve the relative severity of each channel and attack case.
-% \begin{figure}[!ht]
-%     \centering
-%     \includegraphics[width=0.8\linewidth]{fig/hybrid.jpg}
-%     \caption{Heatmap of normalized impact scores for all vehicles and bicycle-state attack cases.}
-%     \label{fig:hybrid_heatmap}
-% \end{figure}
-
-% \begin{figure}[!ht]
-%     \centering
-%     \includegraphics[width=0.85 \linewidth]{fig/trust_all_new_huy.jpg}
-%     \caption{Trust score evolution during DoS attack ({\it\textbf{Case~5}}).}
-%     \label{fig:trust_Dos}
-% \end{figure}
-
-The trust layer detected every injected attack. On the $T_s=0.01$~s grid, the mean detection delay is $0.0146$~s, with case-level averages from $0.0075$~s to $0.0500$~s. Mean attacker trust decreases from $0.822$ before attack to $0.207$ during attack, a $0.615$ drop or about $74.8\%$, and returns above $\theta_{\mathrm{op}}=0.70$ after $0.324$~s on average. At the observer input, mean attacker-source influence decreases from $0.1386$ to $0.0095$, a $93.1\%$ reduction, and is exactly zero in $88.5\%$ of attack-window samples. False-positive trust rejection, measured over benign non-self source samples against $\theta_{\min}=0.5$, averages $7.94\%$ during the attack window; the corresponding local, combined local--global, and global rates are $11.88\%$, $11.86\%$, and $0.08\%$.
-
-Table~\ref{tab:attack_mode_rmse_summary} compares the three corruption channels. Global-channel corruption is most damaging, with mean raw combined RMSE $0.1666$, about $22.0\%$ above local-only corruption and $18.7\%$ above simultaneous local--global corruption.
+All attacks are evaluated over the 10--15~s attack window using the raw combined RMSE $S_{\mathrm{raw}}$. Table~\ref{tab:attack_mode_rmse_summary} compares the three corruption modes. Global corruption gives the lowest mean raw combined RMSE, $0.393$, and the lowest dispersion, with standard deviation $0.069$. Local corruption gives the highest average degradation, with mean raw combined RMSE $0.643$. Simultaneous local--global corruption gives an intermediate mean RMSE of $0.567$, but it creates the most severe single residual, $S_{\mathrm{raw}}=3.856$ on V5 under Case~2. The trust-drop column measures how much the mean trust assigned to the corrupted source decreases from the pre-attack baseline to the attack-window average; larger values indicate stronger trust penalization. The source zero-rate is a suppression measure: it is the fraction of attacker-source fusion weights that are set to zero during the attack window, excluding direct self-weight. Thus, a larger source zero-rate means the corrupted source is more often completely removed from distributed fusion.
 
 \begin{table}[!t]
 \centering
-\caption{Attack-channel severity over the 15-run campaign.}
+\caption{Aggregate attack-window performance by corruption mode.}
 \label{tab:attack_mode_rmse_summary}
-\scriptsize
-\begin{tabular}{lcc}
+\footnotesize
+\setlength{\tabcolsep}{0pt}
+\renewcommand{\arraystretch}{1.22}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}lcccccc@{}}
 \toprule
-\textbf{Channel} & \textbf{Mean raw RMSE} & \textbf{Max raw RMSE} \\
+\textbf{Mode} & \shortstack{\textbf{Mean}\\$S_{\mathrm{raw}}$} & \shortstack{\textbf{Std.}\\\textbf{dev.}} & \shortstack{\textbf{Max.}\\$S_{\mathrm{raw}}$} & \shortstack{\textbf{Trust}\\\textbf{drop}} & \shortstack{\textbf{Source}\\\textbf{zero}} & \shortstack{\textbf{Detect.}\\\textbf{time}} \\
 \midrule
-Local & $0.1366$ & $0.1657$ \\
-Both  & $0.1404$ & $0.1833$ \\
-Global & $0.1666$ & $0.3175$ \\
+Local  & $0.643$ & $0.586$ & $2.058$ & $0.319$ & $80.64\%$ & $10.088$~s \\
+Global & $0.393$ & $0.069$ & $0.546$ & $0.460$ & $92.90\%$ & $10.028$~s \\
+Both   & $0.567$ & $0.796$ & $3.856$ & $0.544$ & $98.44\%$ & $10.030$~s \\
 \bottomrule
-\end{tabular}
+\end{tabular*}
+\vspace{0.9ex}
+\parbox{\columnwidth}{\footnotesize\emph{Note:} Std. dev. denotes standard deviation; trust drop is pre-attack attacker trust minus attack-window attacker trust; source zero denotes the attacker-source zero-rate; detection time is the mean first-threshold-crossing time.}
 \end{table}
 
-The both-channel case remains closer to local-only than to global-only corruption because the added local inconsistency makes the compromised source easier to classify and quarantine, limiting its effective observer weight.
-
-Table~\ref{tab:case_ranking} ranks the five attack cases by mean raw combined RMSE over all channels and attackers. Case~2, the intermittent $10$~m longitudinal-position fault, is most severe with mean raw combined RMSE $0.1737$. The largest single vehicle-level impact also occurs in Case~2: global corruption from attacker V5 drives target V4 to raw combined RMSE $0.3175$.
+Table~\ref{tab:case_ranking} ranks the attack cases by the mean raw combined RMSE averaged over the three corruption modes. Case~2, the intermittent $10$~m $X$ fault, is the dominant attack: its cross-mode mean is $1.232$, and its RMSE reaches $1.775$ for local corruption, $0.515$ for global corruption, and $1.406$ for simultaneous corruption. The other four cases stay below $0.405$ RMSE in all three configurations.
 
 \begin{table}[!t]
 \centering
-\caption{Attack-case severity over all channels and attackers.}
+\caption{Attack-case severity ranking by mean raw combined RMSE.}
 \label{tab:case_ranking}
 \scriptsize
-\begin{tabular}{p{0.7cm}p{2.55cm}cc}
+\setlength{\tabcolsep}{0pt}
+\renewcommand{\arraystretch}{1.18}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}ccclccc@{}}
 \toprule
-\textbf{Case} & \textbf{Meaning} & \textbf{Mean RMSE} & \textbf{Attack trust} \\
+\textbf{Rank} & \textbf{Case} & \textbf{Mean} & \textbf{Attack} & \textbf{Local} & \textbf{Global} & \textbf{Both} \\
 \midrule
-2 & X Faulty $10$~m        & $0.1737$ & $0.301$ \\
-4 & V Faulty $2.5$~m/s     & $0.1481$ & $0.313$ \\
-5 & DoS                    & $0.1418$ & $0.374$ \\
-3 & V Bias $-2.5$~m/s      & $0.1403$ & $0.034$ \\
-1 & X Bias $-5$~m          & $0.1355$ & $0.013$ \\
+\textbf{1} & \textbf{2} & $\mathbf{1.232}$ & \textbf{$X$ fault, $10$~m} & $\mathbf{1.775}$ & $\mathbf{0.515}$ & $\mathbf{1.406}$ \\
+2 & 4 & $0.387$ & $v$ fault, $2.5$~m/s & $0.361$ & $0.405$ & $0.396$ \\
+3 & 3 & $0.363$ & $v$ bias, $-2.5$~m/s & $0.364$ & $0.362$ & $0.362$ \\
+4 & 5 & $0.354$ & DoS & $0.380$ & $0.347$ & $0.335$ \\
+5 & 1 & $0.334$ & $X$ bias, $-5$~m & $0.334$ & $0.334$ & $0.334$ \\
 \bottomrule
-\end{tabular}
+\end{tabular*}
 \end{table}
 
-Fault-type attacks, especially the $10$~m longitudinal-position fault, create the largest estimation degradation. Bias attacks produce smaller RMSE but stronger trust suppression because their persistent offsets are easier to recognize. Thus, low attacker trust confirms detection, whereas RMSE measures residual damage before and during weight suppression. The worst cell is used only as a campaign maximum, not as evidence that one attacker location is intrinsically more harmful; the robust conclusion is that global longitudinal-position-fault corruption dominates residual estimation error.
-
-Table~\ref{tab:source_suppression_by_channel} reports attacker-as-source influence, excluding direct self-weight, so the values measure how much the corrupted vehicle can affect other distributed observers.
-
-\begin{table}[!t]
-\centering
-\caption{Attacker-source suppression by attack channel.}
-\label{tab:source_suppression_by_channel}
-\scriptsize
-\begin{tabular}{p{1.0cm}p{1.45cm}p{1.25cm}p{1.65cm}}
-\toprule
-\textbf{Channel} & \textbf{Source wt.} & \textbf{Zero-rate} & \textbf{Supp. delay} \\
-\midrule
-Local  & $0.0118$ & $83.9\%$ & $0.499$~s \\
-Both   & $0.0008$ & $99.1\%$ & $0.044$~s \\
-Global & $0.0159$ & $82.6\%$ & $0.990$~s \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-The both-channel case has the smallest residual source influence, with average attack-window source weight $0.0008$ and zero-weight rate $99.1\%$, explaining why its RMSE remains close to local-only corruption. Global-only corruption is more damaging because it can remain partially trusted longer, with a larger attack-window source weight and slower suppression delay.
-
-Overall, the trust layer identifies all saved attacks with mean delay $0.0146$~s, reduces attacker-source influence by $93.1\%$ on average, and assigns zero source weight in most attack-window samples. The remaining limitation is residual damage from global longitudinal-position-fault corruption before the source weight has fully collapsed, especially in Case~2; this condition should guide future tuning of trust thresholds, source suppression, and rollback activation.
-
-% Figure~\ref{fig:trust_Dos} shows the trust evolution for the DoS case. During $[10, 15]$~s, the trust scores of V2, V3, and V4 drop below the threshold $\theta_{\min}=0.5$ and recover after the attack ends, showing that the proposed mechanism detects and isolates unreliable data online.
-
-% For the closed-loop controller, the present validation is limited to the attack window $[10,15]$~s. In this interval, the projected inter-vehicle spacing remains positive while the cooperative command is attenuated by the trust factor when unreliable packets are detected. Therefore, the current controller evidence supports spacing preservation during the tested attack interval; full string-stability analysis is left to the extended validation in Table~\ref{tab:extended_scenarios}.
+The quantitative comparison shows three clear patterns. First, global corruption reduces mean RMSE by $38.9\%$ relative to local corruption. Second, simultaneous local--global corruption is \azrev{$11.8\%$} lower than local corruption but $44.2\%$ higher than global corruption. Third, simultaneous corruption creates the largest single RMSE, $3.856$, which is $87.4\%$ higher than the local maximum and $7.06$ times the global maximum. Detection reaches $100\%$ in all cases and configurations. The average detection times are close to the $10$~s attack onset, except local Case~4, where the mean detection time is delayed to $10.263$~s. Therefore, local corruption causes the largest average estimation error, global corruption is least damaging on average, and simultaneous local--global corruption creates the highest worst-case outlier risk.
 
 \subsection{QCar/LIMO Platform Rollback and Closed-Loop Trajectory Diagnostics}\label{sec:qcar_limo_platform}
 
 \subsubsection{Platform and Communication Stack}
 
-The observer is also implemented on a mixed QCar/LIMO small-scale platform, where each vehicle runs the same estimation, communication, and control stack under real sensor timing, packet exchange, and controller execution. Vehicles broadcast local estimates, fleet estimates, trust summaries, and packet status. The receiving host checks physical and temporal consistency, updates trust weights, and runs the distributed observer with the local observer as an anchor. The numerical campaign uses labels V1--V5, whereas platform logs use V0, V1, and V2.
+The observer is also implemented on a mixed QCar/LIMO 1:10 scale platform, where each vehicle runs the same estimation, communication, and control stack under real sensor timing, packet exchange, and controller execution. Vehicles broadcast local estimates, fleet estimates, trust summaries, and packet status. The receiving host checks physical and temporal consistency, updates trust weights, and runs the distributed observer with the local observer as an anchor. The numerical campaign uses labels V1--V5, whereas platform logs use V0, V1, and V2.
 
-Peer vehicles exchange UDP packets, the trust observer converts consistency checks into adaptive fusion weights, and the fleet estimate is used for validation and control. The rollback comparison uses the existing cooperative controller; the spacing check uses the trust-blended cooperative/local implementation. The same attack channel supports matched no-rollback and rollback runs.
+Figure~\ref{fig:qcar_limo_scheme} summarizes this flow: peer vehicles exchange UDP packets, the trust observer converts consistency checks into adaptive fusion weights, and the fleet estimate is used for validation and control. The rollback comparison uses the existing cooperative controller; the spacing check uses the trust-blended cooperative/local implementation. The same attack channel supports matched no-rollback and rollback runs.
 
-\iffalse
 \begin{figure*}[!t]
     \centering
     \resizebox{\textwidth}{!}{%
@@ -1505,9 +1473,64 @@ Peer vehicles exchange UDP packets, the trust observer converts consistency chec
     \caption{QCar/LIMO experimental scheme for trust-aware cooperative state estimation. Each vehicle runs a local observer and vehicle-logic loop, exchanges V2V estimates and trust reports, and computes trust-weighted distributed estimates with optional rollback.}
     \label{fig:qcar_limo_scheme}
 \end{figure*}
-\fi
 
-At vehicle level, both platforms share the normalized $(X,Y,\psi,v)$ interface. The longitudinal branch projects position onto the road tangent and applies cooperative cruise control, while the lateral branch uses cross-track and heading errors for steering.
+At the vehicle level, Fig.~\ref{fig:qcar_limo_vehicle_structure} separates longitudinal and lateral control while using the same planar bicycle state. The longitudinal branch projects the estimated position onto the road tangent and applies cooperative cruise control, so contaminated distributed estimates can affect the command before trust rejection and rollback correction. Trust weighting and rollback reduce this effect but do not guarantee complete rejection for every realization. The lateral branch uses cross-track and heading errors to compute steering. Both QCar and LIMO vehicles therefore share the normalized $(X,Y,\psi,v)$ interface used for position, velocity, yaw, trust, and rollback-correction histories.
+
+\begin{figure}[!t]
+    \centering
+    \resizebox{\linewidth}{!}{%
+    \begin{tikzpicture}[
+        font=\scriptsize,
+        >=Stealth,
+        box/.style={draw, rounded corners=2pt, thick, align=center, minimum height=1.0cm, text width=1.95cm, fill=white},
+        ctrl/.style={box, fill=blue!7, draw=blue!70!black, text width=2.35cm},
+        cmd/.style={box, fill=green!7, draw=green!50!black, text width=1.35cm},
+        lat/.style={box, fill=orange!8, draw=orange!80!black, text width=1.35cm},
+        arrow/.style={->, thick},
+        fb/.style={->, thick, dashed, gray}
+    ]
+        \node[box] (context) {
+            \textbf{Context}\\
+            formation/order\\
+            spacing $(d,h)$\\
+            trusted estimates
+        };
+
+        \node[ctrl, right=0.65cm of context] (controller) {
+            \textbf{Platoon controller}\\
+            gap, $\Delta v$\\
+            CACC command\\
+            path errors
+        };
+
+        \node[cmd, right=0.65cm of controller, yshift=0.42cm] (long) {
+            \textbf{Long.}\\
+            $a_i$
+        };
+        \node[lat, below=0.28cm of long] (lateral) {
+            \textbf{Lat.}\\
+            $\delta_i$
+        };
+
+        \node[box, right=0.65cm of long, yshift=-0.42cm] (vehicle) {
+            \textbf{Vehicle}\\
+            2D bicycle\\
+            $(X,Y,\psi,v)$\\
+            state update
+        };
+        \coordinate (vehicleLongIn) at ([yshift=0.32cm]vehicle.west);
+        \coordinate (vehicleLatIn) at ([yshift=-0.32cm]vehicle.west);
+
+        \draw[arrow] (context) -- (controller);
+        \draw[arrow, blue!70!black] (controller.east) -- ++(0.32,0) |- (long.west);
+        \draw[arrow, blue!70!black] (controller.east) -- ++(0.32,0) |- (lateral.west);
+        \draw[arrow, green!50!black] (long.east) -- ++(0.22,0) |- (vehicleLongIn);
+        \draw[arrow, orange!80!black] (lateral.east) -- ++(0.22,0) |- (vehicleLatIn);
+        \draw[fb] (vehicle.south) -- ++(0,-0.9cm) -| (context.south);
+    \end{tikzpicture}}
+    \caption{Compact QCar/LIMO vehicle-level controller used in the rollback validation. The commands $a_i$ and $\delta_i$ drive the 2D kinematic bicycle model.}
+    \label{fig:qcar_limo_vehicle_structure}
+\end{figure}
 
 \subsubsection{Rollback Evaluation Protocol}
 
@@ -1517,37 +1540,37 @@ Diagnostic clean-motion tests are separated from deployable observer operation. 
 
 \subsubsection{Rollback and Anchoring Results}
 
-To isolate rollback and anchoring, Fig.~\ref{fig:rollback_anchoring} compares three runs under the same attack configuration: trust-based estimation without rollback, with rollback, and with rollback plus relative pose anchoring. The time axis is shifted so $t=0$ is attack onset. The target is V0, and the rejection signal is the direct attacked-source weight $w_{0}^{(0)}$ for the attacked direct/local channel.
+To isolate rollback and anchoring, Fig.~\ref{fig:rollback_anchoring} compares three runs under the same attack configuration: trust-based estimation without rollback, with rollback, and with rollback plus relative pose anchoring. 
 \begin{figure}[!t]
     \centering
-    \includegraphics[width=\linewidth]{img/rollback_anchoring.eps}
-    \caption{Case 1 local attack on QCar/LIMO: rollback and relative-pose anchoring under real-vehicle delay.}
+    \includegraphics[width=\linewidth]{img/rollback_case3_local.eps}
+    \caption{Case 3 local attack on QCar/LIMO: rollback and relative-pose anchoring under real-vehicle delay.}
     \label{fig:rollback_anchoring}
 \end{figure}
+Figure~\ref{fig:rollback_anchoring} illustrates the response of the trust-based distributed observer when the information used to estimate target vehicle \(V_0\) is compromised. During the attack interval, the observer without rollback accumulates corrupted information, producing a position-estimation error of approximately \(0.8\,\mathrm{m}\) and a pronounced deviation in the estimated velocity. 
+The direct attacked-source weight decreases toward zero, indicating that the trust mechanism detects and suppresses the contribution of the compromised source. This behavior is also reflected in the reduction of the generalized trust value during the attack.
 
-Figure~\ref{fig:rollback_anchoring} shows that trust rejection alone is not sufficient once corrupted data have already entered the observer. Without rollback, the direct attacked-source weight drops, but the contaminated state remains and the attack-window position RMSE reaches $3.77$~m with peak error $3.87$~m. Rollback replays the buffered observer updates after rejection; in this run, the rollback event occurs $0.058$~s after attack onset and reduces the instantaneous post-prediction error from $1.97$~m to $0.032$~m, giving attack-window RMSE $0.168$~m.
-
-Rollback plus anchoring gives the smallest residual error because the relative pose anchor limits drift during the rejected-source interval. The attack-window RMSE decreases to $0.0218$~m, with maximum error $0.0243$~m. The three curves come from separate runs, so small timing differences in trust flags, rollback triggers, and direct-weight recovery should be interpreted as run-to-run timing variation rather than sample-synchronized traces.
-
+Although source rejection prevents further propagation of malicious information, it does not by itself remove the corrupted state already accumulated by the observer. 
+The rollback mechanism addresses this limitation by replaying the buffered updates from a stored checkpoint. As shown in Fig.~\ref{fig:rollback_anchoring}(e), rollback reduces the position error by \(54.4\%\) at the correction instant. Introducing anchoring further constrains the reconstructed estimate using accepted relative-pose information, resulting in a \(75.2\%\) error reduction and maintaining the estimation error close to the pre-attack level. In this experiment, the three mechanisms perform complementary functions: rejection suppresses future direct influence from the flagged source, rollback revises its buffered direct contributions, and anchoring improves the consistency of the recovered estimate.
 \subsubsection{Closed-Loop Trajectory Diagnostics}
 
-The same platform logs show how attacked estimates affect the driven path when supplied to the controller. Figures~\ref{fig:XY_case2_local} and~\ref{fig:XY_case2_global} plot Case~2 XY trajectories under local- and global-channel attacks, so they are closed-loop diagnostics rather than estimator-only plots.
+The same platform logs were also replayed as XY trajectory diagnostics. Figures~\ref{fig:XY_case2_local} and~\ref{fig:XY_case2_global} plot the target-\(V_0\) reference, pre-correction estimate, and final estimate for Case~2 local- and global-channel attacks. These plots quantify reconstruction quality on trajectories recorded during closed-loop operation; by themselves they are estimator/trajectory diagnostics rather than controller-safety evidence.
 
 \begin{figure}[!t]
     \centering
     \includegraphics[width=\linewidth]{img/XY_case2_local.eps}
-    \caption{XY trajectory under Case~2 local attack.}
+    \caption{Case~2 local-channel XY trajectory reconstruction for target \(V_0\).}
     \label{fig:XY_case2_local}
 \end{figure}
 
 \begin{figure}[!t]
     \centering
     \includegraphics[width=\linewidth]{img/XY_case2_global.eps}
-    \caption{XY trajectory under Case~2 global attack.}
+    \caption{Case~2 global-channel XY trajectory reconstruction for target \(V_0\).}
     \label{fig:XY_case2_global}
 \end{figure}
 
-In both Case~2 attacks, the corrupted source's trust and fusion weight decrease, shifting authority toward the self estimate and validated neighbors. Local attacks mainly reduce the direct/local component, whereas global attacks reduce the global-consistency component; the source-weight statistics in Table~\ref{tab:attack_mode_rmse_summary} quantify the resulting suppression.
+In both Case~2 trajectory diagnostics, rollback moves the final estimate closer to the reference, and rollback plus anchoring gives the smallest trajectory RMSE. The plotted RMSE decreases from \(0.983\) to \(0.247\) to \(0.042\)~m in the local-channel run and from \(0.195\) to \(0.141\) to \(0.023\)~m in the global-channel run. The trust and source-suppression behavior for the broader numerical campaign is summarized separately in Table~\ref{tab:attack_mode_rmse_summary}.
 
 \subsection{Distributed State Estimation for Platoon Control}
 
@@ -1560,7 +1583,8 @@ The planar bicycle states are first projected onto the road tangent,
 \end{align}
 where $p_i=[X_i,Y_i]^\top$. For follower $i\ge2$, let $\mathcal{P}_i=\{1,\ldots,i-1\}$ denote the cooperative predecessors. The equations use one-based platoon indexing; the experimental table keeps platform labels, where V0 corresponds to vehicle $1$, V1 to vehicle $2$, and so on.
 
-The closed-loop validation uses the dominant Case~2 intermittent longitudinal-position-fault family, instantiated on the platform as a V0 attack schedule. This is a check of the dominant attack family, not a repeat of the exact worst attacker--target cell. Safety is evaluated by the minimum projected bumper-to-bumper spacing
+
+The closed-loop validation uses a platform \(V_0\) attack schedule containing the dominant Case~2 intermittent position-fault family; the injected timeline is shown in Fig.~\ref{fig:controller_fusion}(d). This is a check of the dominant attack family, not a repeat of the exact worst attacker--target cell. Safety is evaluated by the minimum projected bumper-to-bumper spacing
 \begin{equation}
     s_{\min}=\min_{k\in\mathcal{T}_{\mathrm{att}}}\min_{i=2,\ldots,N}
     \left((p_{i-1}(k)-p_i(k))^\top e_{\parallel}(k)-L\right).
@@ -1575,7 +1599,7 @@ u_{\mathrm{coop},i}(k)
     + \kappa_v e_{v,ij}(k)
     + \kappa_{\psi} e_{\psi,ij}(k)\big],
 \end{align}
-where $e_{s,ij}$, $e_{v,ij}$, and $e_{\psi,ij}$ are the corresponding relative errors and $d_{i,j}=(i-j)(d+h\hat v_0^{(i)})$ for a homogeneous platoon. The trust-fused, filtered command is
+where $e_{s,ij}$, $e_{v,ij}$, and $e_{\psi,ij}$ are the corresponding relative errors and $d_{i,j}=(i-j)(d_{\mathrm{ACC}}+h_{\mathrm{ACC}}\hat v_0^{(i)})$ for a homogeneous platoon under the same spacing policy. The trust-fused, filtered command is
 \begin{align}
 u_{\mathrm{target},i}
 &=u_{\mathrm{loc},i}+\gamma_i(u_{\mathrm{coop},i}-u_{\mathrm{loc},i}),\notag\\
@@ -1587,41 +1611,49 @@ Invalid or unavailable predecessor packets set $\gamma_i=0$, selecting the local
 \begin{figure}[!t]
     \centering
     \includegraphics[width=\linewidth]{img/controller_fusion.eps}
-    \caption{Controller fusion spacing.}
+    \caption{Trust-gated ACC/CACC response and projected spacing under the platform \(V_0\) attack schedule.}
     \label{fig:controller_fusion}
 \end{figure}
 \begin{table}[!t]
 \centering
-\caption{Attack-Window Closed-Loop Metrics for the Platform V0 Case~2 Attack}
+\caption{Attack-window closed-loop metrics under the platform \(V_0\) Case~2 attack.}
 \label{tab:closed_loop_control_metrics}
 \scriptsize
 \begin{tabular}{cccccc}
 \toprule
-Host & $\Delta t_{\mathrm{det}}$ [s] & $\bar{\gamma}_{\mathrm{att}}$ & $\bar w_{\mathrm{src}}(V0)$ & $s_{\min}$ [m] & Gap RMSE [m] \\
+Host & $\Delta t_{\mathrm{det}}$ [s] & $\bar{\gamma}_{i,i-1}^{\mathrm{att}}$ & $\bar w_{\mathrm{src}}(V_0)$ & $s_{\min}$ [m] & Gap RMSE [m] \\
 \midrule
 V1 & 0.093 & 0.227 & 0.041 & 0.681 & 0.345 \\
 V2 & 0.090 & 0.894 & 0.048 & 0.637 & 0.171 \\
 \bottomrule
 \end{tabular}
+% \vspace{0.8ex}
+\parbox{\linewidth}{\scriptsize\emph{Note:} $\bar{\gamma}_{i,i-1}^{\mathrm{att}}$ is the mean direct-predecessor CACC fusion gate during attacks; $\bar w_{\mathrm{src}}(V_0)$ is the mean observer source weight assigned to the attacked \(V_0\) channel.}
 \end{table}
 
-Table~\ref{tab:closed_loop_control_metrics} summarizes two follower-host logs under the same V0 attack schedule. In both, the attacked V0 source weight falls below 0.05 on average within about 0.1~s. V1 shifts strongly toward local ACC because it directly follows V0, whereas V2 keeps more cooperation because its direct predecessor V1 remains consistent and V0 is already suppressed at the observer input. Both hosts preserve positive projected spacing: the minimum gaps are 0.681~m and 0.637~m, above the 0.30~m margin. Thus, the reported gap RMSE reflects imperfect CACC tracking under attack, not loss of longitudinal collision clearance.
+Table~\ref{tab:closed_loop_control_metrics} summarizes two follower-host logs under the same \(V_0\) attack schedule. In both, the attacked \(V_0\) source weight falls below 0.05 on average within about 0.1~s. V1 shifts strongly toward local ACC because it directly follows \(V_0\), whereas V2 keeps more cooperation because its direct predecessor V1 remains consistent and \(V_0\) is already suppressed at the observer input. Both hosts preserve positive projected spacing: the minimum gaps are 0.681~m and 0.637~m, above the 0.30~m margin. Thus, the reported gap RMSE reflects imperfect CACC tracking under attack, not loss of longitudinal collision clearance.
+
 
 % Add the closed-loop control figure/table here after running the physical or high-fidelity closed-loop test.
 % Suggested report: worst attack case, most affected vehicle i^\star, minimum spacing s_min,
 % spacing trajectory, and whether any inter-vehicle distance becomes non-positive.
 
-\section{Discussion and Limitations}\label{sec_discussion}
-The proposed method is designed to protect the platoon estimate and controller from unreliable incoming data, not to perform forensic reconstruction of a compromised vehicle. Once a neighbor is rejected by the trust layer, its information is no longer used as a cooperative correction source; accurate reconstruction of that vehicle then requires either a trusted independent measurement, a reliable local anchor, or a separate attack-identification module.
 
-The ISS result also depends on bounded disturbances, bounded input mismatch, and sufficient trusted connectivity over time. If an attack removes all reliable paths to a target vehicle, no distributed observer can recover that target state from communication alone. Similarly, the rollback module improves delayed-decision recovery only when the required packets and weights remain inside the finite buffer and when trust-triggered resets do not occur arbitrarily fast. The current closed-loop evidence is limited to projected spacing preservation during the attack interval; string stability, sparse-topology operation, coordinated attacks, Monte Carlo noise/dropout behavior, and sensitivity to trust parameters require deeper validation.
 
-\section{Conclusion and Future Work}\label{sec_conclusion}
-This paper presented a trust-aware distributed observer for resilient state estimation in connected vehicle platoons. The proposed architecture combines local observer anchoring, distributed observer consensus, online trust evaluation, and an optional rollback module for delayed trust decisions. The trust scores define a time-varying trusted-neighbor set used directly in the observer-weight design, and sufficient ISS conditions were stated for bounded disturbances, input mismatch, and trust-induced switching. The evaluation is organized as a five-vehicle numerical RMSE campaign, a QCar/LIMO rollback validation for non-deterministic real-vehicle delays, and an estimation-based control check. Simulations under multiple attack cases show that the method can identify unreliable data and preserve bounded estimation errors. In the tested closed-loop scenario, the trust-modulated ACC/CACC controller preserves positive projected spacing during the attack interval.
+\section{Discussion and Conclusion}\label{sec_discussion_conclusion}
 
-Future work will focus on a deeper string-stability study of the closed loop, broader Monte Carlo validation, matrix-valued trust weights for channel-wise attack isolation, tighter dwell-time and contraction conditions for rollback-triggered resets, and stronger coupling between trust and control under dynamic communication topologies. Extending the QCar/LIMO validation to larger fleets and richer vehicle models is also a natural next step.
+\azrev{This paper developed a trust-aware distributed observer for resilient state estimation in connected vehicle platoons. The design couples three elements: a local-observer anchor that prevents consensus from drifting to a common biased value, trust-adaptive fusion weights that reduce the influence of inconsistent neighbors without discarding cooperation that remains physically plausible, and an optional finite-window rollback that revises recent updates once a delayed trust decision arrives. The analysis gives sufficient conditions for local nonlinear ISS on a compact operating region, covering bounded model uncertainty, input mismatch, accepted corruption, and the switching induced by the trust layer. Two checks are provided: a direct one-step condition when the target anchor is accepted, and a windowed condition over sequentially rooted accepted graphs when anchors are intermittent. Across the numerical campaign, the trust layer detected every injected attack and drove the corrupted source weight to zero in most attack-window samples. On the QCar/LIMO platform, rollback recovered a large part of the position error introduced during the detection delay, and the trust-modulated ACC/CACC controller preserved positive path-projected spacing throughout the tested attack interval.}
 
-\IEEEtriggeratref{6}
+\azrev{The guarantee is deliberately conditional, and its boundaries are worth stating precisely. The receiving-side gate~\eqref{eq_received_packet_gate} projects every accepted packet onto a physically admissible set, so an arbitrarily large injection is either rejected or converted into a bounded input entering Theorem~\ref{thm_observer} through $\bar d_{\mathrm{att}}$. What the theorem therefore certifies is graceful degradation under a specified admissible attack bound, not universal detection. The adversary that this formulation does not exclude is the patient one: a slowly ramping, physically consistent bias that stays inside $\Omega_z$ and below the trust-rejection threshold will be accepted, and it can leave a nonzero ultimate estimation error. Characterizing the largest $\bar d_{\mathrm{att}}$ reachable by such a stealthy strategy is the sharpest open question raised by this work.}
+
+\azrev{Two further boundaries follow from the architecture itself. First, the method protects the platoon estimate rather than reconstructing a compromised vehicle: once a neighbor is rejected, recovering its true state requires an independent trusted measurement, a reliable local anchor, or a separate attack-identification module, and if an attack removes every reliable path from an accepted anchor to a target, communication alone cannot reconstruct that target. Second, rollback is a bounded mitigation, not a repair: it corrects only contributions held in the finite buffer, it presumes an uncontaminated checkpoint at the buffer start, and its ISS bound relies on a dwell time between resets.}
+
+\azrev{The closed-loop evidence should be read with the same care. The experiment establishes that path-projected inter-vehicle spacing remains positive for the reported attack schedule. It does not establish string stability, formal $f$-resilience under a bounded fraction of adversaries, or full two-dimensional collision avoidance when lateral deviations are large. These are properties of a different order, and the present controller check does not reach them.}
+
+\azrev{Future work follows directly from these boundaries. The first priority is the stealthy regime: quantifying the steady-state error produced by near-threshold ramps, and reporting benign false-positive rates under realistic sensor and communication noise, since the value of a trust gate is set as much by how rarely it rejects honest neighbors as by how quickly it rejects attackers. A second priority is to strengthen the evaluation itself, replacing the unit-inconsistent combined RMSE by a scaled-norm criterion in the same $D_x$ metric used for the contraction check, and adding post-attack recovery. Beyond this, the natural extensions are matrix-valued trust weights for channel-wise attack isolation, tighter dwell-time and contraction conditions for rollback-triggered resets, sparse and dynamic topologies under coordinated attacks, a string-stability analysis of the trust-modulated closed loop, and validation on larger QCar/LIMO fleets.}
+
+
+% \IEEEtriggeratref{6}
 \bibliographystyle{IEEEtran}
 \bibliography{biblio}
 \end{document}

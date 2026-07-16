@@ -45,18 +45,18 @@ classdef TriPTrustModel < handle
         stationary_velocity_threshold = 0.2;
         velocity_tolerance = 0.3;
         min_velocity_tolerance = 0.05;
-        turn_velocity_tolerance_gain = 0.35;
-        accel_velocity_tolerance_gain = 0.15;
+        turn_velocity_tolerance_gain = 0.3;
+        accel_velocity_tolerance_gain = 0.25;
         stationary_noise_tolerance = 0.15;
         active_trust_tolerance_scale = 1.0;
 
         acceleration_base_tolerance = 1.0;
-        acceleration_speed_tolerance_gain = 0.35;
+        acceleration_speed_tolerance_gain = 0.15;
         acceleration_host_tolerance_gain = 0.6;
         acceleration_turn_tolerance_gain = 0.8;
         acceleration_distance_base_tolerance = 0.35;
         acceleration_distance_turn_gain = 0.4;
-        acceleration_rel_velocity_tolerance = 0.3;
+        acceleration_rel_velocity_tolerance = 0.2;
 
         heading_min_movement_m = 0.05;
         heading_base_tolerance_rad = 0.35;
@@ -72,7 +72,7 @@ classdef TriPTrustModel < handle
         severe_local_pose_distance_ratio = 2.0;
 
         % ---- Parameters for trust evolution model 
-        wt = 0.45; % Trust decay weight
+        wt = 0.4; % Python dirichlet_wt_local
         wt_global = 0.5; % Trust decay weight
 
         C = 0.2;   % Regularization constant
@@ -106,8 +106,14 @@ classdef TriPTrustModel < handle
         theta_similarity_gain = 2.5;
         theta_turn_gain = 2.0;
         theta_contribution_cap = 3.0;
-        gamma_self_penalty_floor = 0.35;
-        gamma_self_penalty_exponent = 1.0;
+        use_relative_bearing_in_gamma_self = true;
+        gamma_self_bearing_tau2 = 0.25;
+        distributed_self_tau2_diag = [];
+        gamma_self_penalty_floor = 0.4;
+        gamma_self_penalty_exponent = 0.9;
+        ema_alpha = 0.5;
+        previous_final_score = NaN;
+        latest_target_turn_context = 0.0;
         sigma2 = 1; % Sensitivity parameter for cross-validation trust factor
         tau2 = 0.5;   % Sensitivity parameter for local consistency trust factor
         last_d;
@@ -183,6 +189,9 @@ classdef TriPTrustModel < handle
         MAX_ACCEL = 4.0; % Maximum acceleration (m/s²)
         MAX_DECEL = -8.0; % Maximum deceleration (m/s²)
         MAX_VELOCITY = 30.0; % Maximum velocity (m/s)
+        MAX_JERK = 8.0; % Maximum jerk (m/s^3)
+        temporal_pos_tolerance_m = 0.5;
+        temporal_vel_tolerance = 0.5;
         
         % Temporal consistency tracking
         previous_states_map; % Store previous states per vehicle
@@ -251,18 +260,20 @@ classdef TriPTrustModel < handle
     end
 
     methods
-        function self = TriPTrustModel()
+        function self = TriPTrustModel(scenarios_config)
+
+            if nargin >= 1 && ~isempty(scenarios_config)
+                self.apply_scenario_config(scenarios_config);
+            end
 
             % Initialize trust rating vector R_y is accumulates all past outcomes element of vector r_y^x
             % R_y = [R_y(1) ,R_y(2), R_y(3) , R_y(4) , R_y(5)]
             % 1 2 3 4 5 is each trust level
 
             self.rating_vector = zeros(1, self.k);
-            self.rating_vector(5) = 1;
 
             % for global bal
             self.rating_vector_global = zeros(1, self.k);
-            self.rating_vector_global(5) = 1;
 
 
             self.last_d = 20;
@@ -329,6 +340,77 @@ classdef TriPTrustModel < handle
             
             % Enable real-time acceleration filtering by default
             self.enable_realtime_acceleration_filter = true;
+        end
+
+        function apply_scenario_config(self, cfg)
+            % Copy the scenario's active trust configuration into this
+            % per-target model. This is intentionally explicit so independent
+            % batch scenarios cannot share or silently ignore trust settings.
+            same_names = [ ...
+                "py_weight_velocity", "py_weight_distance", ...
+                "py_weight_acceleration", "py_weight_heading", ...
+                "local_trust_fusion_mode", "local_weight_velocity", ...
+                "local_weight_distance", "local_weight_acceleration", ...
+                "local_weight_heading", "local_weight_beacon", ...
+                "local_weight_quality", "stationary_velocity_threshold", ...
+                "velocity_tolerance", "min_velocity_tolerance", ...
+                "turn_velocity_tolerance_gain", "accel_velocity_tolerance_gain", ...
+                "stationary_noise_tolerance", "acceleration_base_tolerance", ...
+                "acceleration_speed_tolerance_gain", "acceleration_host_tolerance_gain", ...
+                "acceleration_turn_tolerance_gain", "acceleration_distance_base_tolerance", ...
+                "acceleration_distance_turn_gain", "acceleration_rel_velocity_tolerance", ...
+                "heading_min_movement_m", "heading_base_tolerance_rad", ...
+                "heading_turn_tolerance_gain", "heading_yaw_rate_tolerance", ...
+                "theta_similarity_distance_scale", "theta_similarity_velocity_scale", ...
+                "theta_similarity_gain", "theta_turn_gain", "theta_contribution_cap", ...
+                "ema_alpha", "distributed_trust_fallback", ...
+                "distributed_trust_state_indices", ...
+                "distributed_trust_contribution_caps", ...
+                "distributed_trust_accel_weight", ...
+                "distributed_trust_covariance_diag", ...
+                "distributed_local_tau2_diag", ...
+                "distributed_self_turn_distance_gain", ...
+                "distributed_self_turn_velocity_gain", ...
+                "use_relative_velocity_in_relative_trust", ...
+                "use_relative_bearing_in_gamma_self", "gamma_self_bearing_tau2", ...
+                "distributed_self_tau2_diag", "gamma_self_penalty_floor", ...
+                "gamma_self_penalty_exponent", "temporal_pos_tolerance_m", ...
+                "temporal_vel_tolerance"];
+
+            for config_name = same_names
+                field_name = char(config_name);
+                if isstruct(cfg) && isfield(cfg, field_name)
+                    self.(field_name) = cfg.(field_name);
+                elseif isobject(cfg) && isprop(cfg, field_name)
+                    self.(field_name) = cfg.(field_name);
+                end
+            end
+
+            special_names = { ...
+                'dirichlet_wt_local', 'wt'; ...
+                'dirichlet_wt_global', 'wt_global'; ...
+                'dirichlet_C', 'C'; ...
+                'num_trust_levels', 'k'; ...
+                'trust_decay_lambda', 'lambda_h'; ...
+                'max_velocity', 'MAX_VELOCITY'; ...
+                'max_acceleration', 'MAX_ACCEL'; ...
+                'max_deceleration', 'MAX_DECEL'; ...
+                'max_jerk', 'MAX_JERK'; ...
+                'Use_python_global_trust', 'use_python_global_trust'};
+            for config_idx = 1:size(special_names, 1)
+                source_name = special_names{config_idx, 1};
+                target_name = special_names{config_idx, 2};
+                if isstruct(cfg) && isfield(cfg, source_name)
+                    self.(target_name) = cfg.(source_name);
+                elseif isobject(cfg) && isprop(cfg, source_name)
+                    self.(target_name) = cfg.(source_name);
+                end
+            end
+
+            self.k = max(1, round(double(self.k)));
+            self.lambda_h = min(1.0, max(0.0, double(self.lambda_h)));
+            self.self_trust_threshold = self.clamp_unit(self.get_config_numeric( ...
+                cfg, 'trust_threshold', self.self_trust_threshold));
         end
 
         function v_score_final_with_exp = evaluate_velocity(self,host_id , target_id, v_y, v_host, v_leader, a_leader, b_leader , is_nearby ,tolerance)
@@ -1134,6 +1216,10 @@ classdef TriPTrustModel < handle
             current_host = self.local_score_current_host_state;
             previous_host = self.local_score_previous_host_state;
 
+            target_yaw_rate = self.yaw_rate_from_entries(previous_target, current_target, default_dt);
+            host_yaw_rate = self.yaw_rate_from_entries(previous_host, current_host, default_dt);
+            self.latest_target_turn_context = max(target_yaw_rate, host_yaw_rate);
+
             v_score = self.evaluate_velocity_python(host_state, current_target, leader_state, previous_target, default_dt);
             [distance_score, ~] = self.evaluate_distance_python(host_state, current_target, previous_target, previous_host, default_dt);
             [pose_distance_score, severe_local_pose_mismatch] = self.evaluate_local_pose_distance_python(host_state, current_target);
@@ -1353,7 +1439,7 @@ classdef TriPTrustModel < handle
             total_distance = sum(contributions);
         end
 
-        function distance_value = relative_mahalanobis_python(self, y_measured, y_estimated, yaw_rate, distance_turn_gain, velocity_turn_gain)
+        function distance_value = relative_mahalanobis_python(self, y_measured, y_estimated, yaw_rate, distance_turn_gain, velocity_turn_gain, tau2_override, angle_indices, velocity_index)
             y_measured = double(y_measured(:));
             y_estimated = double(y_estimated(:));
             n = min(length(y_measured), length(y_estimated));
@@ -1365,16 +1451,37 @@ classdef TriPTrustModel < handle
             y_measured = y_measured(1:n);
             y_estimated = y_estimated(1:n);
 
-            tau2_diag = self.pad_or_trim_vector(self.distributed_local_tau2_diag, n, 1.0);
+            if nargin < 7 || isempty(tau2_override)
+                tau2_diag = self.pad_or_trim_vector(self.distributed_local_tau2_diag, n, 1.0);
+            else
+                tau2_diag = self.pad_or_trim_vector(tau2_override, n, 1.0);
+            end
+            if nargin < 8 || isempty(angle_indices)
+                angle_indices = [];
+            end
+            if nargin < 9
+                if self.use_relative_velocity_in_relative_trust
+                    velocity_index = 2;
+                else
+                    velocity_index = [];
+                end
+            end
             yaw_rate = max(yaw_rate, 0.0);
             if n >= 1 && distance_turn_gain > 0.0 && yaw_rate > 0.0
                 tau2_diag(1) = tau2_diag(1) * (1.0 + distance_turn_gain * yaw_rate);
             end
-            if n >= 2 && velocity_turn_gain > 0.0 && yaw_rate > 0.0
-                tau2_diag(2) = tau2_diag(2) * (1.0 + velocity_turn_gain * yaw_rate);
+            if ~isempty(velocity_index) && velocity_index >= 1 && velocity_index <= n && ...
+                    velocity_turn_gain > 0.0 && yaw_rate > 0.0
+                tau2_diag(velocity_index) = tau2_diag(velocity_index) * ...
+                    (1.0 + velocity_turn_gain * yaw_rate);
             end
 
             residual = y_estimated - y_measured;
+            for angle_idx = angle_indices(:)'
+                if angle_idx >= 1 && angle_idx <= n
+                    residual(angle_idx) = self.wrap_angle(residual(angle_idx));
+                end
+            end
             distance_value = sum((residual .^ 2) ./ max(tau2_diag, 1e-9));
         end
 
@@ -1395,7 +1502,7 @@ classdef TriPTrustModel < handle
         end
 
         function turn_context = compute_turn_context_python(self, host_vehicle)
-            turn_context = 0.0;
+            turn_context = max(0.0, self.latest_target_turn_context);
             if isempty(self.local_score_previous_host_state) || isempty(self.local_score_current_host_state)
                 return;
             end
@@ -1416,7 +1523,65 @@ classdef TriPTrustModel < handle
             dt = max(dt, 0.01);
 
             theta_delta = self.wrap_angle(current_host.state(3) - previous_host.state(3));
-            turn_context = abs(theta_delta) / dt;
+            host_yaw_rate = abs(theta_delta) / dt;
+            turn_context = max(turn_context, host_yaw_rate);
+        end
+
+        function [bearing, available, source_name] = resolve_clean_relative_bearing_python(self, host_vehicle, target_id, host_state)
+            bearing = NaN;
+            available = false;
+            source_name = "";
+            if isempty(host_vehicle) || ~isprop(host_vehicle, 'center_communication')
+                return;
+            end
+
+            try
+                clean_target = host_vehicle.center_communication.get_clean_local_state(target_id);
+            catch
+                clean_target = [];
+            end
+            clean_target = clean_target(:);
+            host_state = self.normalize_local_state(host_state);
+            if length(clean_target) < 2 || any(~isfinite(clean_target(1:2))) || ...
+                    any(~isfinite(host_state(1:3)))
+                return;
+            end
+
+            dx = clean_target(1) - host_state(1);
+            dy = clean_target(2) - host_state(2);
+            source_name = "v2v_clean";
+            if hypot(dx, dy) <= 1e-9
+                return;
+            end
+            if ~self.use_relative_bearing_in_gamma_self
+                return;
+            end
+            bearing = self.wrap_angle(atan2(dy, dx) - host_state(3));
+            available = true;
+        end
+
+        function tau2_diag = gamma_self_tau2_diag_python(self, include_bearing)
+            if ~isempty(self.distributed_self_tau2_diag)
+                tau2_diag = double(self.distributed_self_tau2_diag(:));
+                return;
+            end
+
+            local_tau = double(self.distributed_local_tau2_diag(:));
+            if isempty(local_tau)
+                local_tau = ones(2, 1);
+            end
+            tau2_diag = local_tau(1);
+            if self.use_relative_velocity_in_relative_trust
+                tau2_diag(end + 1, 1) = local_tau(min(2, length(local_tau)));
+            end
+            if include_bearing
+                tau2_diag(end + 1, 1) = max(double(self.gamma_self_bearing_tau2), 1e-9);
+            end
+        end
+
+        function apply_penalty = should_apply_gamma_self_penalty(~, source_name)
+            source_name = lower(strtrim(string(source_name)));
+            apply_penalty = ~startsWith(source_name, "v2v_clean");
         end
 
         function [global_trust_sample, gamma_cross, gamma_local, gamma_local_our_self, D_pos, D_vel, D_acc, D_theta, D_total] = ...
@@ -1457,16 +1622,40 @@ classdef TriPTrustModel < handle
             y_local = self.compute_relative_measurement_python(host_state, target_state, measured_distance, NaN);
             local_relative_dof = max(1, length(y_local));
             turn_context = self.compute_turn_context_python(host_vehicle);
+            relative_measurement_source = "";
 
             if target_id <= size(host_fleet_estimates, 2)
                 host_target_estimate = host_fleet_estimates(:, target_id);
                 if self.is_valid_state_vector(host_target_estimate)
+                    % Python builds a separate gamma_self measurement vector.
+                    % A clean bearing must not alter gamma_local's vector or DOF.
+                    y_self_measured = y_local;
                     y_self_est = self.compute_relative_measurement_python(host_state, host_target_estimate, NaN, NaN);
+                    [clean_bearing, has_clean_bearing, relative_measurement_source] = ...
+                        self.resolve_clean_relative_bearing_python( ...
+                        host_vehicle, target_id, host_state);
+                    angle_indices = [];
+                    if has_clean_bearing
+                        estimated_bearing = self.wrap_angle( ...
+                            atan2(host_target_estimate(2) - host_state(2), ...
+                            host_target_estimate(1) - host_state(1)) - host_state(3));
+                        y_self_measured(end + 1, 1) = clean_bearing;
+                        y_self_est(end + 1, 1) = estimated_bearing;
+                        angle_indices = length(y_self_measured);
+                    end
+                    self_relative_dof = max(1, length(y_self_measured));
+                    self_tau2 = self.gamma_self_tau2_diag_python(has_clean_bearing);
+                    if self.use_relative_velocity_in_relative_trust
+                        velocity_index = 2;
+                    else
+                        velocity_index = [];
+                    end
                     d_self = self.relative_mahalanobis_python( ...
-                        y_local, y_self_est, turn_context, ...
+                        y_self_measured, y_self_est, turn_context, ...
                         self.distributed_self_turn_distance_gain, ...
-                        self.distributed_self_turn_velocity_gain);
-                    gamma_local_our_self = self.distance_to_gamma_python(d_self, local_relative_dof);
+                        self.distributed_self_turn_velocity_gain, ...
+                        self_tau2, angle_indices, velocity_index);
+                    gamma_local_our_self = self.distance_to_gamma_python(d_self, self_relative_dof);
                 end
             end
 
@@ -1515,7 +1704,8 @@ classdef TriPTrustModel < handle
             end
 
             global_trust_sample = gamma_cross * gamma_local;
-            if gamma_local_our_self < self.self_trust_threshold
+            if self.should_apply_gamma_self_penalty(relative_measurement_source) && ...
+                    gamma_local_our_self < self.self_trust_threshold
                 global_trust_sample = global_trust_sample * self.compute_gamma_self_penalty( ...
                     gamma_local_our_self, self.self_trust_threshold);
             end
@@ -2008,7 +2198,7 @@ classdef TriPTrustModel < handle
             
             if beacon_received
                 % Beacon received, use current trust score directly
-                trust_score = current_trust;
+                trust_score = self.clamp_unit(current_trust);
             else
                 % No beacon received, apply decay to previous trust score
                 if trust_type == "local"
@@ -2017,14 +2207,16 @@ classdef TriPTrustModel < handle
                     previous_scores = self.previous_trust_scores.global;
                 end
                 
-                if target_id <= length(previous_scores) && previous_scores(target_id) > 0
-                    previous_trust = previous_scores(target_id);
+                if target_id <= length(previous_scores) && isfinite(previous_scores(target_id))
+                    previous_trust = self.clamp_unit(previous_scores(target_id));
                 else
                     previous_trust = 1.0; % Default high trust for new vehicles
                 end
                 
                 % Apply decay formula: trust_new = (1 - λ_h) * trust_old
                 trust_score = (1 - self.lambda_h) * previous_trust;
+                trust_floor = max(self.clamp_unit(self.distributed_trust_fallback) * 0.1, 0.01);
+                trust_score = max(trust_score, trust_floor);
             end
             
             % Store the trust score in the appropriate array
@@ -2067,8 +2259,7 @@ classdef TriPTrustModel < handle
             if ~isempty(previous_state) && length(previous_state) >= 5
                 previous_acceleration = previous_state(5);
                 jerk = abs(current_acceleration - previous_acceleration) / dt;
-                MAX_JERK = 10.0; % m/s³ - reasonable jerk limit
-                if jerk > MAX_JERK
+                if jerk > self.MAX_JERK
                     is_valid = false;
                     return;
                 end
@@ -2121,8 +2312,8 @@ classdef TriPTrustModel < handle
             vel_error = abs(current_velocity - expected_velocity);
             
             % Normalize errors and compute score
-            pos_tolerance = 2.0 * tolerance_scale; % meters
-            vel_tolerance = 1.0 * tolerance_scale; % m/s
+            pos_tolerance = max(self.temporal_pos_tolerance_m, 1e-3) * tolerance_scale;
+            vel_tolerance = max(self.temporal_vel_tolerance, 1e-3) * tolerance_scale;
             
             pos_score = max(1 - pos_error / pos_tolerance, 0);
             vel_score = max(1 - vel_error / vel_tolerance, 0);
@@ -2139,7 +2330,9 @@ classdef TriPTrustModel < handle
         function update_rating_vector(self, trust_sample , type)
             %  Map trust sample to a specific trust level in the rating vector
 
-            trust_level = min(round(trust_sample * (self.k - 1) + 1)  , (self.k) );
+            zero_based_level = self.python_round_nonnegative( ...
+                self.clamp_unit(trust_sample) * (self.k - 1));
+            trust_level = min(zero_based_level + 1, self.k);
             trust_vector = zeros(1, self.k); % trust_vector = r_y^x
             trust_vector(trust_level) = 1;
 
@@ -2182,6 +2375,22 @@ classdef TriPTrustModel < handle
             trust_score = sum(weights .* S_y);
         end
 
+        function value = python_round_nonnegative(~, value)
+            % Python round() uses ties-to-even; MATLAB round() uses ties
+            % away from zero. Trust bin boundaries must follow Python.
+            lower_value = floor(value);
+            fraction = value - lower_value;
+            if abs(fraction - 0.5) <= 16 * eps(max(abs(value), 1))
+                if mod(lower_value, 2) == 0
+                    value = lower_value;
+                else
+                    value = lower_value + 1;
+                end
+            else
+                value = floor(value + 0.5);
+            end
+        end
+
 
 
         %%% Main %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   %%%%%%%%%%%%%%%%%%%
@@ -2201,6 +2410,8 @@ classdef TriPTrustModel < handle
 
             host_id = host_vehicle.vehicle_number;
             target_id = target_vehicle.vehicle_number;
+            self.apply_scenario_config(host_vehicle.scenarios_config);
+            self.latest_target_turn_context = 0.0;
             trust_warmup_time = max(0, self.get_config_numeric( ...
                 host_vehicle.scenarios_config, 'trust_warmup_time', 0));
             trust_warmup_tolerance_scale = max(1.0, self.get_config_numeric( ...
@@ -2544,6 +2755,13 @@ classdef TriPTrustModel < handle
                 final_score = local_trust_sample * global_trust_sample;
             end
             final_score = final_score * beta;
+            % Python applies a final-score EMA after the Dirichlet update.
+            if isfinite(self.previous_final_score)
+                alpha_final = min(1.0, max(0.0, self.ema_alpha));
+                final_score = alpha_final * final_score + ...
+                    (1.0 - alpha_final) * self.previous_final_score;
+            end
+            final_score = self.clamp_unit(final_score);
 
 
             
@@ -2571,6 +2789,18 @@ classdef TriPTrustModel < handle
                     self.flag_local_est_check = true;
                 end
             end
+
+            if self.should_use_python_global_trust(host_vehicle)
+                % Exact TrustScore flag semantics from trust_model.py.  Use
+                % the decayed local/global samples, not the Dirichlet final
+                % score, so each flag identifies the failing channel.
+                flag_threshold = self.clamp_unit(self.get_config_numeric( ...
+                    host_vehicle.scenarios_config, 'trust_threshold', 0.5));
+                self.set_python_attack_flags( ...
+                    local_trust_sample_decayed, global_trust_sample_decayed, flag_threshold);
+            end
+
+            self.previous_final_score = final_score;
 
 
             % final_score = trust_sample_ext ;
@@ -2601,6 +2831,15 @@ classdef TriPTrustModel < handle
             self.flag_glob_est_check_log = [self.flag_glob_est_check_log, self.flag_glob_est_check];
             self.flag_local_est_check_log = [self.flag_local_est_check_log, self.flag_local_est_check];
 
+        end
+
+        function set_python_attack_flags(self, local_trust, global_trust, threshold)
+            threshold = self.clamp_unit(threshold);
+            local_bad = self.clamp_unit(local_trust) < threshold;
+            global_bad = self.clamp_unit(global_trust) < threshold;
+            self.flag_taget_attk = local_bad && global_bad;
+            self.flag_glob_est_check = ~local_bad && global_bad;
+            self.flag_local_est_check = local_bad;
         end
 
         function beta = monitor_sudden(self,gamma_cross,D_pos,D_vel,D_acc)

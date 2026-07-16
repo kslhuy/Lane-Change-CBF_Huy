@@ -18,12 +18,24 @@ classdef Simulator
 
         % Method to start the simulation
         function [state_log, input_log] = startSimulation(self, simulation_time,t_star, t_end, attacker_vehicle_id)
+            if nargin < 3 || isempty(t_star)
+                t_star = NaN;
+            end
+            if nargin < 4 || isempty(t_end)
+                t_end = NaN;
+            end
+            if nargin < 5
+                attacker_vehicle_id = [];
+            end
+
             num = simulation_time / self.dt; % Calculate number of simulation steps
             plot_interval = 5; % Plot every 20 iterations
 
-            % Set up the figure once
-            figure(1);
-            set(gcf, 'Position', [200, 100, 720, 600]); % Larger figure window
+            % Headless batch simulations must not create graphics objects.
+            if self.show_animation
+                figure(1);
+                set(gcf, 'Position', [200, 100, 720, 600]); % Larger figure window
+            end
 
             % grid on;
             % xlabel('X Position (m)', 'FontSize', 12);
@@ -37,13 +49,18 @@ classdef Simulator
             % Start the timer
             tic;
             % Update other vehicles' positions
-            num_car = size(self.other_vehicles, 1);
+            num_car = numel(self.other_vehicles);
             % Define attack start and end times (in seconds)
             attack_start_time = t_star; % Example: attack starts at 10s
             attack_end_time = t_end;   % Example: attack ends at 15s
             attacker_id = attacker_vehicle_id;        % Example: vehicle 2 is the attacker (indexing starts at 1)
-
-            attacker_x = self.other_vehicles(attacker_id).state(1); % X position of attacker
+            attacker_x = NaN;
+            valid_attacker_id = self.show_animation && isnumeric(attacker_id) && ...
+                isscalar(attacker_id) && isfinite(attacker_id) && ...
+                attacker_id == round(attacker_id) && attacker_id >= 1 && attacker_id <= num_car;
+            if valid_attacker_id
+                attacker_x = self.other_vehicles(attacker_id).state(1); % X position of attacker
+            end
 
             for i = 1:num
 
@@ -111,7 +128,7 @@ classdef Simulator
 
 
                         % Draw vertical red lines at attack start and end at the attacker's position
-                        if num_car >= attacker_id
+                        if valid_attacker_id
                             % Draw line at attack start time only during attack period
                             if elapsed_sim_time >= attack_start_time && elapsed_sim_time <= attack_end_time && attacker_x >= x_limits(1) && attacker_x <= x_limits(2)
                                 plot([attacker_x attacker_x], y_limits, 'r-', 'LineWidth', 2);
@@ -153,8 +170,43 @@ classdef Simulator
                 state_log = self.ego_vehicle.state_log; % Update states history
                 input_log = self.ego_vehicle.input_log; % Update inputs history
             else
+                [state_log, input_log] = self.collect_other_vehicle_logs();
+            end
+        end
+
+        function [state_log, input_log] = collect_other_vehicle_logs(self)
+            % Stack deterministic batch output as state/input x sample x vehicle.
+            % Vehicle order matches self.other_vehicles, preserving existing ID
+            % indexing in platoon simulations. NaN padding supports unequal logs.
+            num_car = numel(self.other_vehicles);
+            if num_car == 0
                 state_log = [];
                 input_log = [];
+                return;
+            end
+
+            max_state_rows = 0;
+            max_state_samples = 0;
+            max_input_rows = 0;
+            max_input_samples = 0;
+            for vehicle_idx = 1:num_car
+                vehicle_state_log = self.other_vehicles(vehicle_idx).state_log;
+                vehicle_input_log = self.other_vehicles(vehicle_idx).input_log;
+                max_state_rows = max(max_state_rows, size(vehicle_state_log, 1));
+                max_state_samples = max(max_state_samples, size(vehicle_state_log, 2));
+                max_input_rows = max(max_input_rows, size(vehicle_input_log, 1));
+                max_input_samples = max(max_input_samples, size(vehicle_input_log, 2));
+            end
+
+            state_log = NaN(max_state_rows, max_state_samples, num_car);
+            input_log = NaN(max_input_rows, max_input_samples, num_car);
+            for vehicle_idx = 1:num_car
+                vehicle_state_log = self.other_vehicles(vehicle_idx).state_log;
+                vehicle_input_log = self.other_vehicles(vehicle_idx).input_log;
+                state_log(1:size(vehicle_state_log, 1), ...
+                    1:size(vehicle_state_log, 2), vehicle_idx) = vehicle_state_log;
+                input_log(1:size(vehicle_input_log, 1), ...
+                    1:size(vehicle_input_log, 2), vehicle_idx) = vehicle_input_log;
             end
         end
 

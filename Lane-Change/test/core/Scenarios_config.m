@@ -27,27 +27,87 @@ classdef Scenarios_config < handle
         noise_filter_alpha = 0.7; % Measurement-noise smoothing alpha
         local_observer_output_filter_alpha = 0.3; % Local observer output smoothing alpha
 
-        Dichiret_type = "Single"; % "Single" , "Dual"
+        Dichiret_type = "Dual"; % Python config uses separate local/global rating vectors
         Monitor_sudden_change = false; % if the sudden change is monitored
         use_local_data_from_other = true; % if the local data from other vehicles is used
+
+        % Canonical Python-compatible fleet-estimator/weight configuration.
+        % Keep these values on the scenario object so every batch case can
+        % construct an independent numerical Weight_Trust_module from the
+        % same immutable settings.
+        fleet_estimator_parity_mode = true;
+        trust_threshold = 0.5;
+        weight_type = "trust_based";
+        w0_fixed = 0.4;
+        w_self_base = 0.2;
+        w_cap = 0.4;
+        kappa = 3;
+        eta = 0.15;
+        enable_smoothing = false;
+        startup_fixed_duration_s = 0.5;
+        use_gamma_self_weight_adaptation = true;
+        gamma_self_weight_floor = 0.25;
+        include_target_self_fleet_estimate = true;
+        local_bad_zero_w0_neighbor_total_cap = 0.05;
+        flag_w0_target_attack_factor = 0.25;
+        flag_w0_global_est_check_factor = 1.25;
+        flag_w0_local_est_check_factor = 0.5;
+        use_distance_weighting = false;
+        use_generalized_trust_vector = true;
+        trust_vector_theta_min = 0.4;
 
         rollback_enabled = false; % Enable/disable rollback functionality
         trust_warmup_time = 0; % Seconds to relax scoring and suppress trust flags/rollback
         trust_warmup_tolerance_scale = 1.0; % Multiplier for local trust tolerances during warm-up
         local_trust_flag_required_samples = 1; % Consecutive low local samples needed before flagging
         local_trust_flag_threshold = 0.5; % Local trust threshold for local-estimate check flag
-        rollback_start_time = 0; % Earliest simulation time in seconds when rollback can trigger
+        rollback_start_time = 5.0; % MATLAB gate corresponding to Python startup rollback suppression
+        rollback_startup_suppress_duration_s = 5.0;
+        rollback_trigger_delay_steps = 0;
         rollback_required_bad_steps = 1; % Consecutive bad trust/flag steps before rollback
-        rollback_window_size = 15;
-        rollback_trusted_state_history_size = 15;
-        rollback_trusted_state_guard_steps = 0;
+        rollback_window_size = 16;
+        rollback_trusted_state_history_size = 60;
+        rollback_trusted_state_guard_steps = 8;
         rollback_rewrite_history_log = false; % Keep paper plots causal by default.
         rollback_on_final_trust = true;
         rollback_on_local_est_check = true;
         rollback_on_global_est_check = true;
         rollback_recovery_good_steps = 1; % Clean steps required before a flagged target can leave rollback-active state
         rollback_cooldown_steps = 0; % Minimum steps between actual rollback replays
-        local_bad_zero_w0_neighbor_total_cap = 0.01;
+
+        % Correction-then-prediction, attack anchors, and output filtering.
+        % The physical MATLAB plant remains selected separately through
+        % model_vehicle_type ("delay_a" in Config.m).
+        dynamics_prediction_mode = "mixed_clean_data";
+        force_clean_pose_anchor = false;
+        post_rollback_anchor_enabled = true;
+        relative_host_anchor_anchor_position_weight = 0.8;
+        relative_host_anchor_estimate_position_weight = 0.2;
+        relative_host_anchor_clean_theta_weight = 1.0;
+        relative_host_anchor_host_theta_weight = 0.0;
+        relative_host_anchor_target_velocity_weight = 0.1;
+        relative_host_anchor_host_velocity_weight = 0.9;
+        relative_host_anchor_target_acceleration_weight = 0.1;
+        relative_host_anchor_host_acceleration_weight = 0.9;
+        relative_host_anchor_use_bearing = true;
+        enable_output_low_pass = true;
+        output_low_pass_alpha = 1.0;
+        attack_output_low_pass_alpha = 1.0;
+
+        % Direct-channel application/recovery experiment controls.
+        direct_recovery_enabled = false;
+        direct_recovery_hold_steps = 10;
+        direct_recovery_required_good_steps = 8;
+        direct_recovery_ramp_steps = 20;
+        direct_recovery_min_local_trust = 0.5;
+        direct_trust_application_delay_steps = 4;
+
+        % Timestamp/control alignment used by the numerical prediction path.
+        timestamp_alignment_enabled = true;
+        timestamp_alignment_max_extrapolation_s = 0.25;
+        control_timeout_s = 1.0;
+        prediction_max_velocity = Inf;
+        prediction_max_acceleration = Inf;
 
         %%%% Attack related
 
@@ -59,7 +119,69 @@ classdef Scenarios_config < handle
         Use_weight_local_trust = true; % if using weight trust for local data
         Use_weight_global_trust = true; % if using weight trust for global data
         Use_python_global_trust = true; % Use Python-compatible global trust calculation in TriPTrustModel
-        local_trust_fusion_mode = "product"; % "product", "equal_geometric", or "weighted_geometric"
+        local_trust_fusion_mode = "weighted_geometric"; % fixed Python component weights
+
+        % Active trust-model values mirrored from config_trust_estimator.yaml.
+        % State indices below are MATLAB one-based equivalents of YAML [0..4].
+        py_weight_velocity = 1.0;
+        py_weight_distance = 2.0;
+        py_weight_acceleration = 0.3;
+        py_weight_heading = 0.3;
+        local_weight_velocity = 0.30;
+        local_weight_distance = 0.20;
+        local_weight_acceleration = 0.15;
+        local_weight_heading = 0.15;
+        local_weight_beacon = 0.10;
+        local_weight_quality = 0.10;
+        stationary_velocity_threshold = 0.2;
+        stationary_noise_tolerance = 0.15;
+        velocity_tolerance = 0.2;
+        min_velocity_tolerance = 0.05;
+        turn_velocity_tolerance_gain = 0.3;
+        accel_velocity_tolerance_gain = 0.25;
+        acceleration_base_tolerance = 1.0;
+        acceleration_speed_tolerance_gain = 0.15;
+        acceleration_host_tolerance_gain = 0.6;
+        acceleration_turn_tolerance_gain = 0.8;
+        acceleration_distance_base_tolerance = 0.35;
+        acceleration_distance_turn_gain = 0.4;
+        acceleration_rel_velocity_tolerance = 0.2;
+        heading_min_movement_m = 0.05;
+        heading_base_tolerance_rad = 0.35;
+        heading_turn_tolerance_gain = 1.0;
+        heading_yaw_rate_tolerance = 0.8;
+        theta_similarity_distance_scale = 1.5;
+        theta_similarity_velocity_scale = 1.0;
+        theta_similarity_gain = 2.5;
+        theta_turn_gain = 2.0;
+        theta_contribution_cap = 3.0;
+        num_trust_levels = 5;
+        dirichlet_C = 0.2;
+        dirichlet_wt_local = 0.4;
+        dirichlet_wt_global = 0.5;
+        ema_alpha = 0.5;
+        trust_decay_lambda = 0.2;
+        max_message_age_s = 1.0;
+        distributed_trust_fallback = 0.2;
+        distributed_trust_state_indices = 1:5;
+        distributed_trust_contribution_caps = [4.0, 4.0, 2.0, 2.0, 0.2];
+        distributed_trust_accel_weight = 0.1;
+        distributed_trust_covariance_diag = [2.0, 2.0, 3.5, 2.0, 6.0];
+        distributed_local_tau2_diag = [1.5, 0.6];
+        distributed_self_turn_distance_gain = 1.5;
+        distributed_self_turn_velocity_gain = 1.0;
+        use_relative_velocity_in_relative_trust = false;
+        use_relative_bearing_in_gamma_self = true;
+        gamma_self_bearing_tau2 = 0.25;
+        distributed_self_tau2_diag = [];
+        gamma_self_penalty_floor = 0.4;
+        gamma_self_penalty_exponent = 0.9;
+        max_velocity = 5.0;
+        max_acceleration = 4.0;
+        max_deceleration = -5.0;
+        max_jerk = 8.0;
+        temporal_pos_tolerance_m = 0.5;
+        temporal_vel_tolerance = 0.5;
         
         is_know_data_not_nearby = true ; % just for test purpose, Use that we have better Trust score , meaning that we know the data all of the other vehicles
         

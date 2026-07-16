@@ -1,0 +1,72 @@
+\subsection{Numerical Simulation Results}
+
+The channel comparison uses the final saved run within the requested 11 July 2026 archive for each corruption mode, with V1 fixed as the attacker: local-channel, global-channel, and simultaneous local--global corruption. The corresponding run identifiers are \texttt{212433\_466}, \texttt{221719\_957}, and \texttt{233652\_476}. Each run contains the five cases in Table~\ref{tab:attack_mix} and four non-attacker targets (V2--V5), giving $3\times5\times4=60$ target--case--channel entries. The results below are therefore a controlled V1 comparison, rather than an average over attacker locations. All error quantities are evaluated on the attack window $[10,15]$~s.
+
+In these workbooks, the raw combined score is
+$S_{\mathrm{raw}}=\operatorname{RMSE}_{X}+\operatorname{RMSE}_{v}+\operatorname{RMSE}_{a}$. Neither lateral-position RMSE nor orientation RMSE is included: the selected summary export contains no lateral-position component, while orientation is reported separately. Because $S_{\mathrm{raw}}$ adds quantities with different physical units, it is used only as a descriptive three-component longitudinal state/input severity index within this setup. Across all 60 entries, its mean is $0.5341$, its sample standard deviation is $0.5723$, and its range is $[0.2997,3.8564]$. The pooled component means are $0.4890$~m for longitudinal position, $0.0188$~rad for orientation, $0.0355$~m/s for velocity, and $0.0097$~m/s$^2$ for acceleration input.
+
+Table~\ref{tab:attack_mode_rmse_summary} compares the three corruption channels. Local corruption has the largest channel mean, $13.5\%$ above simultaneous corruption and $63.7\%$ above global corruption. Simultaneous corruption has the largest maximum and dispersion, caused primarily by one Case~2 target-level residual. These are descriptive differences among the selected V1 runs; they do not establish a general ordering over attacker locations or random realizations.
+
+\begin{table}[!t]
+\centering
+\caption{Cellwise severity and first-crossing detection results for the 11 July V1 comparison.}
+\label{tab:attack_mode_rmse_summary}
+\scriptsize
+\begin{tabular}{lccc}
+\toprule
+\textbf{Channel} & \shortstack{\textbf{Cellwise mean $\pm$ SD}\\$\boldsymbol{S}_{\mathrm{raw}}$} & \textbf{Max. $S_{\mathrm{raw}}$} & \textbf{Mean delay (s)} \\
+\midrule
+Local  & $0.6431\pm0.5865$ & $2.0577$ & $0.288$ \\
+Global & $0.3928\pm0.0692$ & $0.5460$ & $0.028$ \\
+Both   & $0.5666\pm0.7961$ & $3.8564$ & $0.030$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The score statistics in Table~\ref{tab:attack_mode_rmse_summary} use 20 target--case cells per channel; their SDs describe cellwise dispersion and are not run-to-run uncertainty estimates. Detection delay is the mean of the five case-level averages in each channel, using the evaluator-wise first-crossing metric stored in the workbooks. A first crossing below $\theta_{\mathrm{op}}=0.70$ is recorded for all 15 case--channel combinations, but the metric does not require that the crossing persist. The overall mean delay is $0.1153$~s, while the median is $0.0150$~s; the range is $0.0075$--$1.2625$~s. The difference between the mean and median is driven by local Case~4, whose case-level mean delay is $1.2625$~s.
+
+Mean attacker trust decreases from $0.7961$ before attack to $0.3553$ during attack, an absolute drop of $0.4408$ ($55.4\%$ relative to the pre-attack mean). Table~\ref{tab:source_suppression_by_channel} reports the actual attacker-as-neighbor source influence from the run reports, excluding direct self-weight. Averaged equally over the five cases, this influence decreases from $0.1056$ to $0.0172$ across the three channels, an $83.7\%$ reduction, and is effectively zero in $87.3\%$ of evaluator--time attack-window samples.
+
+\begin{table}[!t]
+\centering
+\caption{Attack-window mean attacker trust and source-only weight suppression by channel.}
+\label{tab:source_suppression_by_channel}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Channel} & \textbf{Mean trust} & \textbf{Source pre} & \textbf{Source attack} & \textbf{Reduction} & \textbf{Zero rate} \\
+\midrule
+Local  & $0.477$ & $0.1056$ & $0.0406$ & $61.6\%$ & $70.6\%$ \\
+Global & $0.336$ & $0.1056$ & $0.0091$ & $91.3\%$ & $92.9\%$ \\
+Both   & $0.252$ & $0.1056$ & $0.0020$ & $98.1\%$ & $98.4\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The zero-rate in Table~\ref{tab:source_suppression_by_channel} is the fraction of evaluator--time source-weight samples no greater than $10^{-9}$. With four evaluators, 501 attack-window samples, and five cases, its denominator is 10,020 samples per channel and 30,060 samples overall. It is not the fraction of time instants at which every evaluator simultaneously assigns zero source weight.
+
+The simultaneous local--global run gives the smallest time-averaged attacker trust and source weight. Its large maximum $S_{\mathrm{raw}}$ coexists with a small average source weight, a pattern consistent with contamination before or during suppression, although the aggregate summaries do not establish timing or causality. In the same simultaneous-corruption Case~2 command-window report, the non-attacker-link false-rejection diagnostic is $57.1\%$ and the mean trusted-neighbor count is $1.29$. This is an attack-window collateral-rejection measure, not a no-attack false-positive rate; its concurrence with the worst residual identifies a suppression--availability tradeoff requiring separate validation. Source suppression and attack-window error should therefore be interpreted as complementary, rather than interchangeable, performance measures.
+
+Table~\ref{tab:case_ranking} ranks the attack cases after pooling the three channels and four non-attacker targets, for 12 entries per case. Case~2, the intermittent $10$~m position fault, is dominant: its mean score is $1.2321$, more than three times the next-largest case mean. The largest individual residual is also Case~2, where simultaneous corruption from V1 gives target V5 $S_{\mathrm{raw}}=3.8564$; the longitudinal-position component alone is $3.7575$.
+
+\begin{table}[!t]
+\centering
+\caption{Attack-case severity across the three archived V1 runs.}
+\label{tab:case_ranking}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{0.55cm}p{2.15cm}ccc}
+\toprule
+\textbf{Case} & \textbf{Meaning} & \shortstack{\textbf{Cellwise mean $\pm$ SD}\\$\boldsymbol{S}_{\mathrm{raw}}$} & \textbf{Mean trust} & \textbf{Mean delay (s)} \\
+\midrule
+2 & $X$ fault, $10$~m     & $1.2321\pm1.0438$ & $0.292$ & $0.015$ \\
+4 & $v$ fault, $2.5$~m/s  & $0.3875\pm0.0216$ & $0.623$ & $0.458$ \\
+3 & $v$ bias, $-2.5$~m/s  & $0.3629\pm0.0107$ & $0.344$ & $0.049$ \\
+5 & Packet drop           & $0.3541\pm0.0260$ & $0.506$ & $0.046$ \\
+1 & $X$ bias, $-5$~m      & $0.3341\pm0.0105$ & $0.012$ & $0.008$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Overall, the selected runs show complete recorded first threshold crossing, substantial attacker-source suppression, and a clearly dominant intermittent position-fault case. The slow local Case~4 response and the simultaneous Case~2 V5 residual identify distinct tuning targets: faster rejection for velocity faults and investigation of contamination before or during suppression together with collateral source rejection. Because the comparison contains one saved run per channel and only attacker V1, these conclusions are confined to this dataset; repeated seeds and attacker locations V2--V5 are required for confidence intervals and a general channel ranking.

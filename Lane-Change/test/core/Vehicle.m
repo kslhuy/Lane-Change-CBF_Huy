@@ -35,6 +35,7 @@ classdef Vehicle < handle
         center_communication; % Reference to CenterCommunication object
         graph;
         trust_log;
+        generalized_trust_log; % O_i(j), separate from direct/final trust
         other_log;
 
         % Observer
@@ -118,9 +119,12 @@ classdef Vehicle < handle
 
             % Trust and communication setup
             self.num_vehicles = length(self.other_vehicles);
-            self.trip_models = arrayfun(@(x) TriPTrustModel(), 1:self.num_vehicles, 'UniformOutput', false); % Trust models
+            self.trip_models = arrayfun(@(x) TriPTrustModel(self.scenarios_config), ...
+                1:self.num_vehicles, 'UniformOutput', false); % Independent, scenario-configured trust models
             self.trust_log = zeros(1, self.total_time_step, self.num_vehicles); % Trust log
             self.trust_log(1, 1, :) = 1; % Initial trust is 1 for all vehicles
+            self.generalized_trust_log = NaN(self.num_vehicles, self.total_time_step);
+            self.generalized_trust_log(self.vehicle_number, :) = 1;
 
             % Center communication
             self.center_communication = center_communication; % Initialize the CenterCommunication reference
@@ -513,6 +517,62 @@ classdef Vehicle < handle
 
 
 
+            if self.scenarios_config.fleet_estimator_parity_mode
+                self.trust_log(1, instant_index, self.vehicle_number) = 1.0;
+                if self.scenarios_config.use_generalized_trust_vector
+                    generalized = self.compute_generalized_trust_vector_python( ...
+                        instant_index, connected_vehicles_num, received_trusts, received_vehicles);
+                else
+                    % Python uses the direct TrustScore dictionary unchanged
+                    % when generalized trust is disabled. NaN represents a
+                    % target for which this host has no TrustScore object.
+                    generalized = NaN(self.num_vehicles, 1);
+                    generalized(self.vehicle_number) = 1.0;
+                    for vehicle_id = connected_vehicles_num
+                        generalized(vehicle_id) = min(1, max(0, ...
+                            self.trust_log(1, instant_index, vehicle_id)));
+                    end
+                end
+                self.generalized_trust_log(:, instant_index) = generalized(:);
+                for vehicle_id = 1:self.num_vehicles
+                    trust_model = self.trip_models{vehicle_id};
+                    target_is_known = vehicle_id ~= self.vehicle_number && ...
+                        ~isempty(trust_model.final_score_log);
+                    if target_is_known && isfinite(generalized(vehicle_id)) && ...
+                            generalized(vehicle_id) < self.scenarios_config.trust_threshold
+                        local_trust = 1.0;
+                        if ~isempty(trust_model.local_trust_decayed_log)
+                            local_trust = trust_model.local_trust_decayed_log(end);
+                        elseif ~isempty(trust_model.trust_sample_log)
+                            local_trust = trust_model.trust_sample_log(end);
+                        end
+
+                        local_bad = isfinite(local_trust) && ...
+                            local_trust < self.scenarios_config.trust_threshold;
+                        if local_bad || trust_model.flag_local_est_check
+                            trust_model.flag_local_est_check = true;
+                            trust_model.flag_taget_attk = true;
+                            if ~isempty(trust_model.flag_local_est_check_log)
+                                trust_model.flag_local_est_check_log(end) = true;
+                            end
+                            if ~isempty(trust_model.flag_taget_attk_log)
+                                trust_model.flag_taget_attk_log(end) = true;
+                            end
+                        else
+                            % A low generalized/final score with clean local
+                            % evidence means our distributed/global estimate
+                            % is still contaminated.  Do not quarantine the
+                            % target's direct channel as an attacker.
+                            trust_model.flag_glob_est_check = true;
+                            if ~isempty(trust_model.flag_glob_est_check_log)
+                                trust_model.flag_glob_est_check_log(end) = true;
+                            end
+                        end
+                    end
+                end
+                return;
+            end
+
             %% Step 2: Calculate opinion-based trust for non-direct vehicles
 
             % If host vehicle received some data
@@ -545,6 +605,87 @@ classdef Vehicle < handle
                         end
 
                     end
+                end
+            end
+        end
+
+        function generalized = compute_generalized_trust_vector_python(self, instant_index, connected_vehicle_ids, received_trusts, received_vehicles)
+            % Python paper logic: direct trust, credible weighted median,
+            % then index-distance fallback.
+            generalized = zeros(self.num_vehicles, 1);
+            generalized(self.vehicle_number) = 1.0;
+            theta_min = self.scenarios_config.trust_vector_theta_min;
+            fallback = self.scenarios_config.distributed_trust_fallback;
+
+            reports = squeeze(received_trusts);
+            if isempty(reports)
+                reports = zeros(0, self.num_vehicles);
+            elseif isvector(reports)
+                reports = reshape(reports, 1, []);
+            end
+            reporter_ids = double(received_vehicles(:));
+            if size(reports, 1) ~= length(reporter_ids) && ...
+                    size(reports, 2) == length(reporter_ids)
+                reports = reports.';
+            end
+            direct_ids = unique(double(connected_vehicle_ids(:)'));
+            direct_ids(direct_ids == self.vehicle_number) = [];
+
+            for target_id = 1:self.num_vehicles
+                if target_id == self.vehicle_number
+                    continue;
+                end
+                if ismember(target_id, direct_ids)
+                    generalized(target_id) = min(1, max(0, ...
+                        self.trust_log(1, instant_index, target_id)));
+                    continue;
+                end
+
+                values = [];
+                weights = [];
+                for reporter_idx = 1:length(reporter_ids)
+                    reporter_id = reporter_ids(reporter_idx);
+                    if reporter_id < 1 || reporter_id > self.num_vehicles || ...
+                            reporter_id == self.vehicle_number
+                        continue;
+                    end
+                    reporter_trust = self.trust_log(1, instant_index, reporter_id);
+                    if reporter_trust <= theta_min || reporter_idx > size(reports, 1) || ...
+                            target_id > size(reports, 2)
+                        continue;
+                    end
+                    opinion = reports(reporter_idx, target_id);
+                    if isfinite(opinion)
+                        values(end + 1) = min(1, max(0, opinion)); %#ok<AGROW>
+                        weights(end + 1) = max(0, reporter_trust); %#ok<AGROW>
+                    end
+                end
+                if ~isempty(values)
+                    weights = weights / max(sum(weights), eps);
+                    [values, order] = sort(values);
+                    weights = weights(order);
+                    median_idx = find(cumsum(weights) >= 0.5, 1, 'first');
+                    generalized(target_id) = values(median_idx);
+                    continue;
+                end
+
+                weighted_sum = 0;
+                total_weight = 0;
+                for reporter_id = direct_ids
+                    distance_weight = 1 / (1 + abs(self.vehicle_number - reporter_id));
+                    opinion = self.trust_log(1, instant_index, reporter_id);
+                    reporter_idx = find(reporter_ids == reporter_id, 1, 'first');
+                    if ~isempty(reporter_idx) && reporter_idx <= size(reports, 1) && ...
+                            target_id <= size(reports, 2) && isfinite(reports(reporter_idx, target_id))
+                        opinion = reports(reporter_idx, target_id);
+                    end
+                    weighted_sum = weighted_sum + distance_weight * opinion;
+                    total_weight = total_weight + distance_weight;
+                end
+                if total_weight > 0
+                    generalized(target_id) = min(1, max(0, weighted_sum / total_weight));
+                else
+                    generalized(target_id) = fallback;
                 end
             end
         end

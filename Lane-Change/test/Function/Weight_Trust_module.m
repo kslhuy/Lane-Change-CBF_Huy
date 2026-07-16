@@ -18,6 +18,7 @@ classdef Weight_Trust_module < handle
         startup_fixed_duration_s = 5.0
         use_gamma_self_weight_adaptation = true
         gamma_self_weight_floor = 0.25
+        include_target_self_fleet_estimate = false
         local_bad_zero_w0_neighbor_total_cap = 0.01
         flag_w0_target_attack_factor = 0.25
         flag_w0_global_est_check_factor = 1.25
@@ -162,7 +163,7 @@ classdef Weight_Trust_module < handle
 
             direct_available = self.is_direct_measurement_available(direct_measurement);
             local_trust = self.read_latest_unit(target_trust_model, ...
-                {'local_trust_sample', 'trust_sample_log', 'local_trust_decayed_log'}, 1.0);
+                {'local_trust_sample', 'local_trust_decayed_log', 'trust_sample_log'}, 1.0);
 
             [direct_factor, self_factor, neighbor_factor] = self.resolve_flag_group_factors(target_trust_model);
 
@@ -225,7 +226,8 @@ classdef Weight_Trust_module < handle
             available_sources = self.normalize_available_sources(neighbor_fleet_estimates);
             available_neighbors = [];
             for source_id = available_sources
-                if source_id == host_id || source_id == target_id
+                if source_id == host_id || ...
+                        (source_id == target_id && ~self.include_target_self_fleet_estimate)
                     continue;
                 end
                 available_neighbors(end + 1) = source_id; %#ok<AGROW>
@@ -260,7 +262,10 @@ classdef Weight_Trust_module < handle
 
         function weights_Dis = calculate_equal_weights_for_target(self, host_id, target_id, trust_scores, neighbor_fleet_estimates, direct_measurement)
             trust_scores = self.normalize_trust_scores(trust_scores);
-            available_neighbors = self.get_available_trusted_target_neighbors(host_id, target_id, trust_scores, neighbor_fleet_estimates);
+            % Python's equal mode retains received/source order before the
+            % kappa slice; trust-based mode deliberately ranks by trust.
+            available_neighbors = self.get_available_trusted_target_neighbors( ...
+                host_id, target_id, trust_scores, neighbor_fleet_estimates, true, false);
             direct_available = self.is_direct_measurement_available(direct_measurement);
 
             channel_count = length(available_neighbors) + double(direct_available);
@@ -282,9 +287,10 @@ classdef Weight_Trust_module < handle
 
         function weights_Dis = calculate_paper_weights_for_target(self, host_id, target_id, trust_scores, neighbor_fleet_estimates, direct_measurement, target_trust_model)
             trust_scores = self.normalize_trust_scores(trust_scores);
-            available_neighbors = self.get_available_trusted_target_neighbors(host_id, target_id, trust_scores, neighbor_fleet_estimates);
+            available_neighbors = self.get_available_trusted_target_neighbors( ...
+                host_id, target_id, trust_scores, neighbor_fleet_estimates, false);
             target_local_trust = self.read_latest_unit(target_trust_model, ...
-                {'local_trust_sample', 'trust_sample_log', 'local_trust_decayed_log'}, trust_scores(target_id));
+                {'local_trust_sample', 'local_trust_decayed_log', 'trust_sample_log'}, trust_scores(target_id));
             include_anchor = target_local_trust >= self.trust_threshold && self.is_direct_measurement_available(direct_measurement);
 
             n_legitimate = length(available_neighbors) + double(include_anchor);
@@ -436,7 +442,14 @@ classdef Weight_Trust_module < handle
             trust_scores = min(max(trust_scores, 0.0), 1.0);
         end
 
-        function neighbors = get_available_trusted_target_neighbors(self, host_id, target_id, trust_scores, neighbor_fleet_estimates)
+        function neighbors = get_available_trusted_target_neighbors(self, host_id, target_id, trust_scores, neighbor_fleet_estimates, apply_kappa_limit, sort_by_trust)
+            if nargin < 6
+                apply_kappa_limit = true;
+            end
+            if nargin < 7
+                sort_by_trust = true;
+            end
+
             available_sources = self.normalize_available_sources(neighbor_fleet_estimates);
             trusted = [];
             trusted_scores = [];
@@ -446,7 +459,8 @@ classdef Weight_Trust_module < handle
                 if source_id < 1 || source_id > self.num_vehicles
                     continue;
                 end
-                if source_id == host_id || source_id == target_id
+                if source_id == host_id || ...
+                        (source_id == target_id && ~self.include_target_self_fleet_estimate)
                     continue;
                 end
                 trust = trust_scores(source_id);
@@ -461,9 +475,15 @@ classdef Weight_Trust_module < handle
                 return;
             end
 
-            [~, order] = sort(trusted_scores, 'descend');
-            trusted = trusted(order);
-            neighbors = trusted(1:min(length(trusted), self.kappa));
+            if sort_by_trust
+                [~, order] = sort(trusted_scores, 'descend');
+                trusted = trusted(order);
+            end
+            if apply_kappa_limit
+                neighbors = trusted(1:min(length(trusted), self.kappa));
+            else
+                neighbors = trusted;
+            end
         end
 
         function source_ids = normalize_available_sources(self, neighbor_fleet_estimates)
@@ -488,7 +508,9 @@ classdef Weight_Trust_module < handle
                     if length(values) == self.num_vehicles && all(values == 0 | values == 1)
                         source_ids = find(logical(values));
                     else
-                        source_ids = unique(round(values(isfinite(values) & values >= 1 & values <= self.num_vehicles)));
+                        source_ids = unique( ...
+                            round(values(isfinite(values) & values >= 1 & values <= self.num_vehicles)), ...
+                            'stable');
                     end
                 else
                     valid = false(1, min(size(values, 2), self.num_vehicles));
